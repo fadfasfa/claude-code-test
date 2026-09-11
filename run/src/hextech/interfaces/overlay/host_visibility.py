@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import time
 import tkinter as tk
 from pathlib import Path
 from typing import Any, Mapping
+
+import psutil
 
 from hextech.interfaces.overlay.gameflow import GameflowState, probe_gameflow_state
 from hextech.interfaces.overlay.host_common import (
@@ -22,11 +25,19 @@ from hextech.interfaces.overlay.host_common import (
     GameflowPoller,
     OverlayVisibilitySnapshot,
 )
-from hextech.interfaces.overlay.host_platform import _apply_overlay_rect, _ensure_overlay_window_styles
+from hextech.interfaces.overlay.host_platform import _ensure_overlay_window_styles, _show_overlay_hwnd
+from hextech.interfaces.overlay.host_presentation import presentation_status
 from hextech.modules.data.ports.atomic import atomic_write_json
 
 
 logger = logging.getLogger(__name__)
+HOST_PROCESS_EXECUTABLE = os.path.normcase(os.fspath(Path(sys.executable).resolve()))
+try:
+    _HOST_PROCESS = psutil.Process(os.getpid())
+    HOST_PID_STARTED_AT = float(_HOST_PROCESS.create_time())
+    HOST_PROCESS_EXECUTABLE = os.path.normcase(os.fspath(Path(_HOST_PROCESS.exe()).resolve()))
+except (psutil.Error, OSError):
+    HOST_PID_STARTED_AT = time.time()
 
 def resolve_overlay_visibility(
     *,
@@ -307,11 +318,11 @@ def _show_overlay_window(root: tk.Tk, config: dict[str, Any], visibility: dict[s
         root.geometry(pending_geometry)
         visibility["applied_geometry"] = pending_geometry
     target_rect = visibility.get("target_rect")
-    if isinstance(target_rect, tuple) and len(target_rect) == 4:
-        _apply_overlay_rect(root, target_rect)
     root.deiconify()
     root.attributes("-topmost", True)
     _ensure_overlay_window_styles(root, config)
+    rect = target_rect if isinstance(target_rect, tuple) and len(target_rect) == 4 else None
+    _show_overlay_hwnd(root, rect)
 
 
 def _apply_transparent_background(root: tk.Tk, canvas: tk.Canvas, config: Mapping[str, Any]) -> None:
@@ -345,6 +356,8 @@ def decide_visibility(
     transient_pause: bool = False,
     diagnostic_mode: bool = False,
     stale_event_hold: bool = False,
+    selection_type: str = "hextech",
+    game_window_mode_status: str = "supported",
 ) -> tuple[bool, str]:
     """统一显隐决策，避免显示结果和诊断原因分叉。"""
 
@@ -359,7 +372,13 @@ def decide_visibility(
         content_ready=content_ready,
     )
     should_show, reason = host_snapshot.visible, host_snapshot.reason
-    if should_show and blocking_modal:
+    if should_show and str(game_window_mode_status or "unknown") != "supported":
+        should_show, reason = False, (
+            "unsupported_fullscreen_mode"
+            if str(game_window_mode_status) == "unsupported"
+            else "game_window_mode_unknown"
+        )
+    elif should_show and blocking_modal:
         should_show, reason = False, "blocking_modal_present"
     elif should_show and scoreboard_key_down:
         should_show, reason = False, "scoreboard_key_down"
@@ -373,6 +392,11 @@ def decide_visibility(
         should_show, reason = False, (event_error or "selection_state_unavailable")
     elif should_show and event_error and not stale_event_hold:
         should_show, reason = False, event_error
+    elif should_show and selection_window_active is True and resolved_ready_slots <= 0:
+        if str(selection_type or "") == "hextech":
+            reason = "visible_detecting"
+        else:
+            should_show, reason = False, "slots_detecting"
     elif should_show and stale_event_hold:
         reason = "visible_stale_hold"
     elif should_show and resolved_ready_slots > 0 and resolved_ready_slots < 3:
@@ -502,8 +526,30 @@ def _build_visibility_status_payload(
         missing_since = float(visibility.get("active_target_missing_since") or 0.0)
     except (TypeError, ValueError):
         missing_since = 0.0
+    presentation = presentation_status(visibility)
+    composition_probe = (
+        presentation.get("composition_probe")
+        if isinstance(presentation.get("composition_probe"), Mapping)
+        else {}
+    )
+    capture_exclusion = visibility.get("capture_exclusion")
+    if not isinstance(capture_exclusion, Mapping):
+        candidate_capture_exclusion = presentation.get("capture_exclusion")
+        capture_exclusion = (
+            candidate_capture_exclusion
+            if isinstance(candidate_capture_exclusion, Mapping)
+            and str(candidate_capture_exclusion.get("reason") or "") != "not_initialized"
+            else {}
+        )
+    capture_exclusion_status = (
+        str(capture_exclusion.get("status") or "")
+        if isinstance(capture_exclusion, Mapping)
+        else ""
+    )
     failure_reason = ""
-    if render_failures >= 4:
+    if capture_exclusion_status and capture_exclusion_status != "applied":
+        functional_status, failure_reason = "failed", "capture_exclusion_unavailable"
+    elif render_failures >= 4:
         functional_status, failure_reason = "failed", "render_loop_failed"
     elif (
         not bool(source.get("transient_pause"))
@@ -511,8 +557,18 @@ def _build_visibility_status_payload(
         and now - missing_since >= 3.0
     ):
         functional_status, failure_reason = "failed", "active_scene_without_window"
+    elif str(visibility.get("game_window_mode_status") or "supported") != "supported":
+        functional_status = "degraded"
+        failure_reason = (
+            "unsupported_fullscreen_mode"
+            if str(visibility.get("game_window_mode_status")) == "unsupported"
+            else "game_window_mode_unknown"
+        )
     elif probe_failures >= 3:
         functional_status, failure_reason = "degraded", "window_probe_error"
+    elif should_show and str(presentation.get("state") or "") == "failed":
+        functional_status = "failed"
+        failure_reason = str(presentation.get("failure_reason") or "presentation_failed")
     elif bool(visibility.get("window_target_desync")):
         functional_status, failure_reason = "degraded", "window_target_desync"
     elif source.get("selection_window_active") is True and (
@@ -520,6 +576,8 @@ def _build_visibility_status_payload(
         or str(visibility.get("context_gate_state") or "") not in {"", "confirmed", "holding"}
     ):
         functional_status, failure_reason = "degraded", "context_unavailable"
+    elif should_show and str(composition_probe.get("state") or "") == "unavailable":
+        functional_status, failure_reason = "degraded", "composition_probe_unavailable"
     else:
         functional_status, failure_reason = "ready", ""
     from hextech.modules.session.build_identity import current_build_id
@@ -527,9 +585,29 @@ def _build_visibility_status_payload(
     return {
         "schema_version": 2,
         "build_id": current_build_id(),
+        "pid": os.getpid(),
+        "pid_started_at": HOST_PID_STARTED_AT,
+        "executable": HOST_PROCESS_EXECUTABLE,
+        "data_generation_id": str(visibility.get("data_generation_id") or ""),
+        "vision_pool_generation_id": str(visibility.get("vision_pool_generation_id") or ""),
+        "stats_generation_id": str(
+            visibility.get("stats_generation_id") or visibility.get("data_generation_id") or ""
+        ),
+        "generation_roles": {
+            "vision_pool_generation_id": "sidecar_template_runtime",
+            "stats_generation_id": "host_game_session",
+            "data_generation_id": "legacy_stats_compat",
+        },
         "updated_at": float(now),
         "functional_status": functional_status,
         "functional_reason": failure_reason,
+        "game_window_mode": {
+            "status": str(visibility.get("game_window_mode_status") or "unknown"),
+            "mode": str(visibility.get("game_window_mode") or "unknown"),
+            "reason": str(visibility.get("game_window_mode_reason") or failure_reason),
+            "source": str(visibility.get("game_window_mode_source") or "game_cfg"),
+            "observed_at": float(visibility.get("game_window_mode_observed_at") or 0.0),
+        },
         "host": {
             "user_enabled": bool(visibility.get("user_enabled")),
             "gameflow": bool(visibility.get("gameflow_in_progress")),
@@ -570,12 +648,14 @@ def _build_visibility_status_payload(
             "held": bool(visibility.get("context_held")),
         },
         "decision": {
+            "should_show": bool(should_show),
             "window_visible": bool(should_show),
             "reason": str(reason or ""),
         },
+        "presentation": presentation,
         "render": {
             "last_tick_at": float(visibility.get("last_tick_at") or 0.0),
-            "last_presented_at": float(visibility.get("last_presented_at") or 0.0),
+            "last_presented_at": float(presentation.get("presented_at") or 0.0),
             "last_ready_frame_at": float(visibility.get("last_ready_frame_at") or 0.0),
             "consecutive_failures": render_failures,
             "report_queue_depth": int(visibility.get("report_queue_depth") or 0),

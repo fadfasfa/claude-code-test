@@ -26,6 +26,14 @@ from typing import Any, Callable, Mapping
 
 import requests
 
+from hextech.infrastructure.sources.aramkit.schema import (
+    SchemaValidationError,
+    decode_object as decode_aramkit_object,
+    normalize_detail as normalize_aramkit_detail,
+    normalize_rankings as normalize_aramkit_rankings,
+    resolve_version as resolve_aramkit_version,
+)
+
 
 DATA_BASE_URL = "https://data.aramkit.com"
 DEFAULT_CONCURRENCY = 8
@@ -45,10 +53,6 @@ AUGMENT_FIELDS = ("id", "rank", "sampleCount", *RATE_FIELDS)
 
 class ProbeError(RuntimeError):
     """可诊断的抓取或完整性失败。"""
-
-
-class SchemaValidationError(ProbeError):
-    """ARAMKit 响应不再符合探针所需 schema。"""
 
 
 @dataclass(frozen=True)
@@ -220,13 +224,7 @@ def _write_gzip_raw(path: Path, raw: bytes) -> dict[str, Any]:
 
 
 def _decode_object(body: bytes, *, context: str) -> dict[str, Any]:
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
-        raise SchemaValidationError(f"{context} 不是有效 UTF-8 JSON：{exc}") from exc
-    if not isinstance(payload, dict):
-        raise SchemaValidationError(f"{context} 顶层必须是对象")
-    return payload
+    return decode_aramkit_object(body, context=context)
 
 
 def _require_mapping(value: Any, *, context: str) -> Mapping[str, Any]:
@@ -332,29 +330,7 @@ def _normalize_augment_scope(raw_rows: Any, *, context: str, is_all: bool) -> li
 
 
 def normalize_detail(payload: Mapping[str, Any], ranking: Mapping[str, Any]) -> dict[str, Any]:
-    expected_id = str(ranking["id"])
-    champion = _require_mapping(payload.get("champion"), context=f"champion[{expected_id}]")
-    normalized_champion = _champion_summary(champion, context=f"champion[{expected_id}]", nested_stats=True)
-    if normalized_champion != dict(ranking):
-        raise SchemaValidationError(f"champion[{expected_id}] 与排行概要不一致，疑似版本混用")
-
-    augments = _require_mapping(payload.get("augments"), context=f"champion[{expected_id}].augments")
-    stages = _require_mapping(augments.get("stages"), context=f"champion[{expected_id}].augments.stages")
-    normalized_stages = {
-        stage: _normalize_augment_scope(
-            stages.get(stage),
-            context=f"champion[{expected_id}].augments.stages.{stage}",
-            is_all=False,
-        )
-        for stage in STAGES
-    }
-    normalized_champion["augments"] = {
-        "all": _normalize_augment_scope(
-            augments.get("all"), context=f"champion[{expected_id}].augments.all", is_all=True
-        ),
-        "stages": normalized_stages,
-    }
-    return normalized_champion
+    return normalize_aramkit_detail(payload, ranking)
 
 
 def _request_json_with_retry(
@@ -378,44 +354,11 @@ def _request_json_with_retry(
 
 
 def _resolve_version(payload: Mapping[str, Any], requested: str) -> dict[str, Any]:
-    versions = _require_list(payload.get("versions"), context="versions", nonempty=True)
-    latest = str(payload.get("latest", "")).strip()
-    target = latest if requested == "latest" else requested
-    for raw in versions:
-        row = _require_mapping(raw, context="versions[]")
-        if str(row.get("version", "")).strip() != target:
-            continue
-        data_path = str(row.get("dataPath", "")).strip().strip("/")
-        if not data_path:
-            raise SchemaValidationError(f"版本 {target} 缺少 dataPath")
-        return {
-            "version": target,
-            "dataPath": data_path,
-            "allMatches": _nonnegative_int(row.get("allMatches"), context=f"version[{target}].allMatches"),
-            "highMatches": _nonnegative_int(row.get("highMatches"), context=f"version[{target}].highMatches"),
-            "dataStartTimeUnixMs": _nonnegative_int(
-                row.get("dataStartTimeUnixMs"), context=f"version[{target}].dataStartTimeUnixMs"
-            ),
-            "dataEndTimeUnixMs": _nonnegative_int(
-                row.get("dataEndTimeUnixMs"), context=f"version[{target}].dataEndTimeUnixMs"
-            ),
-            "buildTimeUnixMs": _nonnegative_int(
-                row.get("buildTimeUnixMs", 0), context=f"version[{target}].buildTimeUnixMs"
-            ),
-        }
-    raise SchemaValidationError(f"未找到公开版本：{target}")
+    return resolve_aramkit_version(payload, requested)
 
 
 def _normalize_rankings(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
-    rows = _require_list(payload.get("rows"), context="champion-rankings.rows", nonempty=True)
-    normalized = [
-        _champion_summary(_require_mapping(row, context=f"champion-rankings.rows[{index}]"), context=f"ranking[{index}]", nested_stats=False)
-        for index, row in enumerate(rows)
-    ]
-    ids = [row["id"] for row in normalized]
-    if len(ids) != len(set(ids)):
-        raise SchemaValidationError("champion-rankings 存在重复英雄 ID")
-    return normalized
+    return normalize_aramkit_rankings(payload)
 
 
 def _detail_url(version: Mapping[str, Any], dataset: str, champion_id: str) -> str:

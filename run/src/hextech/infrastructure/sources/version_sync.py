@@ -28,7 +28,6 @@
 import requests
 import json
 import os
-import sys
 import time
 import threading
 import logging
@@ -54,25 +53,13 @@ from hextech.infrastructure.observability.logging import (
 from hextech.modules.data.ports.paths import (
     CHAMPION_ASSET_DIR as SEED_CHAMPION_ASSET_DIR,
     BASE_DIR,  # noqa: F401 - 兼容 web.runtime 的历史导入。
-    BUNDLE_ROOT_DIR,
     RUNTIME_DATA_DIR,  # noqa: F401 - 兼容 catalog 的历史导入。
     STATIC_DATA_DIR,
     var_path,
 )
-from hextech.infrastructure.persistence.runtime_bundle import seed_bundled_resources
 from hextech.modules.data.catalog.versioned import CatalogValidationError, load_active_catalog
 
 ensure_utf8_stdio()
-
-
-def _get_packaged_snapshot_dir() -> str:
-    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
-    if local_app_data:
-        base_dir = os.path.join(local_app_data, "HextechNexus")
-    else:
-        app_data = os.getenv("APPDATA", "").strip()
-        base_dir = os.path.join(app_data, "HextechNexus") if app_data else os.path.join(os.path.expanduser("~"), ".hextech_nexus")
-    return os.path.join(base_dir, "var", "snapshots")
 
 
 SUMMARY_LOG_FILE = get_runtime_summary_log_file()
@@ -189,12 +176,6 @@ def _load_existing_champion_aliases() -> dict:
 
     return alias_map
 
-
-if getattr(sys, 'frozen', False):
-    seed_bundled_resources(
-        bundle_root=BUNDLE_ROOT_DIR,
-        runtime_snapshot_dir=_get_packaged_snapshot_dir(),
-    )
 
 install_runtime_logging()
 logger = logging.getLogger(__name__)

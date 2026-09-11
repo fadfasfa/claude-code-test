@@ -29,6 +29,9 @@ CATALOG_FILES = (
     ("augments", "海克斯资源目录.v1.json", "entries"),
     ("versions", "hero_version.txt", ""),
 )
+CATALOG_OPTIONAL_FILES = (
+    ("augment_assets", "augment_assets.v1.json", "entries"),
+)
 
 
 class CatalogValidationError(RuntimeError):
@@ -94,7 +97,9 @@ def _record_count(path: Path, list_key: str) -> int:
 
 def build_catalog_manifest(root: Path, *, created_at: str) -> CatalogManifestV2:
     descriptors: list[ArtifactDescriptor] = []
-    for role, filename, list_key in CATALOG_FILES:
+    files = [*CATALOG_FILES]
+    files.extend(item for item in CATALOG_OPTIONAL_FILES if (root / item[1]).is_file())
+    for role, filename, list_key in files:
         path = root / filename
         if not path.is_file() or path.stat().st_size <= 0:
             raise CatalogValidationError(f"Catalog 文件缺失或为空：{path}")
@@ -168,6 +173,23 @@ def validate_catalog_files(root: Path, manifest: CatalogManifestV2) -> None:
         raise CatalogValidationError(
             f"Catalog 海克斯投影不完整：projected={len(augments)} expected={counts['augments']}"
         )
+    if "augment_assets" in counts:
+        assets_path = root / "augment_assets.v1.json"
+        try:
+            assets_payload = json.loads(assets_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CatalogValidationError(f"Catalog augment assets 无效：{exc}") from exc
+        entries = assets_payload.get("entries") if isinstance(assets_payload, Mapping) else None
+        if not isinstance(entries, list) or len(entries) != counts["augment_assets"]:
+            raise CatalogValidationError("Catalog augment assets 条目数不一致")
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                raise CatalogValidationError("Catalog augment asset 必须是对象")
+            relative = str(entry.get("relative_path") or "")
+            expected_sha = str(entry.get("sha256") or "")
+            target = (root / relative).resolve()
+            if root.resolve() not in target.parents or not target.is_file() or sha256_file(target) != expected_sha:
+                raise CatalogValidationError(f"Catalog augment asset 校验失败：{relative}")
     actual = build_catalog_manifest(root, created_at=manifest.created_at)
     if actual.content_sha256 != manifest.content_sha256:
         raise CatalogValidationError("Catalog content SHA-256 与文件不一致")
@@ -243,6 +265,7 @@ def load_active_catalog() -> CatalogView:
 __all__ = [
     "CATALOG_CURRENT_FILENAME",
     "CATALOG_FILES",
+    "CATALOG_OPTIONAL_FILES",
     "CATALOG_MANIFEST_FILENAME",
     "CatalogValidationError",
     "CatalogView",

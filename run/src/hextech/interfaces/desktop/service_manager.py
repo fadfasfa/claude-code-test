@@ -26,8 +26,8 @@ from hextech.modules.session.settings import load_ui_feature_flags, save_ui_feat
 from hextech.modules.vision.events import read_overlay_event
 from hextech.interfaces.overlay.lifecycle import GameOverlayController
 from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
+from hextech.modules.vision.client_window import resolve_lol_client_window
 from hextech.modules.vision.window import find_lol_game_window
-from hextech.modules.vision.window_titles import LOL_CLIENT_WINDOW_TITLE
 
 
 ProcessFactory = Callable[..., Any]
@@ -517,10 +517,11 @@ class ServiceManager:
                 "lol_client_running": client_running,
                 "lol_game_running": game_running,
             }
-        client = win32gui.FindWindow(None, LOL_CLIENT_WINDOW_TITLE)
+        client_probe = resolve_lol_client_window()
+        client = int(client_probe.hwnd if client_probe.status == "found" else 0)
         game = find_lol_game_window()
         return {
-            "lol_client_visible": bool(client and win32gui.IsWindowVisible(client) and not win32gui.IsIconic(client)),
+            "lol_client_visible": bool(client),
             "lol_game_visible": game is not None,
             "lol_client_running": client_running,
             "lol_game_running": game_running,

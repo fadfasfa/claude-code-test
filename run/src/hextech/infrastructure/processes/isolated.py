@@ -22,6 +22,8 @@ class IsolatedProcessResult:
     timed_out: bool
     stdout: str
     stderr: str
+    cancelled: bool = False
+    cancel_reason: str = ""
 
 
 class _WindowsJobOwner:
@@ -98,15 +100,31 @@ def run_isolated_process(
         raise
 
     timed_out = False
+    cancelled = False
+    cancel_reason = ""
     stdout = ""
     stderr = ""
     try:
-        try:
-            stdout, stderr = process.communicate(timeout=max(0.1, float(timeout_seconds)))
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            cancel_file.parent.mkdir(parents=True, exist_ok=True)
-            cancel_file.touch()
+        deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+        while True:
+            try:
+                stdout, stderr = process.communicate(timeout=min(0.05, max(0.01, deadline - time.monotonic())))
+                break
+            except subprocess.TimeoutExpired:
+                if cancel_file.is_file():
+                    cancelled = True
+                    try:
+                        cancel_reason = cancel_file.read_text(encoding="utf-8").strip() or "requested"
+                    except (OSError, UnicodeDecodeError):
+                        cancel_reason = "requested"
+                    break
+                if time.monotonic() >= deadline:
+                    timed_out = True
+                    cancel_reason = "hard_timeout"
+                    cancel_file.parent.mkdir(parents=True, exist_ok=True)
+                    cancel_file.write_text(cancel_reason, encoding="utf-8")
+                    break
+        if cancelled or timed_out:
             try:
                 stdout, stderr = process.communicate(timeout=max(0.1, float(cancel_grace_seconds)))
             except subprocess.TimeoutExpired as exc:
@@ -130,6 +148,8 @@ def run_isolated_process(
         timed_out=timed_out,
         stdout=_bounded(stdout),
         stderr=_bounded(stderr),
+        cancelled=cancelled,
+        cancel_reason=cancel_reason,
     )
 
 

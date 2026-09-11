@@ -20,8 +20,6 @@ QuantProject/**
 
 sm2-randomizer/**/__pycache__/**
 sm2-randomizer/pipeline/sources/wiki/node_modules/**
-qm-run-demo/**/__pycache__/**
-qm-run-demo/**/node_modules/**
 
 __pycache__/**
 .pytest_cache/**

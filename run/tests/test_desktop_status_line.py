@@ -12,7 +12,9 @@ from hextech.interfaces.desktop import app_controls as desktop_controls
 from hextech.interfaces.desktop.app import HextechUI, UI_COLORS
 from hextech.interfaces.desktop.app_shared import (
     format_data_age_suffix,
+    format_data_refresh_status,
     parse_generation_created_ts,
+    snapshot_data_timestamp,
     ui_font,
 )
 
@@ -47,6 +49,13 @@ def _make_ui(monkeypatch, *, monotonic: float = 100.0, wall: float = 2_000_000.0
     ui._status_channels = {
         "service": {"text": "", "color": UI_COLORS["muted"], "at": 0.0},
         "overlay": {"text": "", "color": UI_COLORS["muted"], "at": 0.0},
+        "refresh": {
+            "text": "",
+            "color": UI_COLORS["muted"],
+            "state": "idle",
+            "at": 0.0,
+            "signature": (),
+        },
     }
     ui._data_created_ts = 0.0
     ui.status_line_label = _Widget()
@@ -80,6 +89,65 @@ def test_format_data_age_suffix_granularity() -> None:
     assert format_data_age_suffix(base - 1800, base) == " · 数据刚更新"
     assert format_data_age_suffix(base - 3 * 3600, base) == " · 数据 3 小时前"
     assert format_data_age_suffix(base - 26 * 3600, base) == " · 数据 1 天前"
+
+
+def test_snapshot_data_timestamp_prefers_aramkit_data_at_and_falls_back_when_missing() -> None:
+    created_at = "2026-07-26T10:28:03+00:00"
+    aramkit_at = "2026-07-26T08:00:00+00:00"
+
+    assert snapshot_data_timestamp(
+        {
+            "created_at": created_at,
+            "source_status": {"aramkit": {"data_at": aramkit_at}},
+        }
+    ) == parse_generation_created_ts(aramkit_at)
+    assert snapshot_data_timestamp(
+        {"created_at": created_at, "source_status": {"aramkit": {"data_at": ""}}}
+    ) == parse_generation_created_ts(created_at)
+
+
+def test_refresh_status_copy_covers_running_deferred_and_terminal_states() -> None:
+    assert format_data_refresh_status({"state": "running", "scope": "core"}) == (
+        "正在刷新核心数据",
+        UI_COLORS["warn"],
+    )
+    assert format_data_refresh_status(
+        {"state": "running", "scope": "core", "reason_code": "resumed_after_game"}
+    )[0] == "赛后继续刷新"
+    assert format_data_refresh_status({"state": "deferred"})[0] == "对局中暂停，赛后继续"
+    assert format_data_refresh_status({"state": "completed"})[0] == "数据已更新"
+    assert format_data_refresh_status({"state": "unchanged"})[0] == "数据已检查，无变化"
+    assert format_data_refresh_status({"state": "failed"})[0] == "刷新失败，沿用旧数据"
+
+
+def test_refresh_running_is_sticky_and_old_terminal_yields_to_overlay(monkeypatch) -> None:
+    wall = 2_000_000.0
+    ui = _make_ui(monkeypatch, monotonic=200.0, wall=wall)
+    ui._set_overlay_status_summary("游戏内显示中", UI_COLORS["green"])
+
+    ui._set_data_refresh_status(
+        {
+            "state": "running",
+            "scope": "core",
+            "phase": "core",
+            "reason_code": "refresh_running",
+            "started_at": wall - 100,
+            "completed_at": 0,
+        }
+    )
+    assert ui.status_line_label.text == "正在刷新核心数据"
+
+    ui._set_data_refresh_status(
+        {
+            "state": "completed",
+            "scope": "core",
+            "phase": "complete",
+            "reason_code": "core_cohort_promoted",
+            "started_at": wall - 20,
+            "completed_at": wall - 7,
+        }
+    )
+    assert ui.status_line_label.text == "游戏内显示中"
 
 
 def test_fresh_service_message_wins_over_overlay(monkeypatch) -> None:
@@ -257,17 +325,30 @@ def test_tier_change_updates_badge_and_full_height_strength_bar() -> None:
     assert strength_bar.kwargs["bg"] == "#F2C94C"
 
 
-def test_real_tk_compact_layout_keeps_long_labels_inside_columns(monkeypatch) -> None:
+def test_real_tk_compact_layout_keeps_long_labels_inside_columns(request, monkeypatch) -> None:
     """真实 Tk 字体度量下，最长常见英雄名和角色徽章不得互相挤压或裁字。"""
+    from native_tk_runner import run_native_tk_case
+
+    if run_native_tk_case(request.node.nodeid):
+        return
 
     monkeypatch.setattr(HextechUI, "_initialize_background_runtime", lambda self: None)
     monkeypatch.setattr(HextechUI, "_start_desktop_tray", lambda self: None)
     monkeypatch.setattr(HextechUI, "_schedule_post_visible_bootstrap", lambda self: None)
+    monkeypatch.setattr("hextech.interfaces.desktop.runtime_services.initialize_window_threads", lambda ui: None)
     monkeypatch.setattr(HextechUI, "_load_and_set_img", lambda self, _champion_id, _label: None)
 
     ui = HextechUI()
     try:
+        # 本例只测卡片排版；生命周期/显隐由独立 owner 集成回归覆盖，不接真实 LCU。
+        ui._desktop_window_presentation.close()
         ui.root.attributes("-alpha", 0.0)
+        from hextech.modules.vision.window import root_window_hwnd
+        import win32gui
+        ui.root.geometry("320x740+10000+10000")
+        hwnd = root_window_hwnd(ui.root.winfo_id())
+        win32gui.SetWindowLong(hwnd, -20, win32gui.GetWindowLong(hwnd, -20) | 0x08000000)
+        ui.root.deiconify()
         ui.root.update()
         ui._ensure_card_state()
         row = ui._build_candidate_card(
@@ -297,7 +378,7 @@ def test_real_tk_compact_layout_keeps_long_labels_inside_columns(monkeypatch) ->
         assert row["selected_badge"].winfo_width() <= metric.winfo_width()
         assert row["win_label"].winfo_width() <= metric.winfo_width()
         assert row["img_label"].winfo_width() == 50
-        assert metric.winfo_width() == 72
+        assert metric.winfo_width() >= max(row["win_label"].winfo_reqwidth(), row["selected_badge"].winfo_reqwidth())
     finally:
         ui.root.destroy()
 

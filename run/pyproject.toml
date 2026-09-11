@@ -15,6 +15,8 @@ dependencies = [
   "charset-normalizer>=3.3,<4",
   "chardet>=5.2,<6",
   "Pillow",
+  "mss==10.2.0",
+  "onnxruntime==1.25.0",
   "pystray>=0.19.5,<0.20",
   "psutil",
   "pywin32",
@@ -55,7 +57,7 @@ markers = [
 [tool.ruff]
 target-version = "py311"
 line-length = 120
-exclude = ["resources", "var", "build", "dist"]
+exclude = ["resources", "var", "build", "dist", ".tmp_package_smoke"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
@@ -80,15 +82,27 @@ reportOptionalSubscript = false
 reportReturnType = false
 include = [
   "src/hextech/bootstrap/supervisor.py",
+  "src/hextech/bootstrap/refresh_promotion.py",
+  "src/hextech/contracts/cohort_recovery.py",
   "src/hextech/interfaces/overlay",
   "src/hextech/modules/vision/window.py",
   "src/hextech/infrastructure/vision/sidecar.py",
   "src/hextech/infrastructure/vision/template_runtime.py",
   "src/hextech/infrastructure/vision/runner.py",
+  "src/hextech/infrastructure/vision/ocr_shadow.py",
+  "src/hextech/infrastructure/vision/matcher.py",
+  "src/hextech/infrastructure/vision/state.py",
+  "src/hextech/infrastructure/vision/state_models.py",
+  "src/hextech/infrastructure/vision/slot_reducer.py",
+  "src/hextech/infrastructure/vision/sidecar_batch.py",
+  "src/hextech/infrastructure/vision/sidecar_diagnostics.py",
+  "src/hextech/infrastructure/vision/runner_cli.py",
   "src/hextech/infrastructure/sources/hextech/detail_runner.py",
   "tooling/build/package.py",
   "tooling/build/manifest.py",
   "src/hextech/infrastructure/persistence/runtime_bundle.py",
+  "src/hextech/infrastructure/persistence/cohort_recovery.py",
+  "src/hextech/infrastructure/persistence/cohort_seed.py",
 ]
 exclude = ["resources", "var", "build", "dist"]
 

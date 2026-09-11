@@ -1,9 +1,10 @@
+# pyright: reportUnsupportedDunderAll=false
 """Vision sidecar capture 职责模块。"""
 from __future__ import annotations
 
+from hextech.infrastructure.vision.capture_geometry import required_capture_bounds
 from hextech.infrastructure.vision.sidecar_common import (
     Image,
-    ImageGrab,
     configure_process_dpi_awareness,
     ctypes,
     logger,
@@ -11,6 +12,29 @@ from hextech.infrastructure.vision.sidecar_common import (
     root_window_hwnd,
     win32gui,
 )
+from hextech.modules.vision.screen_capture import MssCaptureBackend
+
+
+# 保留窄兼容名，现有 facade/tests 无需知道共享后端的分层迁移。
+_MssCaptureBackend = MssCaptureBackend
+_DEFAULT_CAPTURE_BACKEND: MssCaptureBackend | None = None
+
+
+def _default_capture_backend() -> MssCaptureBackend:
+    global _DEFAULT_CAPTURE_BACKEND
+    if _DEFAULT_CAPTURE_BACKEND is None:
+        _DEFAULT_CAPTURE_BACKEND = MssCaptureBackend()
+    return _DEFAULT_CAPTURE_BACKEND
+
+
+def close_capture_backend() -> None:
+    """幂等关闭 Sidecar 当前 MSS 会话；下一次捕获会重新懒建。"""
+
+    global _DEFAULT_CAPTURE_BACKEND
+    backend, _DEFAULT_CAPTURE_BACKEND = _DEFAULT_CAPTURE_BACKEND, None
+    if backend is not None:
+        backend.close()
+
 
 def _set_dpi_awareness() -> None:
     mode = configure_process_dpi_awareness()
@@ -47,20 +71,73 @@ def _is_lol_game_foreground(hwnd: int | None) -> bool:
         return False
 
 
-def _capture_lol_game_rect(rect: tuple[int, int, int, int]) -> Image.Image | None:
-    try:
-        return ImageGrab.grab(bbox=rect).convert("RGB")
-    except OSError:
+def _capture_lol_game_rect(
+    rect: tuple[int, int, int, int],
+    *,
+    preset_name: str = "auto",
+    backend: MssCaptureBackend | None = None,
+    force_full_client: bool = False,
+) -> Image.Image | None:
+    """用 MSS 抓取所需联合 ROI，并保留原 client size/坐标系。"""
+
+    left, top, right, bottom = (int(value) for value in rect)
+    width = right - left
+    height = bottom - top
+    if width <= 0 or height <= 0:
         return None
 
+    try:
+        if force_full_client:
+            origin_box = (0, 0, width, height)
+            capture_mode = "client_full_recovery"
+        else:
+            origin_box = required_capture_bounds((width, height), preset_name)
+            capture_mode = "roi_union"
+    except ValueError:
+        # 未知版式无法证明局部范围完整；仍只抓当前游戏客户区。
+        origin_box = (0, 0, width, height)
+        capture_mode = "client_full"
 
-def capture_lol_game_frame() -> Image.Image | None:
+    origin_x, origin_y, roi_right, roi_bottom = origin_box
+    screen_box = (
+        left + origin_x,
+        top + origin_y,
+        left + roi_right,
+        top + roi_bottom,
+    )
+    capture_backend = backend or _default_capture_backend()
+    crop = capture_backend.capture_rgb(screen_box)
+    expected_crop_size = (roi_right - origin_x, roi_bottom - origin_y)
+    if crop is None or crop.size != expected_crop_size:
+        return None
+
+    if capture_mode == "roi_union":
+        frame = Image.new("RGB", (width, height), "black")
+        origin = (origin_x, origin_y)
+        frame.paste(crop, origin)
+    else:
+        frame = crop
+        origin = (0, 0)
+    frame.info.update(
+        {
+            "hextech_capture_mode": capture_mode,
+            "hextech_roi_origin": origin,
+            "hextech_roi_size": crop.size,
+            "hextech_client_size": (width, height),
+            "hextech_client_rect": (left, top, right, bottom),
+            "hextech_capture_screen_rect": screen_box,
+        }
+    )
+    return frame
+
+
+def capture_lol_game_frame(*, preset_name: str = "auto") -> Image.Image | None:
     """截取 LoL 游戏窗口矩形；找不到窗口时返回 None。"""
 
     rect = _find_lol_game_rect()
     if rect is None:
         return None
-    return _capture_lol_game_rect(rect)
+    return _capture_lol_game_rect(rect, preset_name=preset_name)
 
 
 

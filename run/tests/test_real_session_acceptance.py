@@ -178,7 +178,7 @@ def test_v2_evidence_rejects_render_signature_or_revision_mismatch(tmp_path: Pat
         verify_real_session_evidence(path, expected_generation_id="g1")
 
 
-def test_real_session_capture_waits_two_ticks_and_avoids_tk_io(tmp_path: Path) -> None:
+def test_real_session_json_writes_on_first_composed_tick_without_tk_io(tmp_path: Path) -> None:
     from hextech.interfaces.overlay import host_sync
     from hextech.interfaces.overlay.report_writer import OverlayReportWriter
 
@@ -244,11 +244,13 @@ def test_real_session_capture_waits_two_ticks_and_avoids_tk_io(tmp_path: Path) -
     root = FakeRoot()
     writer = OverlayReportWriter(tmp_path / "reports", evidence_dir)
     writer.start()
-    visibility: dict[str, object] = {"window_visible": True, "report_writer": writer}
+    visibility: dict[str, object] = {
+        "window_visible": True,
+        "report_writer": writer,
+        "presentation": {"state": "composed"},
+    }
 
     try:
-        host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
-        assert not evidence_dir.exists()
         host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
         assert root.callbacks == []
         assert writer.wait_empty(timeout=2.0)
@@ -258,9 +260,18 @@ def test_real_session_capture_waits_two_ticks_and_avoids_tk_io(tmp_path: Path) -
         writer.close()
 
 
-def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: Path) -> None:
+def test_real_session_capture_writes_each_revision_and_only_one_epoch_crop(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     from hextech.interfaces.overlay import host_sync
     from hextech.interfaces.overlay.report_writer import OverlayReportWriter
+    from PIL import Image
+
+    monkeypatch.setattr(
+        "PIL.ImageGrab.grab",
+        lambda **_kwargs: Image.new("RGB", (800, 500), "black"),
+    )
 
     class FakeRoot:
         def __init__(self) -> None:
@@ -289,7 +300,11 @@ def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: 
     root = FakeRoot()
     writer = OverlayReportWriter(tmp_path / "reports", evidence_dir)
     writer.start()
-    visibility: dict[str, object] = {"window_visible": True, "report_writer": writer}
+    visibility: dict[str, object] = {
+        "window_visible": True,
+        "report_writer": writer,
+        "presentation": {"state": "composed"},
+    }
     snapshot = {
         "slots": [
             {
@@ -359,8 +374,14 @@ def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: 
             for index in range(3)
         ]
         model = {"stats": rows, "synergies": []}
-        host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
-        host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
+        # diagnostic 截图要求同一 render signature 两个稳定 tick；同 epoch 后续
+        # revision/context 仍写 JSON，但不得再抓第二张 Overlay crop。
+        host_sync._write_real_session_evidence(
+            root, state, snapshot, model, visibility, diagnostic=True
+        )
+        host_sync._write_real_session_evidence(
+            root, state, snapshot, model, visibility, diagnostic=True
+        )
         assert root.callbacks == []
         assert writer.wait_empty(timeout=2.0)
 
@@ -388,5 +409,11 @@ def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: 
         "icon_shortlist",
         "observed_name",
     }
+    screenshots = list(evidence_dir.glob("*.png"))
+    assert len(screenshots) == 1
+    reports = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in evidence_dir.glob("overlay-*.v2.json")
+    ]
+    assert sum(bool(report.get("screenshot")) for report in reports) == 1
     assert latest["screenshot"] == ""
-    assert not list(evidence_dir.glob("*.png"))

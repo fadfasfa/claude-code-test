@@ -23,7 +23,7 @@ def _event(session_id: str = "session-1", epoch: int = 1) -> dict[str, object]:
     return {"source": {"session_id": session_id, "selection_epoch": epoch}}
 
 
-def test_generation_pin_keeps_same_view_until_next_epoch() -> None:
+def test_generation_pin_keeps_same_view_for_all_epochs_until_next_game() -> None:
     first = _view("generation-1")
     second = _view("generation-2")
     responses = deque([first, second, second])
@@ -47,12 +47,17 @@ def test_generation_pin_keeps_same_view_until_next_epoch() -> None:
     assert pin.status()["new_generation_available"] is True
     assert pin.status()["new_generation_id"] == "generation-2"
 
-    assert pin.resolve(_event(epoch=2), open_latest) is second
+    assert pin.resolve(_event(epoch=2), open_latest) is first
+    assert pin.status()["selection_key"] == ["session-1", 2]
+    assert pin.resolve(_event(session_id="session-2", epoch=1), open_latest) is second
     assert pin.status()["generation_id"] == "generation-2"
+    assert pin.status()["stats_generation_id"] == "generation-2"
+    assert pin.status()["generation_role"] == "stats_game_session"
+    assert pin.status()["game_session_id"] == "session-2"
     assert pin.status()["new_generation_available"] is False
 
 
-def test_generation_pin_does_not_adopt_late_view_inside_failed_epoch() -> None:
+def test_generation_pin_does_not_adopt_late_view_inside_failed_game() -> None:
     latest = _view("generation-1")
     responses = deque([None, latest])
     pin = SelectionGenerationPin()
@@ -61,7 +66,10 @@ def test_generation_pin_does_not_adopt_late_view_inside_failed_epoch() -> None:
     assert pin.resolve(_event(), responses.popleft) is None
     assert len(responses) == 1
 
-    assert pin.resolve(_event(epoch=2), responses.popleft) is latest
+    assert pin.resolve(_event(epoch=2), responses.popleft) is None
+    assert len(responses) == 1
+
+    assert pin.resolve(_event(session_id="session-2", epoch=1), responses.popleft) is latest
 
 
 def test_generation_pin_changes_on_new_session_and_resets_when_selection_ends() -> None:
@@ -75,3 +83,41 @@ def test_generation_pin_changes_on_new_session_and_resets_when_selection_ends() 
     assert selection_key({"source": {"session_id": "session-2", "selection_epoch": 0}}) is None
     assert pin.resolve({"source": {}}, responses.popleft) is None
     assert pin.status()["selection_key"] == []
+
+
+def test_generation_is_pinned_when_game_session_arrives_before_first_selection() -> None:
+    first = _view("generation-at-game-entry")
+    later = _view("generation-after-refresh")
+    responses = deque([first, later])
+    clock = [10.0]
+    pin = SelectionGenerationPin(now=lambda: clock[0])
+
+    assert pin.resolve(_event(epoch=0), responses.popleft) is first
+    clock[0] += 1.0
+    assert pin.resolve(_event(epoch=1), responses.popleft) is first
+    assert pin.status()["new_generation_id"] == "generation-after-refresh"
+    assert pin.status()["stats_generation_id"] == "generation-at-game-entry"
+
+
+def test_hidden_transient_pause_keeps_epoch_pins_but_completed_selection_releases_them() -> None:
+    from hextech.interfaces.overlay.host_runner import _preserve_selection_pins_while_hidden
+
+    paused = {
+        "source": {
+            "session_id": "session-1",
+            "selection_epoch": 2,
+            "selection_window_active": True,
+            "transient_pause": True,
+        }
+    }
+    completed = {
+        "source": {
+            "session_id": "session-1",
+            "selection_epoch": 2,
+            "selection_window_active": False,
+            "selection_confirmed": True,
+        }
+    }
+
+    assert _preserve_selection_pins_while_hidden(paused) is True
+    assert _preserve_selection_pins_while_hidden(completed) is False

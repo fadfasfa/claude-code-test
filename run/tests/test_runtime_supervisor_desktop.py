@@ -354,6 +354,17 @@ class RuntimeSupervisorDesktopIntegrationTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 17)
         run_supervisor.assert_called_once_with(["--parent-pid", "123"])
 
+    def test_frozen_roles_are_resolved_before_desktop_seed_owner(self):
+        from hextech.bootstrap.desktop import _frozen_role
+
+        self.assertEqual(_frozen_role(["--game-overlay", "--token", "x"]), "--game-overlay")
+        self.assertEqual(_frozen_role(["--data-service"]), "--data-service")
+        self.assertEqual(_frozen_role([]), "desktop")
+        source_path = Path(__file__).resolve().parents[1] / "src" / "hextech" / "bootstrap" / "desktop.py"
+        source = source_path.read_text(encoding="utf-8")
+        self.assertLess(source.index("role = _frozen_role()"), source.index("install_runtime_logging()"))
+        self.assertNotIn("_install_packaged_cohort_seed()\n    install_runtime_logging()", source)
+
     def test_keyboard_interrupt_requests_shutdown_before_wait_and_server_close(self):
         from hextech.bootstrap import supervisor as supervisor_module
 
@@ -656,24 +667,64 @@ class RuntimeSupervisorDesktopIntegrationTests(unittest.TestCase):
         with mock.patch.object(desktop_app.ui_runtime, "start_runtime_supervisor_process", return_value=handle) as start:
             ui._start_runtime_supervisor()
 
-        start.assert_called_once_with(parent_pid=os.getpid(), prewarm_templates=True)
+        start.assert_called_once_with(
+            parent_pid=os.getpid(),
+            prewarm_templates=True,
+            pending_job_callback=ui._register_pending_process_job,
+        )
         self.assertIs(ui.runtime_supervisor, handle)
         ui._start_supervisor_lease_thread.assert_called_once_with()
         ui._restore_persisted_game_overlay.assert_called_once_with()
 
+    def test_pending_bootstrap_job_is_closed_during_desktop_exit(self):
+        from hextech.interfaces.desktop.app import HextechUI
+
+        ui = HextechUI.__new__(HextechUI)
+        ui._pending_process_jobs = {}
+        ui._pending_process_jobs_lock = threading.Lock()
+        ui._closing = False
+        job = mock.Mock()
+        ui._register_pending_process_job(123, job)
+        ui._close_pending_process_jobs()
+
+        job.close.assert_called_once_with()
+        self.assertEqual(ui._pending_process_jobs, {})
+
+    def test_foreign_role_preflight_blocks_live_orphan_but_ignores_pid_reuse(self):
+        from hextech.interfaces.desktop.app import HextechUI
+
+        ui = HextechUI.__new__(HextechUI)
+        process = psutil.Process(os.getpid())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state"
+            state.mkdir(parents=True)
+            visibility = state / "game_overlay_visibility.v1.json"
+            payload = {
+                "schema_version": 2,
+                "pid": os.getpid(),
+                "pid_started_at": process.create_time(),
+                "executable": os.path.normcase(process.exe()),
+                "build_id": "old-build",
+            }
+            visibility.write_text(json.dumps(payload), encoding="utf-8")
+            with mock.patch("hextech.modules.data.ports.paths.get_var_dir", return_value=root):
+                with self.assertRaisesRegex(RuntimeError, "host:pid"):
+                    ui._assert_no_foreign_runtime_roles()
+                payload["pid_started_at"] = process.create_time() - 100.0
+                visibility.write_text(json.dumps(payload), encoding="utf-8")
+                ui._assert_no_foreign_runtime_roles()
     def test_desktop_ui_defers_persisted_game_overlay_until_supervisor_ready(self):
         from hextech.interfaces.desktop.app import HextechUI
 
         ui = HextechUI.__new__(HextechUI)
         ui.feature_flags = {"web_frontend_enabled": True, "game_overlay_enabled": True}
         ui._game_overlay_desired_enabled = False
-        ui._toggle_web_frontend = mock.Mock()
         ui._toggle_game_overlay = mock.Mock()
         ui.runtime_supervisor = None
 
         ui._apply_persisted_feature_flags()
 
-        ui._toggle_web_frontend.assert_called_once_with()
         ui._toggle_game_overlay.assert_not_called()
         self.assertTrue(ui._game_overlay_desired_enabled)
 
@@ -686,6 +737,40 @@ class RuntimeSupervisorDesktopIntegrationTests(unittest.TestCase):
         ui._restore_persisted_game_overlay()
 
         ui._toggle_game_overlay.assert_called_once_with()
+
+    def test_desktop_ui_restores_persisted_web_in_bootstrap_thread(self):
+        from hextech.interfaces.desktop import app_bootstrap
+        from hextech.interfaces.desktop.app import HextechUI
+
+        process = object()
+        manager = mock.Mock()
+        manager.web.process = process
+        ui = HextechUI.__new__(HextechUI)
+        ui.feature_flags = {"web_frontend_enabled": True, "auto_open_browser": False}
+        ui.service_manager = manager
+        ui.web_process = None
+
+        with mock.patch.object(app_bootstrap.ui_runtime, "open_companion_browser") as open_browser:
+            self.assertTrue(ui._restore_persisted_web_frontend())
+        manager.start_web.assert_called_once_with()
+        self.assertIs(ui.web_process, process)
+        open_browser.assert_not_called()
+
+    def test_desktop_ui_web_restore_failure_keeps_preference(self):
+        from hextech.interfaces.desktop.app import HextechUI
+
+        manager = mock.Mock()
+        manager.start_web.side_effect = RuntimeError("port busy")
+        ui = HextechUI.__new__(HextechUI)
+        ui.feature_flags = {"web_frontend_enabled": True, "auto_open_browser": False}
+        ui.service_manager = manager
+        ui.web_process = object()
+
+        self.assertFalse(ui._restore_persisted_web_frontend())
+
+        self.assertTrue(ui.feature_flags["web_frontend_enabled"])
+        self.assertIsNone(ui.web_process)
+        manager.stop_web.assert_called_once_with()
 
     def test_desktop_ui_game_overlay_toggle_uses_supervisor_action(self):
         from hextech.interfaces.desktop.app import HextechUI

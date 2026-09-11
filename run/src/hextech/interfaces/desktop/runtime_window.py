@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlparse
 
 import psutil
+import pywintypes
 import requests
 import urllib3
 import win32gui
@@ -52,8 +53,8 @@ from PIL import Image, ImageDraw, ImageTk
 from hextech.modules.game_context.client import ClientContextProvider, parse_client_context
 from hextech.interfaces.overlay import context as overlay_context
 from hextech.interfaces.overlay.gameflow import probe_lcu_gameflow_in_progress, probe_live_client_in_progress
-from hextech.modules.vision.window import find_lol_game_window, is_window_renderable
-from hextech.modules.vision.window_titles import LOL_CLIENT_WINDOW_TITLE
+from hextech.modules.vision.client_window import resolve_lol_client_window
+from hextech.modules.vision.window import find_lol_game_window, is_window_renderable, window_display_context
 from hextech.modules.data.ports.paths import BASE_DIR, CHAMPION_ASSET_DIR, var_path
 from hextech.modules.vision.image_validation import is_valid_png_bytes
 
@@ -81,34 +82,44 @@ from hextech.interfaces.desktop.runtime_interaction import (
 )
 
 def lcu_polling_loop(ui: "HextechUI") -> None:
-    """优先读取 Web live_state，失败时回退本地 LCU，持续同步可用英雄集合。"""
+    """复用本地 LCU 单在途读取，先发布轻量阶段，再更新英雄列表。"""
+    previous_client_hwnd = 0
     while not ui.stop_event.is_set():
         if ui.pause_event.is_set():
-            time.sleep(1)
+            ui.stop_event.wait(1.0)
             continue
 
-        available_ids = None
-        payload = None
-        if _web_frontend_available(ui):
-            try:
-                available_ids, payload = _fetch_web_live_state(ui)
-            except Exception:
-                available_ids = None
-                payload = None
+        controller = ui._desktop_window_presentation
+        try:
+            client_probe = resolve_lol_client_window(previous_hwnd=previous_client_hwnd)
+            requested_hwnd = int(client_probe.hwnd if client_probe.status == "found" else 0)
+            if requested_hwnd:
+                previous_client_hwnd = requested_hwnd
+            groups = _fallback_live_state(ui) or {}
+            if ui.stop_event.is_set():
+                break
+            controller.publish_phase(groups, client_hwnd=requested_hwnd, observed_at=time.time())
+            controller.publish_candidates(groups)
+        except Exception:
+            logger.exception("备战席选人状态读取失败，保留有界上下文。")
+        controller.wait_for_phase_poll(ui.stop_event)
 
-        if available_ids is None:
-            available_ids = _fallback_live_state(ui)
-            payload = None
-            source = "lcu"
-        else:
-            source = "web"
 
-        if available_ids is None:
-            available_ids = set()
-
-        _sync_candidate_ids(ui, available_ids, source=source, payload=payload)
-        _drain_preload_pending(ui)
-        time.sleep(1.5)
+def candidate_update_loop(ui: "HextechUI") -> None:
+    """列表/预热独立串行消费最新候选；HTTP与统计准备不能阻塞轻量阶段轮询。"""
+    controller = ui._desktop_window_presentation
+    while not ui.stop_event.is_set():
+        groups = controller.take_candidates()
+        if groups is None or ui.stop_event.is_set():
+            continue
+        try:
+            _sync_candidate_ids(ui, groups, source="lcu", payload=None)
+            if not ui.stop_event.is_set():
+                _drain_preload_pending(ui)
+        except Exception:
+            logger.exception("备战席列表更新失败，下一候选继续重试。")
+        # 保留既有列表/预热的1.5s负载预算；只有轻量阶段加速到250ms，避免重复预热积压。
+        ui.stop_event.wait(1.5)
 
 
 def _apply_rounded_corner(img: "Image.Image", radius: int = 8) -> "Image.Image":
@@ -161,17 +172,11 @@ def _monitor_workarea(hwnd: int) -> tuple[int, int, int, int] | None:
     """返回窗口所在显示器的工作区 (left, top, right, bottom)；失败返回 None。"""
 
     try:
-        user32 = ctypes.windll.user32
-        # MONITOR_DEFAULTTONEAREST = 2
-        monitor = user32.MonitorFromWindow(int(hwnd), 2)
-        if not monitor:
-            return None
-        info = _Win32MonitorInfo()
-        info.cbSize = ctypes.sizeof(_Win32MonitorInfo)
-        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
-            return None
-        work = info.rcWork
-        return (int(work.left), int(work.top), int(work.right), int(work.bottom))
+        import win32api
+
+        # pywin32 保留完整 HMONITOR；ctypes 默认 c_int 会截断 64 位句柄。
+        monitor = win32api.MonitorFromWindow(int(hwnd), 2)
+        return tuple(int(value) for value in win32api.GetMonitorInfo(monitor)["Work"])
     except Exception:
         logger.debug("读取显示器工作区失败。", exc_info=True)
         return None
@@ -183,23 +188,73 @@ def _avatar_pixel_size(ui: "HextechUI") -> int:
     return max(1, round(48 * float(getattr(ui, "_ui_scale", 1.0))))
 
 
-def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
+def _monitor_dpi(monitor) -> float:
+    from ctypes import wintypes
+    query = ctypes.windll.shcore.GetDpiForMonitor
+    query.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.POINTER(wintypes.UINT), ctypes.POINTER(wintypes.UINT)]
+    query.restype = ctypes.c_long
+    x, y = wintypes.UINT(), wintypes.UINT()
+    if query(int(monitor), 0, ctypes.byref(x), ctypes.byref(y)) != 0 or not x.value or x.value != y.value:
+        raise ValueError("monitor DPI unavailable")
+    return x.value / 96.0
+
+
+def _desktop_monitors():
+    import win32api
+    from .responsive_layout import DesktopMonitor
+    result = []
+    try:
+        displays = win32api.EnumDisplayMonitors()
+    except (AttributeError, OSError, TypeError, ValueError, pywintypes.error):
+        logger.debug("显示器拓扑暂不可用。", exc_info=True)
+        return None
+    incomplete = False
+    for monitor, _dc, _rect in displays:
+        try:
+            info = win32api.GetMonitorInfo(monitor)
+            result.append(DesktopMonitor(str(info["Device"]),tuple(info["Work"]),_monitor_dpi(monitor),tuple(info["Monitor"])))
+        except (AttributeError, OSError, TypeError, ValueError, pywintypes.error):
+            incomplete = True
+            logger.debug("单个显示器上下文暂不可用，保留上一份完整拓扑。", exc_info=True)
+    return tuple(result) if result and not incomplete else None
+
+
+def _select_desktop_monitor_topology(previous, observed):
+    """探针失败保留上一份；成功的较小集合代表真实断开并立即采用。"""
+    return previous if observed is None else observed
+
+
+def _client_display_context(hwnd: int) -> dict[str, object]:
+    """PMv2调用方读取目标显示器有效DPI，不继承外部客户端的DPI感知模式。"""
+    import win32api
+    result = window_display_context(hwnd, force=True)
+    try:
+        monitor = win32api.MonitorFromWindow(hwnd, 2)
+        result["dpi_scale"] = _monitor_dpi(monitor)
+        result["dpi_source"] = "monitor_effective"
+    except (AttributeError, OSError, TypeError, ValueError, pywintypes.error):
+        result.update(dpi_scale=0.0, status="unavailable")
+    return result
+
+
+def load_and_set_img(ui: "HextechUI", champ_id, label, *, request_key=None) -> None:
     """按运行缓存、只读 seed 顺序加载头像；远端结果只写 ``var``。"""
     try:
-        if not label.winfo_exists():
+        if getattr(ui, "_closing", False):
             return
-        avatar_px = _avatar_pixel_size(ui)
+        avatar_px = request_key[1] if request_key is not None else _avatar_pixel_size(ui)
+        revision = request_key[2] if request_key is not None else getattr(ui, "_avatar_revision", 0)
+        def current_request():
+            return (not getattr(ui, "_closing", False) and revision == getattr(ui, "_avatar_revision", 0)
+                    and (request_key is None or getattr(label, "_hextech_avatar_request_key", None) == request_key))
 
         def _publish_cached(photo) -> None:
-            if label.winfo_exists():
+            if current_request() and label.winfo_exists():
                 label.config(image=photo)
+                label._hextech_avatar_photo = photo
                 # 标记供 keyed 增量渲染判断是否还需补载头像。
                 label._hextech_avatar_loaded = True
-
-        if champ_id in ui.image_cache:
-            cached_photo = ui.image_cache[champ_id]
-            ui._run_on_ui_thread(lambda p=cached_photo: _publish_cached(p))
-            return
+                label._hextech_avatar_loaded_key = request_key
 
         filename = f"{champ_id}.png"
         cache_path = var_path("cache", "assets", "champions", filename)
@@ -229,11 +284,16 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
         safe_img = img.copy()
 
         def _publish_loaded(image_obj=safe_img) -> None:
-            photo = ImageTk.PhotoImage(image_obj)
-            ui.image_cache[champ_id] = photo
-            if label.winfo_exists():
-                label.config(image=photo)
-                label._hextech_avatar_loaded = True
+            if not current_request() or not label.winfo_exists():
+                return
+            key = (str(champ_id), avatar_px)
+            photo = ui.image_cache.get(key)
+            if photo is None:
+                photo = ImageTk.PhotoImage(image_obj)
+                if len(ui.image_cache) >= 64:
+                    ui.image_cache.clear()
+                ui.image_cache[key] = photo
+            _publish_cached(photo)
 
         ui._run_on_ui_thread(_publish_loaded)
     except Exception:
@@ -241,253 +301,103 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
 
 
 def window_sync_loop(ui: "HextechUI") -> None:
-    """根据客户端和游戏窗口状态控制伴生窗口显隐、置顶与持续跟随。"""
-    # 函数级导入：app_shared 模块级依赖 runtime → runtime_window，反向导入会成环
-    from hextech.interfaces.desktop.app_shared import resolve_overlay_follow_height
+    """只读窗口探测器；HTTP 独立执行，任何 Tk 操作都交给呈现 owner。"""
+    from hextech.interfaces.desktop.window_presentation import DesktopWindowObservation
 
-    manual_follow_cooldown = 8.0
-    hide_grace_seconds = 1.0
-    follow_resume_distance = 32
-    last_visible_at = 0.0
-    last_client_interaction_at = 0.0
-    last_client_hwnd = None
-    last_gameflow_checked_at = 0.0
-    cached_gameflow_in_progress = False
-    cached_live_client_in_progress = False
+    controller = ui._desktop_window_presentation
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="desktop-gameflow")
+    pending = None
+    pending_game_hwnd = 0
+    pending_client_hwnd = 0
+    flow_client_hwnd = 0
+    last_flow_at = 0.0
+    flow_active = False
+    flow_known = False
+    flow_observed_at = 0.0
+    previous_game_hwnd = 0
+    previous_client_hwnd = 0
+    monitors = ()
+    last_monitors_at = 0.0
 
-    def _is_stale_window_handle_error(exc: BaseException) -> bool:
-        if getattr(exc, "winerror", None) == 1400:
-            return True
-        return bool(getattr(exc, "args", ()) and exc.args[0] == 1400)
+    def read_gameflow() -> tuple[bool | None, float]:
+        live = probe_live_client_in_progress()
+        value = True if live is True else probe_lcu_gameflow_in_progress()
+        return value, time.time()
 
-    def _foreground_belongs_to_client(hwnd: int | None, foreground_hwnd: int | None) -> bool:
-        if not hwnd or not foreground_hwnd:
-            return False
-        if foreground_hwnd == hwnd:
-            return True
-        try:
-            return win32gui.IsChild(hwnd, foreground_hwnd)
-        except Exception:
-            return False
+    def belongs(parent: int, foreground: int) -> bool:
+        return bool(parent and foreground and (parent == foreground or win32gui.IsChild(parent, foreground)))
 
-    def _has_recent_client_context(now_ts: float) -> bool:
-        return (now_ts - last_client_interaction_at) < hide_grace_seconds
-
-    def _target_overlay_position(hwnd_client: int, client_rect: tuple[int, int, int, int]) -> tuple[int, int, int]:
-        """吸附目标 (x, y, height)：贴客户端内容区右上角，高度按客户端底缘压缩。"""
-        try:
-            client_area = win32gui.GetClientRect(hwnd_client)
-            target_x, target_y = win32gui.ClientToScreen(hwnd_client, (client_area[2], 0))
-            _, content_bottom = win32gui.ClientToScreen(hwnd_client, (0, client_area[3]))
-            target = (int(target_x), int(target_y))
-            client_bottom = int(content_bottom)
-        except Exception:
-            logger.debug("计算客户端内容区右侧坐标失败，回退到窗口外框。", exc_info=True)
-            target = (int(client_rect[2]), int(client_rect[1]))
-            client_bottom = int(client_rect[3])
-        # 客户端贴近屏幕右缘时按工作区钳制吸附坐标，防止悬浮窗被推出屏外
-        workarea = _monitor_workarea(hwnd_client)
-        workarea_bottom: int | None = None
-        if workarea is not None:
-            left, top, right, bottom = workarea
-            overlay_width = int(getattr(ui, "_overlay_pixel_width", 320))
-            max_x = max(left, right - overlay_width)
-            clamped_x = min(max(target[0], left), max_x)
-            clamped_y = min(max(target[1], top), max(top, bottom - 200))
-            target = (clamped_x, clamped_y)
-            workarea_bottom = int(bottom)
-        height = resolve_overlay_follow_height(target[1], client_bottom, workarea_bottom)
-        return (target[0], target[1], height)
-
-    def _client_rect_jump_detected(current_rect: tuple[int, int, int, int], previous_rect: tuple[int, int, int, int] | None) -> bool:
-        if not previous_rect:
-            return False
-        return (
-            abs(current_rect[0] - previous_rect[0]) > follow_resume_distance
-            or abs(current_rect[1] - previous_rect[1]) > follow_resume_distance
-            or abs(current_rect[2] - previous_rect[2]) > follow_resume_distance
-            or abs(current_rect[3] - previous_rect[3]) > follow_resume_distance
-        )
-
-    def _update_overlay_position(target_pos: tuple[int, int, int]) -> None:
-        ui._run_on_ui_thread(lambda pos=target_pos: ui._move_overlay_to(pos[0], pos[1], height=pos[2]))
-
-    def _should_keep_overlay_visible(client_active: bool, overlay_active: bool, now_ts: float) -> bool:
-        return client_active or overlay_active or _has_recent_client_context(now_ts)
-
-    def _set_client_interaction(now_ts: float, hwnd: int | None) -> None:
-        nonlocal last_client_interaction_at, last_client_hwnd
-        last_client_interaction_at = now_ts
-        last_client_hwnd = hwnd
-
-    def _reset_client_tracking() -> None:
-        nonlocal last_client_hwnd
-        last_client_hwnd = None
-        ui._last_client_rect = None
-        # LCU 客户端消失或切走时重置"首次吸附完成"标志，
-        # 下次再次出现时仍能立即吸附而不必等客户端窗口实际位移
-        ui._overlay_position_initialized = False
-
-    def _resume_follow_if_ready(client_rect: tuple[int, int, int, int], target_pos: tuple[int, int, int]) -> None:
-        client_jump_detected = _client_rect_jump_detected(client_rect, ui._last_client_rect)
-        if client_jump_detected and ui._manual_follow_cooldown_elapsed(manual_follow_cooldown):
-            ui._resume_auto_follow()
-        if ui._auto_follow_enabled:
-            _update_overlay_position(target_pos)
-        elif ui._manual_follow_cooldown_elapsed(manual_follow_cooldown):
-            ui._resume_auto_follow()
-            _update_overlay_position(target_pos)
-
-    def _sync_overlay_follow(hwnd_client: int, client_rect: tuple[int, int, int, int], should_show_overlay: bool) -> None:
-        if not should_show_overlay:
-            ui._last_client_rect = client_rect
-            return
-        rect_changed = client_rect != ui._last_client_rect
-        # 首次显示时即使客户端窗口没动也强制吸附一次，避免玩家"挪一下客户端才跟随"的体感
-        first_show = not ui._overlay_position_initialized
-        target_pos = _target_overlay_position(hwnd_client, client_rect)
-        if rect_changed or first_show:
-            _resume_follow_if_ready(client_rect, target_pos)
-            if ui._auto_follow_enabled:
-                ui._overlay_position_initialized = True
-        ui._last_client_rect = client_rect
-
-    def _set_overlay_visibility(should_show_overlay: bool, should_keep_topmost: bool, now_ts: float) -> None:
-        if should_show_overlay:
-            nonlocal last_visible_at
-            last_visible_at = now_ts
-            ui._show_overlay(topmost=should_keep_topmost)
-            return
-        if ui._window_visible and (now_ts - last_visible_at) < hide_grace_seconds:
-            ui._set_window_topmost(False)
-            return
-        ui._hide_overlay()
-
-    def _update_client_visibility(now_ts: float, hwnd_client: int | None, client_visible: bool, client_active: bool) -> None:
-        if client_visible and client_active:
-            _set_client_interaction(now_ts, hwnd_client)
-        elif not client_visible:
-            _reset_client_tracking()
-
-    def _is_same_client_window(hwnd: int | None) -> bool:
-        return bool(hwnd and last_client_hwnd and hwnd == last_client_hwnd)
-
-    def _sync_for_client(hwnd_client: int | None, client_visible: bool, should_show_overlay: bool) -> None:
-        if not client_visible or not hwnd_client:
-            _reset_client_tracking()
-            if ui._manual_follow_cooldown_elapsed(manual_follow_cooldown):
-                ui._resume_auto_follow()
-            return
-        try:
-            client_rect = win32gui.GetWindowRect(hwnd_client)
-        except Exception as exc:
-            if not _is_stale_window_handle_error(exc):
-                raise
-            logger.debug("客户端窗口句柄已失效，暂停伴生窗跟随并等待下一轮重扫。")
-            _reset_client_tracking()
-            ui._hide_overlay()
-            return
-        _sync_overlay_follow(hwnd_client, client_rect, should_show_overlay)
-
-    def _client_active(is_client_fg: bool) -> bool:
-        return is_client_fg
-
-    def _client_or_overlay_active(is_client_fg: bool, is_self_fg_value: bool) -> tuple[bool, bool]:
-        client_active = _client_active(is_client_fg)
-        overlay_active = ui._window_visible and is_self_fg_value
-        return client_active, overlay_active
-
-    def _resolve_client_visibility(hwnd_client: int | None) -> bool:
-        if not hwnd_client:
-            return False
-        try:
-            return bool(win32gui.IsWindowVisible(hwnd_client) and not win32gui.IsIconic(hwnd_client))
-        except Exception as exc:
-            if not _is_stale_window_handle_error(exc):
-                raise
-            logger.debug("客户端窗口句柄已失效，按不可见处理并等待下一轮重扫。")
-            _reset_client_tracking()
-            return False
-
-    def _resolve_game_visibility(hwnd_game: int | None) -> bool:
-        return is_window_renderable(hwnd_game)
-
-    def _resolve_gameflow_visibility(now_ts: float) -> tuple[bool, bool]:
-        nonlocal last_gameflow_checked_at, cached_gameflow_in_progress, cached_live_client_in_progress
-        if now_ts - last_gameflow_checked_at < GAMEFLOW_VISIBILITY_POLL_SECONDS:
-            return cached_gameflow_in_progress, cached_live_client_in_progress
-        last_gameflow_checked_at = now_ts
-        try:
-            live_state = probe_live_client_in_progress()
-        except Exception:
-            logger.debug("检查 Live Client 对局状态失败。", exc_info=True)
-            live_state = None
-        live_in_progress = live_state is True
-        gameflow_in_progress = live_in_progress
-        if not gameflow_in_progress:
+    try:
+        while not ui.stop_event.is_set():
+            poll_delay = .1
             try:
-                gameflow_state = probe_lcu_gameflow_in_progress()
-            except Exception:
-                logger.debug("检查 LCU gameflow 状态失败。", exc_info=True)
-                gameflow_state = None
-            gameflow_in_progress = gameflow_state is True
-        cached_gameflow_in_progress = bool(gameflow_in_progress)
-        cached_live_client_in_progress = bool(live_in_progress)
-        return cached_gameflow_in_progress, cached_live_client_in_progress
-
-    def _resolve_foreground_title(foreground_hwnd: int | None) -> str:
-        return win32gui.GetWindowText(foreground_hwnd) if foreground_hwnd else ""
-
-    def _resolve_self_fg(foreground_title: str) -> bool:
-        return "Hextech" in foreground_title
-
-    def _resolve_client_fg(hwnd_client: int | None, foreground_hwnd: int | None) -> bool:
-        return _foreground_belongs_to_client(hwnd_client, foreground_hwnd)
-
-    def _loop_once(now_ts: float) -> None:
-        hwnd_client = win32gui.FindWindow(None, LOL_CLIENT_WINDOW_TITLE)
-        game_target = find_lol_game_window()
-        hwnd_game = game_target[0] if game_target is not None else None
-        fg_window = win32gui.GetForegroundWindow()
-        fg_title = _resolve_foreground_title(fg_window)
-        is_client_fg = _resolve_client_fg(hwnd_client, fg_window)
-        is_self_fg = _resolve_self_fg(fg_title)
-        game_hwnd_renderable = _resolve_game_visibility(hwnd_game)
-        gameflow_in_progress, live_client_in_progress = _resolve_gameflow_visibility(now_ts)
-        client_visible = _resolve_client_visibility(hwnd_client)
-        client_active, overlay_active = _client_or_overlay_active(is_client_fg, is_self_fg)
-        _update_client_visibility(now_ts, hwnd_client, client_visible, client_active)
-        should_show_overlay, should_keep_topmost = resolve_client_overlay_policy(
-            client_visible=client_visible,
-            game_hwnd_renderable=game_hwnd_renderable,
-            gameflow_in_progress=gameflow_in_progress,
-            live_client_in_progress=live_client_in_progress,
-            client_active=client_active,
-            overlay_active=overlay_active,
-            recent_client_context=_has_recent_client_context(now_ts),
-        )
-        manual_visible_until = float(getattr(ui, "_manual_window_visible_until", 0.0) or 0.0)
-        if (
-            not game_hwnd_renderable
-            and not gameflow_in_progress
-            and not live_client_in_progress
-            and time.monotonic() < manual_visible_until
-        ):
-            # 托盘或第二次快捷方式唤醒应可手动查看窗口，但实际对局始终优先隐藏。
-            should_show_overlay, should_keep_topmost = True, False
-        _set_overlay_visibility(should_show_overlay, should_keep_topmost, now_ts)
-        _sync_for_client(hwnd_client, client_visible, should_show_overlay)
-
-
-    while not ui.stop_event.is_set():
-        if ui.pause_event.is_set():
-            time.sleep(1)
-            continue
-        try:
-            now = time.time()
-            _loop_once(now)
-        except Exception:
-            logger.exception("窗口同步循环异常。")
-        time.sleep(0.2)
+                now = time.time()
+                if now - last_monitors_at >= 1.0:
+                    monitors = _select_desktop_monitor_topology(monitors, _desktop_monitors())
+                    last_monitors_at = now
+                if ui.pause_event.is_set():
+                    controller.publish_window(DesktopWindowObservation(observed_at=now))
+                    time.sleep(.2)
+                    continue
+                client_probe = resolve_lol_client_window(previous_hwnd=previous_client_hwnd)
+                client = int(client_probe.hwnd if client_probe.status == "found" else 0)
+                if client:
+                    previous_client_hwnd = client
+                game_target = find_lol_game_window(include_nonrenderable=True)
+                game_hwnd = int(game_target[0]) if game_target is not None else 0
+                if game_hwnd != previous_game_hwnd:
+                    flow_active = False
+                    flow_known = False
+                    flow_observed_at = 0.0
+                    previous_game_hwnd = game_hwnd
+                    last_flow_at = 0.0
+                if pending is not None and pending.done():
+                    if pending_game_hwnd == game_hwnd and pending_client_hwnd == client:
+                        try:
+                            value, flow_observed_at = pending.result()
+                            flow_active = value is True
+                            flow_known = value is not None
+                            flow_client_hwnd = client
+                        except Exception:
+                            logger.debug("备战席 gameflow 探测暂不可用。", exc_info=True)
+                    pending = None
+                if game_hwnd:
+                    # 游戏窗口即使最小化仍属于实际对局；旧 HTTP 不能覆盖此硬门。
+                    flow_active = False
+                elif pending is None and now - last_flow_at >= GAMEFLOW_VISIBILITY_POLL_SECONDS:
+                    last_flow_at = now
+                    pending_game_hwnd = game_hwnd
+                    pending_client_hwnd = client
+                    pending = executor.submit(read_gameflow)
+                foreground = int(win32gui.GetForegroundWindow() or 0)
+                poll_delay = .05 if belongs(client, foreground) else .1
+                visible = bool(client and win32gui.IsWindowVisible(client) and not win32gui.IsIconic(client))
+                rect = client_probe.client_rect if client_probe.status == "found" else None
+                area = None
+                display = {}
+                if visible:
+                    area = _monitor_workarea(client)
+                    display = _client_display_context(client)
+                controller.publish_window(DesktopWindowObservation(
+                    client_hwnd=client, foreground_hwnd=foreground, client_rect=rect, workarea=area, client_visible=visible,
+                    client_active=belongs(client, foreground),
+                    overlay_active=belongs(int(getattr(ui, "_desktop_hwnd", 0)), foreground),
+                    game_visible=bool(game_hwnd), gameflow_in_progress=flow_active, observed_at=now,
+                    gameflow_known=flow_known, gameflow_observed_at=flow_observed_at,
+                    gameflow_client_hwnd=flow_client_hwnd,
+                    dpi_scale=float(display.get("dpi_scale") or 0),
+                    monitor_device=str(display.get("monitor_device") or ""),
+                    monitors=monitors,
+                    client_probe_status=client_probe.status, client_probe_reason=client_probe.reason,
+                    client_process_id=client_probe.process_id, client_candidate_count=client_probe.candidate_count,
+                ))
+            except Exception as exc:
+                # 失效句柄/权限等只发布不可见观察，不保留可能已失效的旧定位回调。
+                controller.publish_window(DesktopWindowObservation(observed_at=time.time()))
+                if getattr(exc, "winerror", 0) != 1400 and not (exc.args and exc.args[0] == 1400):
+                    logger.exception("窗口同步循环异常。")
+            ui.stop_event.wait(poll_delay)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 __all__ = [name for name in globals() if not name.startswith("__")]

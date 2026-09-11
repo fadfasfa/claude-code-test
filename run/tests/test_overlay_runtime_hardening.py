@@ -6,7 +6,8 @@ import json
 import threading
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from hextech.interfaces.overlay import host_geometry
 
 
 def test_window_target_poller_uses_keyword_call_and_recovers_after_error() -> None:
@@ -61,8 +62,18 @@ def test_sidecar_window_observation_wins_and_records_desync() -> None:
         "ok": True,
         "source": {"window_hwnd": 200, "client_rect": [10, 20, 2570, 1620]},
     }
-    with patch.object(host_sync, "is_window_renderable", return_value=True):
-        host_sync._refresh_target_window(object(), {}, visibility, snapshot)
+    root = Mock()
+    with (
+        patch.object(host_sync, "is_window_renderable", return_value=True),
+        patch.object(host_geometry, "is_window_renderable", return_value=True),
+        patch.object(host_geometry, "_window_client_rect", return_value=(10, 20, 2570, 1620)),
+        patch.object(host_geometry, "_apply_overlay_rect") as apply_rect,
+        patch.object(host_geometry, "_ensure_overlay_window_styles"),
+    ):
+        host_sync._refresh_target_window(root, {}, visibility, snapshot)
+    apply_rect.assert_called_once_with(root, (10, 20, 2570, 1620))
+    root.geometry.assert_called_once()
+    root.update_idletasks.assert_called_once()
 
     assert visibility["target_hwnd"] == 200
     assert visibility["window_source"] == "sidecar"
@@ -112,8 +123,12 @@ def test_window_poller_identity_reaches_host_sidecar_desync_gate() -> None:
                 "game_instance_id": "sidecar-game",
             },
         }
-        with patch.object(host_sync, "is_window_renderable", return_value=True):
-            host_sync._refresh_target_window(object(), {}, visibility, snapshot)
+        with (
+            patch.object(host_sync, "is_window_renderable", return_value=True),
+            patch.object(host_geometry, "_apply_overlay_rect"),
+            patch.object(host_geometry, "_ensure_overlay_window_styles"),
+        ):
+            host_sync._refresh_target_window(Mock(), {}, visibility, snapshot)
         assert visibility["host_game_instance_id"] == "host-game"
         assert visibility["sidecar_game_instance_id"] == "sidecar-game"
         assert visibility["game_identity_desync"] is True

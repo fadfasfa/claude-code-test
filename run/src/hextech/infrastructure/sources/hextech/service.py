@@ -219,6 +219,16 @@ def _main_scraper_impl(
             )
         aug_data = aug_response.json()
         metadata_ids = _metadata_stat_ids(aug_data)
+        metadata_entries = {
+            source_id: dict(aug_data[source_id])
+            for source_id in metadata_ids
+            if isinstance(aug_data.get(source_id), dict)
+        }
+        enabled_metadata_ids = {
+            source_id
+            for source_id, item in metadata_entries.items()
+            if bool(item.get("enabled", True))
+        }
         upstream_version, upstream_date = _upstream_metadata_summary(aug_response, aug_data)
         upstream_marker_sha256 = _metadata_marker_sha256(aug_data)
 
@@ -273,7 +283,8 @@ def _main_scraper_impl(
             )
         try:
             stats_list = build_expected_champions(core_data, stats_list)
-        except ChampionCatalogMismatch:
+        except ChampionCatalogMismatch as exc:
+            attempt["failure_diagnostics"] = exc.diagnostics()
             return _finish_refresh_failure(
                 "schema_changed",
                 started_at=started_at,
@@ -300,6 +311,7 @@ def _main_scraper_impl(
     preflight_id = ""
     preflight_result: dict = {}
     preflight_rows: list = []
+    observed_detail_ids: set[str] = set()
 
     def fetch_champ_detail(champ: dict, *, timeout: int, preflight_rows: list | None = None) -> dict:
         if preflight_rows is not None:
@@ -309,6 +321,7 @@ def _main_scraper_impl(
                 "champ": champ,
                 "name": c_name,
                 "rows": list(preflight_rows),
+                "observed_ids": list(preflight_result.get("observed_ids") or []),
                 "reason": "",
                 "status_code": preflight_result.get("status_code"),
                 "url": preflight_result.get("url", ""),
@@ -351,6 +364,7 @@ def _main_scraper_impl(
             return pass_rows, failures, "detail_pass_draining"
 
         for champ, item in outcome.results:
+            observed_detail_ids.update(str(value) for value in item.get("observed_ids") or [] if str(value))
             if item["rows"]:
                 pass_rows.extend(item["rows"])
             else:
@@ -364,6 +378,7 @@ def _main_scraper_impl(
                 "champ": champ,
                 "name": "",
                 "rows": [],
+                "observed_ids": [],
                 "reason": "worker_error",
                 "status_code": None,
                 "url": "",
@@ -387,6 +402,7 @@ def _main_scraper_impl(
                     "champ": champ,
                     "name": core_data.get(c_id, {}).get("name", c_id),
                     "rows": [],
+                    "observed_ids": [],
                     "reason": reason,
                     "status_code": None,
                     "url": "",
@@ -490,6 +506,11 @@ def _main_scraper_impl(
 
     if all_rows:
         df = pd.DataFrame(all_rows)
+        # disabled metadata 可能仍残留在历史详情响应中；它们不属于当前模式闭集，
+        # 不能进入统计代或反向扩大 production pool。
+        if "海克斯ID" in df.columns:
+            normalized_stat_ids = df["海克斯ID"].astype(str).str.replace(".0", "", regex=False)
+            df = df[normalized_stat_ids.isin(enabled_metadata_ids)].copy()
         df['胜率差'] = df['海克斯胜率'] - df['英雄胜率']
 
         wr_std = df['胜率差'].std()
@@ -546,9 +567,11 @@ def _main_scraper_impl(
                 outcomes=outcomes,
                 started_at=str(attempt["started_at"]),
                 metadata_ids=metadata_ids,
+                metadata_entries=metadata_entries,
                 upstream_version=upstream_version,
                 upstream_date=upstream_date,
                 upstream_marker_sha256=upstream_marker_sha256,
+                observed_source_ids=observed_detail_ids,
                 promote_current=promote_current,
                 pointer_output=pointer_output,
             )
@@ -557,7 +580,7 @@ def _main_scraper_impl(
             attempt["coverage"] = dict(exc.coverage or {})
             logging.error("Hextech 来源覆盖门禁失败：%s", exc)
             return _finish_refresh_failure(
-                "coverage_gate_failed",
+                exc.reason_code,
                 started_at=started_at,
                 attempt=attempt,
                 failure_stage="coverage_validation",

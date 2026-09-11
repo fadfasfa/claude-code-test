@@ -19,7 +19,16 @@ logger = logging.getLogger(__name__)
 
 
 def _empty_manifest() -> dict:
-    return {"catalog_files": [], "asset_files": [], "seed_files": [], "seed_sha256": {}, "source_files": []}
+    return {
+        "catalog_files": [],
+        "asset_files": [],
+        "seed_files": [],
+        "seed_sha256": {},
+        "cohort_seed": {},
+        "cohort_seed_files": [],
+        "cohort_seed_sha256": {},
+        "source_files": [],
+    }
 
 
 def _write_bundle_manifest_startup_warning(status: str, warning: str, manifest_path: Path) -> None:
@@ -44,12 +53,13 @@ def _write_bundle_manifest_startup_warning(status: str, warning: str, manifest_p
     atomic_write_json(status_path, payload)
 
 
-def _write_verified_snapshot_startup_status(snapshot_dir: Path) -> None:
+def _write_verified_snapshot_startup_status(snapshot_dir: Path, *, cohort_state: str = "") -> None:
     from hextech.modules.data.generation import DataSnapshotClient
 
     view = DataSnapshotClient(snapshot_dir).open_view()
     status = view.status()
     manifest = view.manifest
+    # 安装凭据来自 cohort_selection/validation_receipt；不改写真实抓取周期。
     status_path = Path(build_runtime_state_path("startup_status.json"))
     ensure_private_runtime_dir(status_path.parent)
     payload: dict = {}
@@ -59,6 +69,15 @@ def _write_verified_snapshot_startup_status(snapshot_dir: Path) -> None:
             if isinstance(loaded, dict):
                 payload = loaded
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+    selection: dict = {}
+    selection_path = snapshot_dir.parent / "state" / "data-service" / "cohort_selection.v1.json"
+    if selection_path.is_file():
+        try:
+            loaded_selection = json.loads(selection_path.read_text(encoding="utf-8"))
+            if isinstance(loaded_selection, dict):
+                selection = loaded_selection
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             pass
     payload.update(
         {
@@ -71,7 +90,11 @@ def _write_verified_snapshot_startup_status(snapshot_dir: Path) -> None:
             "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "data_snapshot": {
                 **status,
-                "source": "verified_bundle_seed",
+                "source": "runtime_restored" if cohort_state == "runtime_restored" else "verified_bundle_seed",
+                "cohort_install_state": cohort_state,
+                "selected_source": str(selection.get("selected_source") or ""),
+                "selected_generation_id": str(selection.get("selected_generation_id") or manifest.generation_id),
+                "bundle_generation_id": str(selection.get("bundle_generation_id") or ""),
                 "champion_count": manifest.champion_count,
                 "augment_count": manifest.augment_count,
                 "stat_record_count": manifest.stat_record_count,
@@ -117,11 +140,24 @@ def _sha256(path: Path) -> str:
 
 
 def seed_bundled_resources(*, bundle_root: str | Path, runtime_snapshot_dir: str | Path) -> bool:
-    """仅在没有 current 时播种完整 generation，指针始终最后落盘。"""
+    """优先安装完整 cohort；旧包仅在没有 current 时播种 generation。"""
 
     bundle_base = Path(bundle_root)
     snapshot_dir = Path(runtime_snapshot_dir)
-    if not bundle_base.is_dir() or (snapshot_dir / "current.v2.json").exists():
+    if not bundle_base.is_dir():
+        return False
+    from hextech.infrastructure.persistence.cohort_seed import install_bundled_cohort
+
+    cohort_state = install_bundled_cohort(
+        bundle_root=bundle_base,
+        runtime_root=snapshot_dir.parent,
+    )
+    if cohort_state in {"installed", "already_current", "runtime_restored"}:
+        _write_verified_snapshot_startup_status(snapshot_dir, cohort_state=cohort_state)
+        return cohort_state == "installed"
+    if cohort_state == "runtime_newer":
+        return False
+    if (snapshot_dir / "current.v2.json").exists():
         return False
     manifest = _load_bundle_manifest(bundle_base)
     hashes = manifest.get("seed_sha256")

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
+from hextech.modules.game_context.stage_context import coerce_player_level
 
 
 SCHEMA_VERSION = 1
@@ -31,6 +32,8 @@ _BROKER_METADATA_FIELDS = (
     "source_conflict",
     "context_revision",
     "fallback_reason",
+    "game_time_seconds",
+    "game_epoch_confirmation",
 )
 
 
@@ -117,6 +120,9 @@ def read_overlay_context(path: str | Path | None = None) -> dict[str, Any]:
         "health": clean_context_text(payload.get("health"), limit=48),
         "session_id": clean_context_text(payload.get("session_id"), limit=64),
     }
+    player_level = coerce_player_level(payload.get("player_level"))
+    if player_level is not None:
+        result["player_level"] = player_level
     for field in _BROKER_METADATA_FIELDS:
         if field in payload:
             result[field] = payload.get(field)

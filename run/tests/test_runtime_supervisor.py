@@ -76,6 +76,11 @@ class RuntimeSupervisorTests(unittest.TestCase):
                     "startup_seconds": 0.0,
                     "visible_reason": "",
                     "last_error": "",
+                    "host_startup_seconds": 7.25,
+                    "host_ready_state": "ready",
+                    "host_startup_attempts": [
+                        {"attempt": 1, "status": "ready", "ready_state": "ready"}
+                    ],
                 }
 
             def set_enabled(self, enabled: bool) -> dict:
@@ -99,10 +104,11 @@ class RuntimeSupervisorTests(unittest.TestCase):
 
         overlay = FakeOverlayRuntime()
         with tempfile.TemporaryDirectory() as tmp:
+            event_path = Path(tmp) / "events.jsonl"
             supervisor = RuntimeSupervisor(
                 parent_pid=0,
                 session_nonce="test-nonce",
-                event_log_path=Path(tmp) / "events.jsonl",
+                event_log_path=event_path,
                 overlay_runtime=overlay,
             )
             server = supervisor.serve_in_thread(port=0)
@@ -130,6 +136,12 @@ class RuntimeSupervisorTests(unittest.TestCase):
                 _, snapshot = _request(base, "GET", "/v1/status")
                 self.assertEqual(snapshot["components"]["game_overlay"]["status"], "running")
                 self.assertEqual(snapshot["components"]["game_overlay"]["host_pid"], 101)
+                events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+                completed_event = next(event for event in events if event["event"] == "game_overlay.completed")
+                self.assertEqual(completed_event["host_ready_state"], "ready")
+                self.assertEqual(completed_event["host_startup_seconds"], 7.25)
+                self.assertEqual(completed_event["host_startup_attempts"][0]["status"], "ready")
+                self.assertTrue(completed_event["build_id"])
             finally:
                 overlay.release.set()
                 server.shutdown()
@@ -377,3 +389,84 @@ class RuntimeSupervisorTests(unittest.TestCase):
                     release_sidecar.set()
                     start_thread.join(timeout=2)
                     runtime.set_enabled(False)
+
+
+def test_twenty_four_hour_lease_soak_does_not_append_success_renewals(tmp_path: Path) -> None:
+    from hextech.bootstrap.supervisor import RuntimeSupervisor
+
+    class Overlay:
+        def snapshot(self) -> dict:
+            return {"status": "stopped", "phase": "idle"}
+
+    target = tmp_path / "supervisor_events.v1.jsonl"
+    supervisor = RuntimeSupervisor(parent_pid=0, overlay_runtime=Overlay(), event_log_path=target)
+    for _ in range(43_200):
+        supervisor.renew_lease({"control_instance_id": "desktop-owner"})
+
+    assert supervisor.snapshot()["lease"]["state"] == "connected"
+    assert not target.exists()
+
+
+def test_supervisor_event_journal_rotates_to_one_megabyte_plus_three_segments(tmp_path: Path) -> None:
+    from hextech.bootstrap.supervisor import RuntimeSupervisor
+
+    class Overlay:
+        def snapshot(self) -> dict:
+            return {"status": "stopped", "phase": "idle"}
+
+    target = tmp_path / "supervisor_events.v1.jsonl"
+    supervisor = RuntimeSupervisor(parent_pid=0, overlay_runtime=Overlay(), event_log_path=target)
+    for index in range(700):
+        supervisor.append_event({"event": "test.transition", "sequence": index, "detail": "x" * 8000})
+
+    segments = sorted(tmp_path.glob("supervisor_events.v1.jsonl*"))
+    assert [path.name for path in segments] == [
+        "supervisor_events.v1.jsonl",
+        "supervisor_events.v1.jsonl.1",
+        "supervisor_events.v1.jsonl.2",
+        "supervisor_events.v1.jsonl.3",
+    ]
+    assert target.stat().st_size <= 1024 * 1024
+    assert sum(path.stat().st_size for path in segments) <= 4 * 1024 * 1024
+
+def test_sidecar_heartbeat_recovery_is_not_reported_as_restart(tmp_path: Path) -> None:
+    from hextech.bootstrap.supervisor import RuntimeSupervisor
+
+    class RecoveredOverlay:
+        def __init__(self) -> None:
+            self.recovered = False
+
+        def snapshot(self):
+            return (
+                {
+                    "desired_enabled": True,
+                    "status": "running",
+                    "phase": "sidecar_recovered",
+                    "sidecar_pid": 123,
+                }
+                if self.recovered
+                else {
+                    "desired_enabled": True,
+                    "status": "stale",
+                    "phase": "sidecar_stale",
+                    "sidecar_pid": 123,
+                }
+            )
+
+        def observe_data_generation(self):
+            return {"changed": False, "state": "stats_only"}
+
+        def prepare_sidecar_restart(self):
+            self.recovered = True
+            return False
+
+    event_path = tmp_path / "events.jsonl"
+    supervisor = RuntimeSupervisor(
+        parent_pid=0,
+        overlay_runtime=RecoveredOverlay(),
+        event_log_path=event_path,
+    )
+    supervisor.tick()
+
+    events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+    assert [event["event"] for event in events] == ["game_overlay.sidecar_recovered"]

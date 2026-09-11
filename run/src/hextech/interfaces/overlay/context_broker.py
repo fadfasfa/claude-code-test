@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import math
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from pathlib import Path
@@ -27,6 +28,8 @@ CONTEXT_BROKER_PUBLISHER = "overlay-context-broker"
 LIVE_CLIENT_PRIORITY = 300
 LCU_FALLBACK_PRIORITY = 200
 LCU_FALLBACK_TICKET_SECONDS = 120.0
+LIVE_GAME_TIME_TOLERANCE_SECONDS = 30.0
+_NEXT_GAME_TICKET = "__next_game__"
 
 
 class OverlayContextBroker:
@@ -41,6 +44,7 @@ class OverlayContextBroker:
         lcu_reader: Callable[..., tuple[dict[str, Any] | None, str]] = read_current_lcu_context_once,
         now: Callable[[], float] = time.time,
         fallback_ticket_seconds: float = LCU_FALLBACK_TICKET_SECONDS,
+        game_time_tolerance_seconds: float = LIVE_GAME_TIME_TOLERANCE_SECONDS,
     ) -> None:
         self.context_path = context_path
         self.window_probe = window_probe
@@ -48,6 +52,7 @@ class OverlayContextBroker:
         self.lcu_reader = lcu_reader
         self.now = now
         self.fallback_ticket_seconds = max(0.0, float(fallback_ticket_seconds))
+        self.game_time_tolerance_seconds = max(0.0, float(game_time_tolerance_seconds))
         self.publisher_instance_id = uuid.uuid4().hex
         self.context_provider = TypedGameContextProvider()
         self.publication_seq = 0
@@ -73,6 +78,38 @@ class OverlayContextBroker:
         if now - self._selection_ticket_seen_at > self.fallback_ticket_seconds:
             return None
         return deepcopy(self._selection_ticket)
+
+    def _ticket_for_game(self, now: float, game_instance_id: str) -> dict[str, Any] | None:
+        ticket = self._fresh_selection_ticket(now)
+        if ticket is None or not game_instance_id:
+            return None
+        if self._ticket_bound_game_instance not in {game_instance_id, _NEXT_GAME_TICKET}:
+            return None
+        return ticket
+
+    def _reset_selection_ticket(self) -> None:
+        self._selection_ticket = None
+        self._selection_ticket_seen_at = 0.0
+        self._ticket_bound_game_instance = ""
+
+    def _live_game_time_matches_epoch(
+        self,
+        payload: Mapping[str, Any] | None,
+        *,
+        now: float,
+        probe: WindowProbeResult,
+    ) -> bool:
+        if not self._valid_context(payload) or probe.status != "found":
+            return False
+        try:
+            game_time = float(payload.get("game_time_seconds"))
+            process_started_at = float(probe.process_started_at or 0.0)
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(game_time) or process_started_at <= 0.0:
+            return False
+        process_age = max(0.0, now - process_started_at)
+        return game_time <= process_age + self.game_time_tolerance_seconds
 
     def _decorate(
         self,
@@ -126,49 +163,70 @@ class OverlayContextBroker:
         probe = self.window_probe()
         current_game_instance = str(probe.game_instance_id or "") if probe.status == "found" else ""
         if current_game_instance != self._game_instance_id:
-            if (
-                current_game_instance
-                and self._ticket_bound_game_instance
-                and self._ticket_bound_game_instance != current_game_instance
-            ):
-                self._selection_ticket = None
-                self._selection_ticket_seen_at = 0.0
-                self._ticket_bound_game_instance = ""
+            previous_game_instance = self._game_instance_id
+            if not current_game_instance:
+                # 游戏窗口消失标志下一次 champ-select 已进入新的 ticket 世代；旧 ticket
+                # 不能继续穿过窗口空档。
+                self._reset_selection_ticket()
+            elif self._ticket_bound_game_instance == _NEXT_GAME_TICKET:
+                self._ticket_bound_game_instance = current_game_instance
+            elif previous_game_instance and self._ticket_bound_game_instance != current_game_instance:
+                self._reset_selection_ticket()
             self._game_instance_id = current_game_instance
 
         lcu_payload, lcu_error = self._read_lcu()
         if self._valid_context(lcu_payload):
             self._selection_ticket = deepcopy(lcu_payload)
             self._selection_ticket_seen_at = now
-            self._ticket_bound_game_instance = current_game_instance
+            self._ticket_bound_game_instance = current_game_instance or _NEXT_GAME_TICKET
 
         live_payload: dict[str, Any] | None = None
         live_error = "game-window-missing"
         if probe.status == "found":
             live_payload, live_error = self.live_reader()
 
+        ticket = self._ticket_for_game(now, current_game_instance)
+        live_time_confirmed = self._live_game_time_matches_epoch(
+            live_payload,
+            now=now,
+            probe=probe,
+        )
+        live_ticket_confirmed = bool(
+            self._valid_context(live_payload)
+            and self._valid_context(ticket)
+            and str(live_payload.get("champion_id")) == str(ticket.get("champion_id"))
+        )
         conflict = bool(
             self._valid_context(live_payload)
-            and self._valid_context(lcu_payload)
-            and str(live_payload.get("champion_id")) != str(lcu_payload.get("champion_id"))
+            and self._valid_context(ticket)
+            and str(live_payload.get("champion_id")) != str(ticket.get("champion_id"))
         )
         selected: dict[str, Any]
         priority = 0
-        if self._valid_context(live_payload):
+        if conflict:
+            selected = empty_overlay_context("context_source_conflict")
+            selected["source"] = "context-broker"
+        elif self._valid_context(live_payload) and (live_time_confirmed or live_ticket_confirmed):
             selected = deepcopy(live_payload)
             priority = LIVE_CLIENT_PRIORITY
-            if self._selection_ticket is not None:
-                self._ticket_bound_game_instance = current_game_instance
+            selected["game_epoch_confirmation"] = (
+                "live_game_time" if live_time_confirmed else "lcu_selection_ticket"
+            )
         elif probe.status == "found":
-            fallback = deepcopy(lcu_payload) if self._valid_context(lcu_payload) else self._fresh_selection_ticket(now)
+            fallback = deepcopy(ticket) if self._valid_context(ticket) else None
             if self._valid_context(fallback):
                 selected = dict(fallback)
                 selected["source"] = "lcu-champ-select"
                 selected["fallback_reason"] = live_error
+                selected["game_epoch_confirmation"] = "lcu_selection_ticket"
                 priority = LCU_FALLBACK_PRIORITY
-                self._ticket_bound_game_instance = current_game_instance
             else:
-                selected = empty_overlay_context(live_error or lcu_error or "context_missing")
+                error = (
+                    "context_game_epoch_unconfirmed"
+                    if self._valid_context(live_payload)
+                    else live_error or lcu_error or "context_missing"
+                )
+                selected = empty_overlay_context(error)
                 selected["source"] = "context-broker"
         elif self._valid_context(lcu_payload):
             selected = deepcopy(lcu_payload)

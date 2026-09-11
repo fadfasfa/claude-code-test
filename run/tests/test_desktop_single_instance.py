@@ -9,6 +9,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 class DesktopSingleInstanceTests(unittest.TestCase):
@@ -87,6 +88,68 @@ class DesktopSingleInstanceTests(unittest.TestCase):
                 self.assertIsNone(instance.consume_activation_request())
             finally:
                 instance.release()
+
+    def test_different_build_is_rejected_without_activation(self):
+        from hextech.interfaces.desktop.single_instance import DesktopBuildConflict, DesktopInstanceOwner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock = root / "desktop.lock"
+            owner = root / "owner.json"
+            first = DesktopInstanceOwner(
+                lock,
+                owner,
+                build_identity={"build_id": "build-a", "source_fingerprint": "a" * 64},
+            )
+            first.acquire()
+            try:
+                second = DesktopInstanceOwner(
+                    lock,
+                    owner,
+                    build_identity={"build_id": "build-b", "source_fingerprint": "b" * 64},
+                )
+                with self.assertRaises(DesktopBuildConflict):
+                    second.acquire()
+                self.assertFalse(Path(first.activation_path).exists())
+                conflict = json.loads(Path(second.conflict_path).read_text(encoding="utf-8"))
+                self.assertEqual(conflict["active"]["build_id"], "build-a")
+                self.assertEqual(conflict["requester"]["build_id"], "build-b")
+            finally:
+                first.release()
+
+    def test_live_legacy_owner_is_a_build_conflict(self):
+        from hextech.interfaces.desktop.single_instance import DesktopBuildConflict, DesktopInstanceOwner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock = root / "desktop.lock"
+            owner = root / "owner.json"
+            lock.write_text("legacy", encoding="utf-8")
+            owner.write_text(json.dumps({"schema_version": 1, "pid": os.getpid(), "cwd": "legacy"}), encoding="utf-8")
+
+            with self.assertRaises(DesktopBuildConflict):
+                DesktopInstanceOwner(
+                    lock,
+                    owner,
+                    build_identity={"build_id": "build-new", "source_fingerprint": "c" * 64},
+                ).acquire()
+
+    def test_owner_pid_reuse_is_not_alive(self):
+        from hextech.interfaces.desktop import single_instance
+
+        fake_process = mock.Mock()
+        fake_process.create_time.return_value = 100.0
+        with mock.patch.object(single_instance.psutil, "Process", return_value=fake_process):
+            self.assertFalse(
+                single_instance._owner_is_alive(
+                    {
+                        "owner_schema_version": 2,
+                        "pid": os.getpid(),
+                        "process_started_at": 10.0,
+                        "executable": __file__,
+                    }
+                )
+            )
 
 
 if __name__ == "__main__":

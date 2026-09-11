@@ -13,7 +13,9 @@ from bs4 import BeautifulSoup
 
 from hextech.modules.acquisition.hextech.contracts import HextechStatRecord
 
-DEFAULT_HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL = "https://cdn.dtodo.cn/hextech/champion-details"
+# 页面自身声明的同源公开 JSON 是全量详情事实源；旧 dtodo 镜像在并发刷新时
+# 会整批超时，进而迫使抓取器回退到只含折叠窗口的 20 条 HTML。
+DEFAULT_HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL = "https://aramgg.com/data/champion-details"
 HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL = (
     os.getenv("HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL", DEFAULT_HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL).strip()
     or DEFAULT_HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL
@@ -330,9 +332,15 @@ def _rows_from_source_augments(
     for fallback_rank, (raw_id, raw_stats) in enumerate(_sort_source_augments(source_augments), start=1):
         mid = str(raw_id)
         stats = raw_stats if isinstance(raw_stats, dict) else {}
+        raw_win_rate = stats.get("win_rate", stats.get("winRate"))
+        raw_pick_rate = stats.get("pick_rate", stats.get("pickRate"))
+        # 上游会保留低样本条目的身份与出场率，但用 null 明确表示胜率未公开。
+        # 这不是格式异常，也不能据此反推或伪造胜率。
+        if raw_win_rate is None or raw_pick_rate is None:
+            continue
         try:
-            win = _normalize_rate(stats.get("win_rate", stats.get("winRate")), field_name="augment_win_rate")
-            pick = _normalize_rate(stats.get("pick_rate", stats.get("pickRate")), field_name="augment_pick_rate")
+            win = _normalize_rate(raw_win_rate, field_name="augment_win_rate")
+            pick = _normalize_rate(raw_pick_rate, field_name="augment_pick_rate")
 
             web_name = aug_id_map.get(mid, "")
             local_tier = truth_dict.get(web_name) or (aug_tier_map or {}).get(mid) or "未知"
@@ -352,7 +360,7 @@ def _rows_from_source_augments(
                         pickrate=pick,
                     )
                 )
-        except (ValueError, IndexError, AttributeError) as e:
+        except (TypeError, ValueError, IndexError, AttributeError) as e:
             logging.warning(
                 f"[{champ_name}] 海克斯 ID={mid} 解析失败：{e} | "
                 f"源站字段：{stats} | 堆栈：{traceback.format_exc().strip()}"
@@ -384,6 +392,12 @@ def extract_champion_detail_json_stats(
         champ_data=champ_data,
         aug_tier_map=aug_tier_map,
     )
+
+
+def extract_champion_detail_json_augment_ids(payload: dict, champ_id: str) -> list[str]:
+    """保留详情中所有身份 ID；`null` 统计仍属于当前来源公开的候选池。"""
+
+    return sorted((str(value) for value in _extract_detail_json_augments(payload, champ_id)), key=str)
 
 
 def _build_row(

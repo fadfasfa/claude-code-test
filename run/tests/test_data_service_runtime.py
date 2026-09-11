@@ -12,12 +12,31 @@ import pandas as pd
 
 from hextech.bootstrap.data_service_runtime import (
     build_snapshot_from_runtime,
+    initial_auto_refresh_delay_seconds,
 )
 from hextech.contracts import SourceProvenance
 from hextech.modules.recommendation.hints import (
     enrich_overlay_hint_cache_with_catalog,
     enrich_overlay_hint_cache_with_synergy,
 )
+
+
+def test_verified_seed_delays_only_automatic_startup_refresh() -> None:
+    from hextech.bootstrap.startup_refresh import StartupRefreshSchedule
+
+    seeded = {
+        "state": "ready",
+        "generation_id": "generation-seed",
+        "source": "verified_seed",
+    }
+
+    assert initial_auto_refresh_delay_seconds(seeded) == 30.0
+    assert initial_auto_refresh_delay_seconds({**seeded, "source": "runtime_current"}) == 0.0
+    assert initial_auto_refresh_delay_seconds({**seeded, "generation_id": ""}) == 0.0
+    schedule = StartupRefreshSchedule.create(seeded, skip=False, now=100.0)
+    assert schedule.consume_if_due(129.9) is False
+    assert schedule.consume_if_due(130.0) is True
+    assert schedule.consume_if_due(131.0) is False
 
 
 def _provenance(marker: str, *, source: str = "hextech", role: str = "stats") -> SourceProvenance:
@@ -113,10 +132,10 @@ def test_synergy_projection_rejects_empty_or_unresolvable_input() -> None:
             {"63": {"name": "复仇焰魂", "synergy_items": [{"augment_names": ["污染名称"]}]}},
         )
 
-def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_builder_preserves_aramkit_ids_stats_and_synergy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
-    from hextech.bootstrap import data_service_runtime
+    from hextech.bootstrap import data_service_runtime, production_pool_binding
     from hextech.modules.acquisition.mayhem import merge as mayhem_merge
     from hextech.modules.data.catalog import runtime_store, version_catalog
     from hextech.modules.data.catalog import versioned as catalog_versioned
@@ -175,11 +194,56 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
         "resolve_current_artifact",
         lambda _source: pytest.fail("contribution builder 不得解析全局 source current"),
     )
-    artifacts = {"hextech": csv_path, "apex": synergy_path, "mayhem": mayhem_path}
+    artifacts = {"apex": synergy_path, "mayhem": mayhem_path}
     monkeypatch.setattr(
         data_service_runtime,
         "_validated_source_artifact",
         lambda source, _pointer, expected_role: artifacts[source],
+    )
+    monkeypatch.setattr(
+        data_service_runtime,
+        "_aramkit_payloads",
+        lambda _pointer, catalog: (
+            [{"id": "266", "name": "暗裔剑魔", "英雄 ID": "266", "英雄名称": "暗裔剑魔"}],
+            {},
+        ),
+    )
+    ranking_card = {
+        "id": "1322",
+        "hero_id": "266",
+        "hero_name": "暗裔剑魔",
+        "海克斯ID": "1322",
+        "海克斯名称": "测试强化",
+        "海克斯阶级": "Gold",
+        "source_tier": 2,
+        "champion_tier": 1,
+        "stats_scope": "top_champion_tier",
+        "rank": 1,
+        "score": 1.2,
+    }
+    ashe_ranking_card = {
+        **ranking_card,
+        "hero_id": "22",
+        "hero_name": "寒冰射手",
+        "champion_tier": None,
+        "stats_scope": "global_tier",
+    }
+    monkeypatch.setattr(
+        data_service_runtime,
+        "_blitz_details",
+        lambda _pointer, catalog: {
+            "暗裔剑魔": {
+                "hero_id": "266",
+                "comprehensive": [dict(ranking_card)],
+                "augments": [dict(ranking_card)],
+            },
+            # ARAMKit 榜单可合法缺英雄；Blitz 的 Overlay 排名不能因此被过滤。
+            "寒冰射手": {
+                "hero_id": "22",
+                "comprehensive": [dict(ashe_ranking_card)],
+                "augments": [dict(ashe_ranking_card)],
+            },
+        },
     )
     monkeypatch.setattr(
         mayhem_merge,
@@ -189,12 +253,15 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
     monkeypatch.setattr(
         version_catalog,
         "load_champion_core_data",
-        lambda _root=None: {"266": {"name": "暗裔剑魔", "en_name": "Aatrox"}},
+        lambda _root=None: {
+            "22": {"name": "寒冰射手", "en_name": "Ashe"},
+            "266": {"name": "暗裔剑魔", "en_name": "Aatrox"},
+        },
     )
     monkeypatch.setattr(
         version_catalog,
         "load_augment_manifest_entries",
-        lambda _root=None: [{"name": "测试强化", "augment_name_id": "test", "tier": "Gold"}],
+        lambda _root=None: [{"name": "测试强化", "augment_name_id": "test", "tier": "Gold", "cdragon_id": 1322}],
     )
     catalog_sources = tuple(
         _provenance(f"catalog-{role}", source="catalog", role=role)
@@ -221,7 +288,7 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
     )
 
     def source_pointer(source: str) -> dict[str, object]:
-        role = {"hextech": "stats", "apex": "synergy", "mayhem": "combos"}[source]
+        role = {"aramkit": "scoped_stats", "blitz": "augment_ranking", "apex": "synergy", "mayhem": "combos"}[source]
         artifact_hash = hashlib.sha256(f"source:{source}".encode()).hexdigest()
         return {
             "schema_version": 2,
@@ -243,18 +310,24 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
         }
 
     monkeypatch.setattr(source_runs, "load_source_current", lambda source, verify_hash=True: source_pointer(source))
+    monkeypatch.setattr(production_pool_binding, "bind_production_pool", lambda *_args, **_kwargs: None)
     build = build_snapshot_from_runtime()
     detail = build.payloads["champion_hextech"]["暗裔剑魔"]
 
     assert build.payloads["champions"][0]["id"] == "266"
     assert detail["hero_id"] == "266"
     assert detail["augments"][0]["id"] == "1322"
-    assert detail["augments"][0]["海克斯胜率"] == pytest.approx(0.61)
+    assert detail["augments"][0]["source_tier"] == 2
+    assert "海克斯胜率" not in detail["augments"][0]
     assert detail["synergy"]["synergy_items"][0]["content"] == "同代联动"
     hint = build.payloads["overlay_hints"]["hints"]["1322"]
     assert hint["synergies"][0]["hero_id"] == "266"
+    assert hint["stats_by_champion_id"]["22"]["source_tier"] == 2
+    assert hint["stats_by_champion_id"]["22"]["stats_scope"] == "global_tier"
+    assert all(champion["id"] != "22" for champion in build.payloads["champions"])
+    assert "寒冰射手" not in build.payloads["champion_hextech"]
     assert build.payloads["overlay_hints"]["source"]["synergy_projection"]["projection_coverage"] == 1.0
-    assert [source.record_count for source in build.source_files] == [1, 1, 1, 1, 1, 1]
+    assert [source.record_count for source in build.source_files] == [1, 1, 1, 1, 1, 1, 1]
 
 
 def test_service_manager_owns_data_service_lifecycle() -> None:
@@ -279,6 +352,62 @@ def test_service_manager_owns_data_service_lifecycle() -> None:
 
     assert handle.stopped is True
     assert manager.get_status_snapshot()["data_service"]["status"] == "stopped"
+
+
+def test_refresh_once_injects_aramkit_metadata_marker_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    from hextech.bootstrap import refresh_once
+
+    captured: dict[str, object] = {}
+
+    class Coordinator:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+        @staticmethod
+        def refresh(*, force: bool, scope: str):
+            return {"state": "ready", "force": force, "scope": scope}
+
+        @staticmethod
+        def poll_deferred_refresh():
+            return None
+
+    monkeypatch.setattr(refresh_once, "CohortRefreshCoordinator", Coordinator)
+
+    result = refresh_once.refresh_runtime_once(force=False)
+
+    assert result == {"state": "ready", "force": False, "scope": "due"}
+    assert captured["upstream_marker_probe"] is refresh_once.probe_aramkit_upstream_marker
+    assert captured["game_state_probe"] is refresh_once.probe_production_game_in_progress
+
+
+def test_refresh_once_monitors_for_game_started_during_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hextech.bootstrap import refresh_once
+
+    monitor_called = threading.Event()
+
+    class Coordinator:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        @staticmethod
+        def refresh(*, force: bool, scope: str):
+            assert force is True
+            assert scope == "due"
+            assert monitor_called.wait(timeout=1.0)
+            return {"state": "ready"}
+
+        @staticmethod
+        def poll_deferred_refresh():
+            monitor_called.set()
+            return None
+
+    monkeypatch.setattr(refresh_once, "CohortRefreshCoordinator", Coordinator)
+    monkeypatch.setattr(refresh_once, "REFRESH_ONCE_GAME_POLL_SECONDS", 0.001)
+
+    assert refresh_once.refresh_runtime_once(force=True) == {"state": "ready"}
+    assert monitor_called.is_set()
 
 
 def test_service_manager_restarts_data_service_after_child_exit() -> None:

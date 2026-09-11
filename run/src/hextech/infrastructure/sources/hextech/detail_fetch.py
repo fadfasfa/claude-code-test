@@ -10,6 +10,7 @@ import logging
 
 from hextech.infrastructure.sources.hextech.parsing import (
     build_hextech_champion_detail_json_url,
+    extract_champion_detail_json_augment_ids,
     extract_champion_detail_json_stats,
     extract_champion_stats,
 )
@@ -68,8 +69,10 @@ def fetch_champion_detail_stats_fast(
     else:
         if res is not None and res.status_code == 200 and res.text:
             try:
+                payload = res.json()
+                observed_ids = extract_champion_detail_json_augment_ids(payload, c_id)
                 rows = extract_champion_detail_json_stats(
-                    res.json(), aug_id_map, truth_dict, c_id, c_name, champ, aug_tier_map
+                    payload, aug_id_map, truth_dict, c_id, c_name, champ, aug_tier_map
                 )
                 if rows:
                     logging.info("[%s] CDN JSON 快链路命中：championId=%s rows=%s", c_name, c_id, len(rows))
@@ -77,6 +80,7 @@ def fetch_champion_detail_stats_fast(
                         "champ": champ,
                         "name": c_name,
                         "rows": rows,
+                        "observed_ids": observed_ids,
                         "reason": "",
                         "status_code": res.status_code,
                         "url": detail_json_url,
@@ -91,6 +95,7 @@ def fetch_champion_detail_stats_fast(
                         "champ": champ,
                         "name": c_name,
                         "rows": rows,
+                        "observed_ids": [str(row.get("海克斯ID") or "") for row in rows],
                         "reason": "",
                         "status_code": res.status_code,
                         "url": detail_json_url,
@@ -131,6 +136,7 @@ def fetch_champion_detail_stats_fast(
                     "champ": champ,
                     "name": c_name,
                     "rows": rows,
+                    "observed_ids": [str(row.get("海克斯ID") or "") for row in rows],
                     "reason": "",
                     "status_code": res.status_code,
                     "url": url,
@@ -148,6 +154,7 @@ def fetch_champion_detail_stats_fast(
         "champ": champ,
         "name": c_name,
         "rows": [],
+        "observed_ids": [],
         "reason": last_reason,
         "status_code": last_status_code,
         "url": last_url,

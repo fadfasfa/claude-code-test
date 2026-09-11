@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 import unicodedata
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Literal, Protocol, TypedDict
 
@@ -22,6 +23,7 @@ from hextech.modules.vision.layout import pick_card_panels
 
 from .canvas_renderer import (
     CanvasLike,
+    DataNoticeModel,
     OverlayLayout,
     OverlayRenderModel,
     StatPanelModel,
@@ -34,6 +36,8 @@ from .canvas_renderer import (
     draw_overlay_frame,
     resolve_overlay_layout,
 )
+from .data_notice import build_data_notice as _data_notice
+from .data_notice import stats_stale_text as _stats_stale_text
 def _query_hint(slot: Mapping[str, Any], hint_cache: Mapping[str, Any] | None) -> dict[str, Any]:
     if not isinstance(hint_cache, Mapping):
         return {}
@@ -162,6 +166,81 @@ def _effective_context(
     return context
 
 
+def _ranking_stats_text(stats: Mapping[str, Any]) -> str:
+    source_tier = _clean_text(stats.get("source_tier"), limit=8)
+    if not source_tier:
+        return ""
+    champion_tier = _clean_text(stats.get("champion_tier"), limit=8)
+    return (
+        f"该英雄 T{champion_tier} · 全局 T{source_tier}"
+        if champion_tier
+        else f"全局 T{source_tier}"
+    )
+
+
+def _scoped_stage_stats_display(stats: Mapping[str, Any]) -> dict[str, Any] | None:
+    """格式化 ARAMKit Stage/all，并把范围与低样本拆成独立视觉语义。"""
+
+    if _clean_text(stats.get("stats_source"), limit=24) != "aramkit":
+        return None
+    stats_scope = _clean_text(stats.get("stats_scope"), limit=24)
+    fallback_reason = _clean_text(stats.get("fallback_reason"), limit=80)
+    raw_sample_count = stats.get("sample_count")
+    sample_count: int | None = None
+    if isinstance(raw_sample_count, int) and not isinstance(raw_sample_count, bool):
+        sample_count = raw_sample_count if raw_sample_count >= 0 else None
+    elif isinstance(raw_sample_count, str) and raw_sample_count.isascii() and raw_sample_count.isdigit():
+        sample_count = int(raw_sample_count)
+    winrate = _format_percent(stats.get("winrate", stats.get("win_rate")))
+    pickrate = _format_percent(stats.get("pickrate", stats.get("pick_rate")))
+    if not (winrate and pickrate):
+        return {
+            "text": "统计字段不完整",
+            "winrate_text": "",
+            "pickrate_text": "",
+            "stats_tone": "aggregate" if stats_scope == "all" else "default",
+            "low_sample_outline": False,
+            "sample_count": sample_count,
+            "stats_scope": stats_scope,
+            "fallback_reason": fallback_reason,
+        }
+    low_sample = sample_count is not None and sample_count < 1000
+    aggregate = stats_scope == "all"
+    text = (
+        f"胜率 {winrate} · 出场数 {sample_count}"
+        if sample_count is not None and sample_count < 100
+        else f"胜率 {winrate} · 出场 {pickrate}"
+    )
+    return {
+        "text": text,
+        "winrate_text": winrate,
+        "pickrate_text": pickrate,
+        "stats_tone": "aggregate" if aggregate else "low_sample" if low_sample else "default",
+        "low_sample_outline": aggregate and low_sample,
+        "sample_count": sample_count,
+        "stats_scope": stats_scope,
+        "fallback_reason": fallback_reason,
+    }
+
+
+def _stage_indicator(
+    stats_scope: Mapping[str, Any] | None,
+    data_notice: DataNoticeModel | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(stats_scope, Mapping):
+        return None
+    raw_stage = stats_scope.get("stage")
+    if not isinstance(raw_stage, int) or isinstance(raw_stage, bool):
+        return None
+    stage = raw_stage
+    if stage not in {1, 2, 3, 4}:
+        return None
+    result: dict[str, Any] = {"stage": stage, "label": f"阶段 {stage}"}
+    if data_notice is not None:
+        result["data_notice"] = dict(data_notice)
+    return result
+
+
 def _stats_display(
     hint: Mapping[str, Any],
     hint_cache: Mapping[str, Any] | None,
@@ -192,10 +271,23 @@ def _stats_display(
     pickrate = _format_percent(stats.get("pickrate"))
     text = _format_stats_entry(stats)
     if not (winrate and pickrate):
+        ranking_text = _ranking_stats_text(stats)
+        if ranking_text:
+            degraded = _snapshot_sources_degraded(snapshot_status, ("blitz",))
+            stale_reason, stale_data_at = _stats_source_expiry(snapshot_status, ("blitz",))
+            return (
+                _stats_stale_text(stale_reason, stale_data_at) if degraded else ranking_text,
+                "STATS_STALE" if degraded else "READY",
+                "",
+                "",
+                _stats_stale_text(stale_reason, stale_data_at) if degraded else "",
+            )
         return text or "统计字段不完整", "NO_STATS", "", "", "统计不完整"
-    if _snapshot_sources_degraded(snapshot_status, ("hextech",)):
-        # 代际信息保留在状态字段中，避免把诊断前缀挤进卡片内的单行统计。
-        return text, "GENERATION_DEGRADED", winrate, pickrate, "上一代数据"
+    if _snapshot_sources_degraded(snapshot_status, ("aramkit", "hextech")):
+        # ARAMKit 的记录已通过同 Catalog、hash 和字段校验；过期只改变健康度，
+        # 不得把仍可核验的百分比清空。真正没有可用统计的 fallback 仍走
+        # STATS_STALE（例如 stale Blitz 无 ranking 可展示）。
+        return text, "GENERATION_DEGRADED", winrate, pickrate, ""
     return text, "READY", winrate, pickrate, ""
 
 
@@ -272,6 +364,35 @@ def _synergy_source_expiry(snapshot_status: Mapping[str, Any] | None) -> tuple[s
     for source in ("apex", "mayhem"):
         value = source_status.get(source)
         if not isinstance(value, Mapping):
+            continue
+        if str(value.get("data_reason") or "") == "source_data_expired":
+            reason = "source_data_expired"
+        data_at = str(value.get("data_at") or "")
+        if data_at:
+            data_ats.append(data_at)
+    return (reason, min(data_ats) if data_ats else "")
+
+
+def _stats_source_expiry(
+    snapshot_status: Mapping[str, Any] | None,
+    sources: Sequence[str],
+) -> tuple[str, str]:
+    """提取目标统计来源的过期原因和最旧 data_at。"""
+
+    source_status = snapshot_status.get("source_status") if isinstance(snapshot_status, Mapping) else None
+    if not isinstance(source_status, Mapping):
+        return ("", "")
+    reason = ""
+    data_ats: list[str] = []
+    for source in sources:
+        value = source_status.get(source)
+        if not isinstance(value, Mapping):
+            continue
+        stale = (
+            str(value.get("freshness") or "unknown") != "fresh"
+            or str(value.get("data_status") or "unknown") == "data_stale"
+        )
+        if not stale:
             continue
         if str(value.get("data_reason") or "") == "source_data_expired":
             reason = "source_data_expired"
@@ -374,6 +495,8 @@ def build_render_model(
         else:
             stats_text, status_code = "识别中…", "DETECTING"
             winrate_text, pickrate_text, status_text = "", "", "识别中…"
+            if slot.get("diagnostic") == "evidence_starved":
+                stats_text = status_text = "识别未确认"
         has_current_stats = status_code in {"READY", "GENERATION_DEGRADED"}
         matched = _matched_synergy(hint, context) if ready else None
         synergy_status = _synergy_status(
@@ -398,6 +521,8 @@ def build_render_model(
                 "status_text": status_text,
                 "synergy_status": synergy_status,
                 "hint_id": _clean_text(hint.get("augment_id"), limit=60),
+                "stats_tone": "default",
+                "low_sample_outline": False,
             }
         )
         if not ready:
@@ -412,18 +537,30 @@ def build_render_model(
                 "hero_name": _clean_text(matched.get("hero_name"), limit=40),
                 "rating": _clean_text(matched.get("rating"), limit=12),
                 "tag": _clean_text(matched.get("tag"), limit=24),
-                "content": _clean_text(matched.get("content"), limit=180),
+                # 原文不在 renderer 热路径清洗或截断。后台数据准备器会按实际
+                # viewport/mode 附加 display_summary；直接调用者仍能看到完整原文。
+                "content": deepcopy(matched.get("content")),
                 "data_status": synergy_status,
                 "status_text": _synergy_stale_text(synergy_stale_reason, synergy_data_at)
                 if synergy_status == "SYNERGY_DEGRADED"
                 else "",
+                **(
+                    {"display_summary": deepcopy(dict(matched["display_summary"]))}
+                    if isinstance(matched.get("display_summary"), Mapping)
+                    else {}
+                ),
             }
         )
-    return {"stats": stats, "synergies": synergies}
+    model: OverlayRenderModel = {"stats": stats, "synergies": synergies}
+    notice = _data_notice(snapshot_status if isinstance(snapshot_status, Mapping) else None)
+    if notice is not None:
+        model["data_notice"] = notice
+    return model
 def build_render_model_from_session(
     state: GameSessionState,
     *,
     hint_cache: Mapping[str, Any] | None = None,
+    stats_scope: Mapping[str, Any] | None = None,
 ) -> OverlayRenderModel:
     """把核心会话模型适配为 Tk 绘制模型；业务状态不得在此重新推导。"""
 
@@ -442,6 +579,8 @@ def build_render_model_from_session(
     labels: dict[str, tuple[str, str]] = {
         "RECOGNITION_MISSING": ("未识别到海克斯", "识别未完成"),
         "SNAPSHOT_UNAVAILABLE": ("统计数据准备中", "数据准备中"),
+        "STATS_PREPARING": ("统计准备中", "统计准备中"),
+        "STATS_STALE": ("统计数据暂非最新", "统计数据暂非最新"),
         "PRIVACY_OFF": ("已开启隐私模式", "统计关闭"),
         "SOURCE_STAT_MISSING": ("公开来源未提供此海克斯统计", "公开来源未提供此海克斯统计"),
         "CHAMPION_STAT_MISSING": ("该英雄暂无此海克斯样本", "该英雄暂无此海克斯样本"),
@@ -474,14 +613,59 @@ def build_render_model_from_session(
             "pickrate": stats_payload.get(
                 "pickrate", stats_payload.get("pick_rate", stats_payload.get("海克斯出场率"))
             ),
+            "source_tier": stats_payload.get("source_tier"),
+            "champion_tier": stats_payload.get("champion_tier"),
+            "stats_source": stats_payload.get("stats_source"),
+            "stats_scope": stats_payload.get("stats_scope"),
+            "scope_label": stats_payload.get("scope_label"),
+            "sample_count": stats_payload.get("sample_count"),
+            "sample_quality": stats_payload.get("sample_quality"),
+            "source_freshness": stats_payload.get(
+                "source_freshness", row.get("source_freshness")
+            ),
+            "data_reason": stats_payload.get("data_reason", row.get("data_reason")),
+            "source_data_at": stats_payload.get(
+                "source_data_at", row.get("source_data_at")
+            ),
+            "fallback_reason": stats_payload.get(
+                "fallback_reason", row.get("stats_fallback_reason")
+            ),
         }
+        scoped_display = _scoped_stage_stats_display(normalized_stats)
         winrate_text = _format_percent(normalized_stats["winrate"])
         pickrate_text = _format_percent(normalized_stats["pickrate"])
+        stats_tone = "default"
+        low_sample_outline = False
+        sample_count: int | None = None
+        stats_scope_value = _clean_text(normalized_stats.get("stats_scope"), limit=24)
+        fallback_reason = _clean_text(normalized_stats.get("fallback_reason"), limit=80)
         if status_code in {"READY", "GENERATION_DEGRADED"}:
-            stats_text = _format_stats_entry(normalized_stats)
-            status_text = "上一代数据" if status_code == "GENERATION_DEGRADED" else ""
-        elif status_code == "DETECTING":
-            stats_text, status_text = "识别中…", "识别中…"
+            if scoped_display is not None:
+                stats_text = str(scoped_display["text"])
+                winrate_text = str(scoped_display["winrate_text"])
+                pickrate_text = str(scoped_display["pickrate_text"])
+                stats_tone = str(scoped_display["stats_tone"])
+                low_sample_outline = bool(scoped_display["low_sample_outline"])
+                sample_count = scoped_display["sample_count"]
+                stats_scope_value = str(scoped_display["stats_scope"])
+                fallback_reason = str(scoped_display["fallback_reason"])
+            else:
+                stats_text = _format_stats_entry(normalized_stats)
+                if not winrate_text and not pickrate_text:
+                    stats_text = _ranking_stats_text(normalized_stats) or stats_text
+            status_text = ""
+        elif status_code == "STATS_STALE":
+            stale_text = _stats_stale_text(
+                _clean_text(normalized_stats.get("data_reason"), limit=48),
+                _clean_text(normalized_stats.get("source_data_at"), limit=64),
+            )
+            stats_text = status_text = stale_text
+            winrate_text = pickrate_text = ""
+        elif status_code in {"DETECTING", "STATS_PREPARING"}:
+            stats_text, status_text = labels.get(status_code, ("识别中…", "识别中…"))
+            if (status_code == "DETECTING" and state.vision is not None
+                and index < len(state.vision.slots) and state.vision.slots[index].error_code == "evidence_starved"):
+                stats_text = status_text = "识别未确认"
             winrate_text = pickrate_text = ""
         else:
             stats_text, status_text = labels.get(status_code, ("暂无统计", "暂无统计"))
@@ -503,6 +687,11 @@ def build_render_model_from_session(
                 "pickrate_text": pickrate_text,
                 "status_text": status_text,
                 "synergy_status": "SOURCE_UNAVAILABLE",
+                "stats_tone": stats_tone,  # type: ignore[typeddict-item]
+                "low_sample_outline": low_sample_outline,
+                "sample_count": sample_count,
+                "stats_scope": stats_scope_value,
+                "fallback_reason": fallback_reason,
             }
         )
         hint = _query_hint(row, hint_cache) if ready else {}
@@ -534,7 +723,7 @@ def build_render_model_from_session(
                     "hero_name": _clean_text(matched.get("hero_name"), limit=40),
                     "rating": _clean_text(matched.get("rating"), limit=12),
                     "tag": _clean_text(matched.get("tag"), limit=24),
-                    "content": _clean_text(matched.get("content"), limit=180),
+                    "content": deepcopy(matched.get("content")),
                     "data_status": synergy_status,
                     "status_text": _synergy_stale_text(
                         str(row.get("synergy_data_reason") or ""),
@@ -542,6 +731,23 @@ def build_render_model_from_session(
                     )
                     if synergy_status == "SYNERGY_DEGRADED"
                     else "",
+                    **(
+                        {"display_summary": deepcopy(dict(matched["display_summary"]))}
+                        if isinstance(matched.get("display_summary"), Mapping)
+                        else {}
+                    ),
                 }
             )
-    return {"stats": stats, "synergies": synergies}
+    model: OverlayRenderModel = {"stats": stats, "synergies": synergies}
+    snapshot_status = hint_cache.get("snapshot") if isinstance(hint_cache, Mapping) else None
+    notice = _data_notice(
+        snapshot_status if isinstance(snapshot_status, Mapping) else None,
+        rows=[row for row in rows if isinstance(row, Mapping)],
+        stats_scope=stats_scope,
+    )
+    if notice is not None:
+        model["data_notice"] = notice
+    indicator = _stage_indicator(stats_scope, notice)
+    if indicator is not None:
+        model["stage_indicator"] = indicator  # type: ignore[typeddict-item]
+    return model

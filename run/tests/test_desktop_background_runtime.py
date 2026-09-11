@@ -296,6 +296,22 @@ def test_hide_to_tray_never_exits_process() -> None:
     assert ui._closing is False
 
 
+def test_tray_restore_auto_docking_is_dispatched_to_gui_owner() -> None:
+    from hextech.interfaces.desktop.tray import DesktopTrayController
+
+    calls: list[str] = []
+    controller = DesktopTrayController(
+        dispatch=lambda callback: bool(callback() is None),
+        show_callback=lambda: calls.append("show"),
+        restore_auto_docking_callback=lambda: calls.append("restore_auto"),
+        restart_recognition_callback=lambda: calls.append("restart"),
+        exit_callback=lambda: calls.append("exit"),
+        status_text=lambda: "status",
+    )
+    controller._restore_auto_docking()
+    assert calls == ["restore_auto"]
+
+
 def test_suspend_rechecks_league_before_stopping_services(monkeypatch) -> None:
     ui = _FakeUI()
     monkeypatch.setattr(

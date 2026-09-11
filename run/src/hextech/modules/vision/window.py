@@ -20,6 +20,7 @@ from typing import Literal
 
 import psutil
 
+from hextech.modules.vision.game_window_mode import probe_game_window_mode
 from hextech.modules.vision.window_titles import LOL_GAME_WINDOW_TITLE
 
 try:
@@ -36,6 +37,48 @@ DWMWA_CLOAKED = 14
 GA_ROOT = 2
 VK_TAB = 0x09
 VK_LBUTTON = 0x01
+
+_DISPLAY_CACHE: dict[int, tuple[float, dict[str, object]]] = {}
+
+
+def window_display_context(hwnd: int, *, force: bool = False) -> dict[str, object]:
+    """只读窗口所属显示器和物理 DPI；有限缓存，不依赖 EDID/屏幕英寸。"""
+    now = time.monotonic()
+    cached = _DISPLAY_CACHE.get(hwnd)
+    if not force and cached is not None and now - cached[0] < 1.0:
+        return dict(cached[1])
+    result: dict[str, object] = {"status": "unavailable", "coordinate_space": "physical_client"}
+    try:
+        class MonitorInfo(ctypes.Structure):
+            _fields_ = [("size", wintypes.DWORD), ("monitor", wintypes.RECT),
+                        ("work", wintypes.RECT), ("flags", wintypes.DWORD),
+                        ("device", wintypes.WCHAR * 32)]
+
+        user32 = ctypes.windll.user32
+        monitor_from_window = user32.MonitorFromWindow
+        monitor_from_window.argtypes = [wintypes.HWND, wintypes.DWORD]
+        monitor_from_window.restype = wintypes.HANDLE
+        handle = monitor_from_window(hwnd, 2)
+        info = MonitorInfo()
+        info.size = ctypes.sizeof(info)
+        query = user32.GetMonitorInfoW
+        query.argtypes = [wintypes.HANDLE, ctypes.POINTER(MonitorInfo)]
+        query.restype = wintypes.BOOL
+        if handle and query(handle, ctypes.byref(info)):
+            rect = info.monitor
+            get_dpi = user32.GetDpiForWindow
+            get_dpi.argtypes = [wintypes.HWND]
+            get_dpi.restype = wintypes.UINT
+            dpi = int(get_dpi(hwnd))
+            result.update(status="available", monitor_device=info.device,
+                          monitor_rect=[rect.left, rect.top, rect.right, rect.bottom],
+                          dpi_scale=(dpi / 96.0 if dpi > 0 else 1.0))
+    except (AttributeError, OSError, TypeError, ValueError):
+        pass
+    if len(_DISPLAY_CACHE) >= 8:
+        _DISPLAY_CACHE.clear()
+    _DISPLAY_CACHE[hwnd] = (now, result)
+    return dict(result)
 
 
 WindowProbeStatus = Literal["found", "missing", "error"]
@@ -54,6 +97,11 @@ class WindowProbeResult:
     process_started_at: float = 0.0
     game_instance_id: str = ""
     identity_quality: str = "unavailable"
+    game_window_mode_status: str = "unknown"
+    game_window_mode: str = "unknown"
+    game_window_mode_reason: str = "game_window_mode_unknown"
+    game_window_mode_source: str = "game_cfg"
+    game_window_mode_observed_at: float = 0.0
 
     @property
     def target(self) -> tuple[int, tuple[int, int, int, int]] | None:
@@ -96,12 +144,22 @@ def game_window_identity(hwnd: int) -> dict[str, object]:
         raw = f"lol-hwnd:{int(hwnd)}"
         game_instance_id = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
         quality = "hwnd_only"
+    mode_probe = probe_game_window_mode(process_id) if process_id > 0 else None
     return {
         "game_instance_id": game_instance_id,
         "window_hwnd": int(hwnd),
         "process_id": process_id,
         "process_started_at": process_started_at,
         "identity_quality": quality,
+        "game_window_mode_status": mode_probe.status if mode_probe is not None else "unknown",
+        "game_window_mode": mode_probe.mode if mode_probe is not None else "unknown",
+        "game_window_mode_reason": (
+            mode_probe.reason if mode_probe is not None else "game_window_mode_unknown"
+        ),
+        "game_window_mode_source": mode_probe.source if mode_probe is not None else "game_cfg",
+        "game_window_mode_observed_at": (
+            float(mode_probe.observed_at) if mode_probe is not None else time.time()
+        ),
     }
 
 
@@ -276,8 +334,8 @@ def _window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
     return (left, top, right, bottom)
 
 
-def _window_client_rect(hwnd: int) -> tuple[int, int, int, int] | None:
-    """返回 client area 的虚拟屏幕坐标；失败时退回窗口外框。"""
+def _window_client_rect(hwnd: int, *, allow_window_fallback: bool = True) -> tuple[int, int, int, int] | None:
+    """返回客户区虚拟屏幕坐标；呈现调用禁止以窗口外框代替失败客户区。"""
 
     if win32gui is None:
         return None
@@ -294,13 +352,14 @@ def _window_client_rect(hwnd: int) -> tuple[int, int, int, int] | None:
             return (screen_left, screen_top, screen_left + width, screen_top + height)
     except Exception:
         pass
-    return _window_rect(hwnd)
+    return _window_rect(hwnd) if allow_window_fallback else None
 
 
 def probe_lol_game_window(
     *,
     window_titles: Iterable[str] = LOL_GAME_WINDOW_TITLES,
     process_names: Iterable[str] = LOL_GAME_PROCESS_NAMES,
+    include_nonrenderable: bool = False,
 ) -> WindowProbeResult:
     """探测 LoL HWND，并保留 missing/error 的差异供健康状态使用。"""
 
@@ -314,7 +373,16 @@ def probe_lol_game_window(
 
     def collect(hwnd: int, _extra: object) -> bool:
         if not is_window_renderable(hwnd):
-            return True
+            # 桌面伴生窗需要知道最小化游戏仍存在；默认捕获/Overlay调用仍只接受可渲染窗口。
+            if not include_nonrenderable:
+                return True
+            try:
+                hidden_title = str(gui.GetWindowText(hwnd) or "").strip().casefold()
+            except Exception:
+                # EnumWindows 后其他应用关闭了句柄，不应使整次游戏窗口探测失败。
+                return True
+            if hidden_title not in accepted_titles:
+                return True
         rect = _window_client_rect(hwnd)
         if rect is None:
             return True
@@ -347,6 +415,11 @@ def probe_lol_game_window(
         process_started_at=float(identity["process_started_at"]),
         game_instance_id=str(identity["game_instance_id"]),
         identity_quality=str(identity["identity_quality"]),
+        game_window_mode_status=str(identity["game_window_mode_status"]),
+        game_window_mode=str(identity["game_window_mode"]),
+        game_window_mode_reason=str(identity["game_window_mode_reason"]),
+        game_window_mode_source=str(identity["game_window_mode_source"]),
+        game_window_mode_observed_at=float(identity["game_window_mode_observed_at"]),
     )
 
 
@@ -354,7 +427,9 @@ def find_lol_game_window(
     *,
     window_titles: Iterable[str] = LOL_GAME_WINDOW_TITLES,
     process_names: Iterable[str] = LOL_GAME_PROCESS_NAMES,
+    include_nonrenderable: bool = False,
 ) -> tuple[int, tuple[int, int, int, int]] | None:
     """兼容旧调用方；新 Host/Sidecar 应使用带状态的 ``probe_lol_game_window``。"""
 
-    return probe_lol_game_window(window_titles=window_titles, process_names=process_names).target
+    return probe_lol_game_window(window_titles=window_titles, process_names=process_names,
+                                include_nonrenderable=include_nonrenderable).target

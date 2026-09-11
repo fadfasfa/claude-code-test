@@ -1,12 +1,13 @@
 """Vision sidecar fingerprints 职责模块。"""
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from hextech.infrastructure.vision.sidecar_common import (
     Any,
     BODY_SHARD_STRONG_CONFIDENCE,
     BODY_SHARD_SUFFIX,
     BODY_SHARD_SUFFIX_SIZE,
-    BODY_SHARD_SUFFIX_WIDTH_PERCENTS,
     BODY_SHARD_SUPPORT_CONFIDENCE,
     BODY_SHARD_VERY_STRONG_CONFIDENCE,
     FINGERPRINT_SIZE,
@@ -110,31 +111,92 @@ def _adaptive_icon_mask(image: Image.Image, *, template: bool) -> Image.Image:
     return Image.fromarray(mask.astype(np.uint8) * 255).filter(ImageFilter.MaxFilter(3))
 
 
+@dataclass
+class _MaskComponent:
+    left: int
+    top: int
+    right: int
+    bottom: int
+    area: int
+    runs: list[tuple[int, int, int]]
+
+    @property
+    def width(self) -> int:
+        return self.right - self.left
+
+    @property
+    def height(self) -> int:
+        return self.bottom - self.top
+
+
+def _mask_components(mask: Image.Image) -> tuple[np.ndarray, list[_MaskComponent]]:
+    """按横向 run 标记 8 邻接组件，避免逐像素 Python flood-fill。"""
+
+    binary = np.asarray(mask.convert("L"), dtype=np.uint8) >= 128
+    if binary.ndim != 2 or binary.size == 0:
+        return binary, []
+
+    parents: list[int] = []
+    runs: list[tuple[int, int, int]] = []
+    previous: list[tuple[int, int, int]] = []
+
+    def find(node: int) -> int:
+        while parents[node] != node:
+            parents[node] = parents[parents[node]]
+            node = parents[node]
+        return node
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    for y, row in enumerate(binary):
+        padded = np.pad(row, (1, 1), constant_values=False)
+        transitions = np.flatnonzero(padded[1:] != padded[:-1])
+        current: list[tuple[int, int, int]] = []
+        for start, end in zip(transitions[::2], transitions[1::2], strict=True):
+            node = len(parents)
+            parents.append(node)
+            run = (y, int(start), int(end))
+            runs.append(run)
+            for previous_start, previous_end, previous_node in previous:
+                # end 为 exclusive；边界相等时两行像素仍为对角相邻。
+                if previous_start <= end and previous_end >= start:
+                    union(node, previous_node)
+            current.append((int(start), int(end), node))
+        previous = current
+
+    grouped: dict[int, list[tuple[int, int, int]]] = {}
+    for node, run in enumerate(runs):
+        grouped.setdefault(find(node), []).append(run)
+
+    components: list[_MaskComponent] = []
+    for component_runs in grouped.values():
+        left = min(start for _y, start, _end in component_runs)
+        right = max(end for _y, _start, end in component_runs)
+        top = min(y for y, _start, _end in component_runs)
+        bottom = max(y for y, _start, _end in component_runs) + 1
+        area = sum(end - start for _y, start, end in component_runs)
+        components.append(_MaskComponent(left, top, right, bottom, area, component_runs))
+    return binary, components
+
+
+def _component_image(binary: np.ndarray, components: Sequence[_MaskComponent]) -> Image.Image:
+    output = np.zeros(binary.shape, dtype=np.uint8)
+    for component in components:
+        for y, start, end in component.runs:
+            output[y, start:end] = 255
+    return Image.fromarray(output)
+
+
 def _largest_mask_component(mask: Image.Image) -> Image.Image:
     """保留主连通组件，削弱卡框、粒子和小装饰对图标轮廓的影响。"""
 
-    binary = np.asarray(mask.convert("L"), dtype=np.uint8) >= 128
-    height, width = binary.shape
-    seen = np.zeros(binary.shape, dtype=bool)
-    largest: list[tuple[int, int]] = []
-    for start_y in range(height):
-        for start_x in range(width):
-            if not binary[start_y, start_x] or seen[start_y, start_x]:
-                continue
-            component = [(start_x, start_y)]
-            seen[start_y, start_x] = True
-            for x, y in component:
-                for ny in range(max(0, y - 1), min(height, y + 2)):
-                    for nx in range(max(0, x - 1), min(width, x + 2)):
-                        if binary[ny, nx] and not seen[ny, nx]:
-                            seen[ny, nx] = True
-                            component.append((nx, ny))
-            if len(component) > len(largest):
-                largest = component
-    output = np.zeros(binary.shape, dtype=np.uint8)
-    for x, y in largest:
-        output[y, x] = 255
-    return Image.fromarray(output)
+    binary, components = _mask_components(mask)
+    largest = max(components, key=lambda component: component.area, default=None)
+    return _component_image(binary, [largest] if largest is not None else [])
 
 
 def _icon_fingerprints(image: Image.Image, *, template: bool) -> tuple[tuple[float, ...], ...]:
@@ -172,64 +234,33 @@ def _name_text_mask(image: Image.Image) -> Image.Image:
 
     mask = _bright_glyph_mask(image)
     width, height = mask.size
-    pixels = mask.load()
-    seen: set[tuple[int, int]] = set()
-    components: list[tuple[list[tuple[int, int]], int, int]] = []
-
-    for start_y in range(height):
-        for start_x in range(width):
-            if pixels[start_x, start_y] < 128 or (start_x, start_y) in seen:
-                continue
-            component = [(start_x, start_y)]
-            seen.add((start_x, start_y))
-            xs: list[int] = []
-            ys: list[int] = []
-            for x, y in component:
-                xs.append(x)
-                ys.append(y)
-                for nx in (x - 1, x, x + 1):
-                    for ny in (y - 1, y, y + 1):
-                        if nx < 0 or nx >= width or ny < 0 or ny >= height or (nx, ny) in seen:
-                            continue
-                        if pixels[nx, ny] >= 128:
-                            seen.add((nx, ny))
-                            component.append((nx, ny))
-
-            min_x, max_x = min(xs), max(xs)
-            min_y, max_y = min(ys), max(ys)
-            component_width = max_x - min_x + 1
-            component_height = max_y - min_y + 1
-            touches_edge = min_x <= 2 or max_x >= width - 3
-            if len(component) < 8 or component_height < 4:
-                continue
-            if component_width <= TEXT_DECORATION_MAX_WIDTH and component_height >= height * TEXT_DECORATION_MIN_HEIGHT_RATIO:
-                continue
-            if touches_edge and (component_height >= height * 0.45 or component_width <= TEXT_DECORATION_MAX_WIDTH + 1):
-                continue
-            components.append((component, component_height, len(component)))
+    binary, raw_components = _mask_components(mask)
+    components: list[_MaskComponent] = []
+    for component in raw_components:
+        touches_edge = component.left <= 2 or component.right >= width - 2
+        if component.area < 8 or component.height < 4:
+            continue
+        if component.width <= TEXT_DECORATION_MAX_WIDTH and component.height >= height * TEXT_DECORATION_MIN_HEIGHT_RATIO:
+            continue
+        if touches_edge and (component.height >= height * 0.45 or component.width <= TEXT_DECORATION_MAX_WIDTH + 1):
+            continue
+        components.append(component)
 
     if not components:
         return mask
 
     # 真机卡名两侧会出现星光粒子。它们能通过固定像素阈值，却明显小于同一行主字形；
     # 相对当前裁剪中的最大字形过滤，既不依赖分辨率，也不会误删正常短名称。
-    dominant_height = max(component_height for _component, component_height, _area in components)
-    dominant_area = max(area for _component, _component_height, area in components)
+    dominant_height = max(component.height for component in components)
+    dominant_area = max(component.area for component in components)
     glyph_components = [
         component
-        for component, component_height, area in components
-        if component_height >= dominant_height * 0.72 and area >= dominant_area * 0.25
+        for component in components
+        if component.height >= dominant_height * 0.72 and component.area >= dominant_area * 0.25
     ]
     if not glyph_components:
-        glyph_components = [component for component, _component_height, _area in components]
-
-    cleaned = Image.new("L", mask.size, 0)
-    cleaned_pixels = cleaned.load()
-    for component in glyph_components:
-        for x, y in component:
-            cleaned_pixels[x, y] = 255
-
-    return cleaned
+        glyph_components = components
+    return _component_image(binary, glyph_components)
 
 
 def _mask_levels(mask: Image.Image, size: tuple[int, int]) -> list[int]:
@@ -399,6 +430,48 @@ def _body_shard_suffix_matrix() -> np.ndarray:
     return np.asarray(fingerprints, dtype=np.float32)
 
 
+def _rightmost_two_glyphs(mask: Image.Image) -> Image.Image | None:
+    """从清理后的名称 mask 提取最右两个有效字形。
+
+    动画/淡出常把整段文字粘成 48px 高的大连通块，或只剩一个残字；两者都不
+    能作为“碎片”后缀证据。阈值相对 ROI 高度计算，不依赖固定分辨率。
+    """
+
+    width, height = mask.size
+    components: list[tuple[int, int, int, int, int]] = []
+    _binary, raw_components = _mask_components(mask)
+    for component in raw_components:
+        minimum_area = max(16, int(component.height * component.height * 0.12))
+        if (
+            component.area >= minimum_area
+            and int(height * 0.45) <= component.height <= int(height * 0.82)
+            and int(component.height * 0.45) <= component.width <= int(component.height * 1.25)
+        ):
+            components.append(
+                (component.left, component.top, component.right, component.bottom, component.area)
+            )
+
+    if len(components) < 2:
+        return None
+    components.sort(key=lambda item: (item[0], item[1]))
+    first, second = components[-2:]
+    first_height = first[3] - first[1]
+    second_height = second[3] - second[1]
+    gap = second[0] - first[2]
+    if gap > max(8, int(max(first_height, second_height) * 0.35)):
+        return None
+    if min(first_height, second_height) / max(first_height, second_height) < 0.72:
+        return None
+    return mask.crop(
+        (
+            first[0],
+            min(first[1], second[1]),
+            second[2],
+            max(first[3], second[3]),
+        )
+    )
+
+
 def _body_shard_name_scores(
     name_crops: Sequence[Image.Image],
     *,
@@ -411,24 +484,16 @@ def _body_shard_name_scores(
     masks = list(name_masks or [])
     for index, crop in enumerate(list(name_crops)[:SLOT_COUNT]):
         mask = masks[index] if index < len(masks) else _name_text_mask(crop)
-        bounds = mask.getbbox()
-        if bounds is None or template_matrix.size == 0:
+        suffix = _rightmost_two_glyphs(mask)
+        if suffix is None or template_matrix.size == 0:
             scores.append(0.0)
             continue
-        left, top, right, bottom = bounds
-        width = max(1, right - left)
-        candidate_fingerprints: list[tuple[float, ...]] = []
-        for percent in BODY_SHARD_SUFFIX_WIDTH_PERCENTS:
-            suffix_width = max(1, int(round(width * percent / 100.0)))
-            suffix = mask.crop((max(left, right - suffix_width), top, right, bottom))
-            fingerprint = _normalized_fingerprint(_mask_levels(suffix, BODY_SHARD_SUFFIX_SIZE))
-            if fingerprint is not None:
-                candidate_fingerprints.append(fingerprint)
-        if not candidate_fingerprints:
+        fingerprint = _normalized_fingerprint(_mask_levels(suffix, BODY_SHARD_SUFFIX_SIZE))
+        if fingerprint is None:
             scores.append(0.0)
             continue
-        candidate_matrix = np.asarray(candidate_fingerprints, dtype=np.float32)
-        correlations = candidate_matrix @ template_matrix.T / candidate_matrix.shape[1]
+        candidate = np.asarray(fingerprint, dtype=np.float32)
+        correlations = template_matrix @ candidate / candidate.shape[0]
         best = float(np.clip((correlations.max() + 1.0) / 2.0, 0.0, 1.0))
         scores.append(round(best, 6))
     while len(scores) < SLOT_COUNT:

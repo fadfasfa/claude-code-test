@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Iterable
 
 from tooling.build.resource_manifest import MANIFEST_RELATIVE_PATH, load_resource_manifest, validate_resource_manifest
+from tooling.build.cohort_seed import collect_cohort_seed
 
 
 CATALOG_FILES = (
@@ -193,6 +194,17 @@ def iter_package_data_entries(
         for source, bundled_name in zip(verified_files, bundled_names):
             if _sha256(source) != str(expected_hashes[bundled_name]):
                 raise ValueError(f"verified seed 与 bundle manifest SHA-256 不一致：{bundled_name}")
+            entries.append(PackageData(source, Path(bundled_name).parent.as_posix()))
+        cohort_seed = collect_cohort_seed(seed_root)
+        cohort_hashes = bundle_manifest.get("cohort_seed_sha256")
+        if not isinstance(cohort_hashes, dict):
+            raise ValueError("bundle manifest 缺少 cohort seed 哈希")
+        cohort_names = [cohort_seed.bundled_name(path) for path in cohort_seed.files]
+        if set(cohort_names) != set(str(key) for key in cohort_hashes):
+            raise ValueError("cohort seed 文件集与 bundle manifest 不一致")
+        for source, bundled_name in zip(cohort_seed.files, cohort_names):
+            if _sha256(source) != str(cohort_hashes[bundled_name]):
+                raise ValueError(f"cohort seed 与 bundle manifest SHA-256 不一致：{bundled_name}")
             entries.append(PackageData(source, Path(bundled_name).parent.as_posix()))
 
     entries.append(PackageData(base_dir / MANIFEST_RELATIVE_PATH, RESOURCE_ROOT_DIR.as_posix()))

@@ -34,6 +34,9 @@ from hextech.infrastructure.vision.sidecar_fingerprints import (
 )
 from hextech.infrastructure.vision.sidecar_batch import _detect_slots
 from hextech.infrastructure.vision.sidecar_scene_geometry import _selection_button_source_fields, resolve_roi_preset
+from hextech.infrastructure.vision.capture_geometry import capture_regions_valid, required_capture_bounds
+from hextech.infrastructure.vision.held_scene import CaptureBinding, HeldSceneEvidence
+from hextech.infrastructure.vision.slot_evidence import slot_evidence_fingerprint
 
 def _slots_have_body_shard_keywords(slots: Sequence[Mapping[str, Any]]) -> bool:
     matched = 0
@@ -103,20 +106,33 @@ def detect_overlay_choices(
     preset_name: str = "auto",
     min_confidence: float = DEFAULT_MIN_CONFIDENCE,
     calibration_path: str | Path | None = None,
+    stable_fingerprints: Sequence[set[str]] | None = None,
+    ocr_shadow: Any | None = None,
+    held_scene: HeldSceneEvidence | None = None,
+    capture_binding: CaptureBinding | None = None,
+    on_scene: Any | None = None,
 ) -> dict[str, Any]:
     """执行单帧 V2 观察；跨帧生命周期由 ``SelectionTracker`` 负责。"""
 
     _ = calibration_path  # 保留旧调用签名；V2 不再读取或写入持久化 anchor。
     started_at = time.perf_counter()
-    image = frame.convert("RGB")
+    image = frame if frame.mode == "RGB" else frame.convert("RGB")
     preset = resolve_roi_preset(*image.size, preset=preset_name)
+    if not capture_regions_valid(frame, (required_capture_bounds(image.size, preset_name),)):
+        event = _build_loop_inactive_event("capture_roi_invalid")
+        event["_raw_slots"] = []
+        return event
+    scene_started_at = time.perf_counter()
     scene = detect_selection_scene(image, layout_id=preset.name)
+    scene_ms = (time.perf_counter() - scene_started_at) * 1000.0
     transform_payload = {
         "dx_ratio": round(scene.transform.dx_ratio, 6),
         "dy_ratio": round(scene.transform.dy_ratio, 6),
         "scale": round(scene.transform.scale, 6),
     }
-    if not scene.present or scene.button_box is None:
+    holding = bool(not scene.present and scene.button_box is not None and held_scene is not None
+                   and held_scene.matches(capture_binding, image.size))
+    if (not scene.present or scene.button_box is None) and not holding:
         residual_name_boxes = tuple(
             apply_transform(box, image.size, scene.transform) for box in preset.name_slots
         )
@@ -152,10 +168,18 @@ def detect_overlay_choices(
         event["_raw_slots"] = []
         return event
 
-    slot_boxes = tuple(apply_transform(box, image.size, scene.transform) for box in preset.slots)
-    name_boxes = tuple(apply_transform(box, image.size, scene.transform) for box in preset.name_slots)
+    transform = held_scene.transform if holding and held_scene is not None else scene.transform
+    transform_payload = {"dx_ratio": transform.dx_ratio, "dy_ratio": transform.dy_ratio, "scale": transform.scale}
+    slot_boxes = tuple(apply_transform(box, image.size, transform) for box in preset.slots)
+    name_boxes = tuple(apply_transform(box, image.size, transform) for box in preset.name_slots)
+    if not capture_regions_valid(frame, (*slot_boxes, *name_boxes)):
+        event = _build_loop_inactive_event("capture_roi_invalid")
+        event["_raw_slots"] = []
+        return event
     name_crops = [image.crop(box) for box in name_boxes]
+    name_mask_started_at = time.perf_counter()
     name_masks = [_name_text_mask(crop) for crop in name_crops]
+    name_mask_ms = (time.perf_counter() - name_mask_started_at) * 1000.0
     body_shard_scores = _body_shard_name_scores(name_crops, name_masks=name_masks)
     name_residue = [
         _name_crop_has_residue(crop, name_mask=name_masks[index])
@@ -166,8 +190,8 @@ def detect_overlay_choices(
         "preset": preset.name,
         "capture_size": [int(image.size[0]), int(image.size[1])],
         "calibration": "layout_v2",
-        "scene_present": True,
-        "scene_state": "candidate",
+        "scene_present": not holding,
+        "scene_state": "absent" if holding else "candidate",
         "scene_kind": "body_shard" if _body_shard_scene_present(body_shard_scores) else "hextech",
         "scene_score": scene.score,
         "layout_id": scene.layout_id,
@@ -177,6 +201,15 @@ def detect_overlay_choices(
         "card_residue": bool(scene.card_residue or any(name_residue)),
         "body_shard_scores": list(body_shard_scores),
     }
+    blocking_modal = _blocking_modal_present(image)
+    if holding:
+        common_source["scene_reject_reason"] = scene.reason or "selection_scene_not_detected"
+        common_source["hold_evidence_state"] = "collecting"
+        if blocking_modal:
+            event = _build_loop_inactive_event("blocking_modal_present")
+            event["source"].update(common_source, blocking_modal=True)
+            event["_raw_slots"] = []
+            return event
 
     if _body_shard_scene_present(body_shard_scores):
         event = build_overlay_event([], source_tag="vision-sidecar", selection_type="body_shard", active=False)
@@ -203,6 +236,24 @@ def detect_overlay_choices(
         event["_raw_slots"] = []
         return event
 
+    eligible = tuple(bool(held_scene.eligible_slots[i] and name_residue[i]) for i in range(SLOT_COUNT)) if holding else None
+    batch_options = {"eligible_slots": eligible} if eligible is not None else {}
+    # 模板排序前先提交当前帧OCR，完成结果仍由同一个Tracker验证绑定和独立帧。
+    fingerprints = [slot_evidence_fingerprint(name_crops[i], image.crop(slot_boxes[i])) for i in range(SLOT_COUNT)]
+    early_slots = [{"slot": i, "evidence_fingerprint": fingerprints[i]} for i in range(SLOT_COUNT)]
+    ocr_submit_ms = 0.0
+    if not blocking_modal and ocr_shadow is not None:
+        ocr_started_at = time.perf_counter()
+        ocr_shadow.observe(name_crops, early_slots, **batch_options)
+        ocr_submit_ms = (time.perf_counter()-ocr_started_at)*1000
+    if on_scene is not None:
+        light = build_overlay_event([], source_tag="vision-sidecar", selection_type="hextech", active=False)
+        light["source"].update(common_source, reason="blocking_modal_present" if blocking_modal else "slots_detecting",
+            blocking_modal=blocking_modal, **_selection_button_source_fields(present=scene.button_box is not None,
+            window_active=bool(scene.present and not blocking_modal), button_box=scene.button_box,
+            blue_ratio=scene.button_blue_ratio))
+        light["_raw_slots"] = early_slots
+        on_scene(light)
     slots, matching_timing = _detect_slots(
         image,
         slot_boxes,
@@ -210,7 +261,17 @@ def detect_overlay_choices(
         name_boxes=name_boxes,
         name_masks=name_masks,
         min_confidence=min_confidence,
+        stable_fingerprints=stable_fingerprints,
+        name_crops=name_crops,
+        **batch_options,
     )
+    for slot, early in zip(slots, early_slots, strict=True):
+        for key in ("ocr_shadow", "ocr_production"):
+            if key in early:
+                slot[key] = early[key]
+    matching_timing["scene_ms"] = round(scene_ms, 3)
+    matching_timing["name_mask_ms"] = round(name_mask_ms, 3)
+    matching_timing["ocr_submit_ms"] = round(ocr_submit_ms, 3)
     common_source["matching_timing"] = matching_timing
     common_source["compute_profile"] = "float32_batched"
     if _slots_have_body_shard_keywords(slots):
@@ -239,11 +300,10 @@ def detect_overlay_choices(
         event["_raw_slots"] = slots
         return event
 
-    blocking_modal = _blocking_modal_present(image)
     ready_slots = _ready_slot_count(slots)
     content_ready = _scene_active_from_slots(slots)
-    active = content_ready and not blocking_modal
-    if active and content_ready:
+    active = ready_slots > 0 and not blocking_modal and not holding
+    if content_ready and not blocking_modal:
         reason = ""
         gate_state = "visible_ready"
         unstable_reason = ""
@@ -251,10 +311,10 @@ def detect_overlay_choices(
         reason = "blocking_modal_present"
         gate_state = "blocked"
         unstable_reason = reason
-    elif ready_slots:
-        reason = "partial_ready"
-        gate_state = "partial_ready"
-        unstable_reason = reason
+    elif active:
+        reason = ""
+        gate_state = "visible_partial"
+        unstable_reason = ""
     else:
         reason = "selection_scene_not_detected"
         gate_state = "detecting"
@@ -280,7 +340,7 @@ def detect_overlay_choices(
             "reason": reason,
             **_selection_button_source_fields(
                 present=True,
-                window_active=not blocking_modal,
+                window_active=not blocking_modal and not holding,
                 button_box=scene.button_box,
                 blue_ratio=scene.button_blue_ratio,
             ),

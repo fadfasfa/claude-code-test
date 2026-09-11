@@ -178,8 +178,9 @@ def test_packaged_smoke_uses_explicit_feature_flags() -> None:
     """验证空仓烟测不依赖桌面 UI 默认开关状态。"""
 
     smoke_text = (RUN_DIR / "tooling" / "acceptance" / "smoke_packaged_startup.py").read_text(encoding="utf-8")
-    assert '"web_frontend_enabled": True' in smoke_text
-    assert '"game_overlay_enabled": False' in smoke_text
+    assert '"web_frontend_enabled": False' in smoke_text
+    assert '"game_overlay_enabled": True' in smoke_text
+    assert '"private_policy_stats_enabled": True' in smoke_text
     assert '"auto_open_browser": False' in smoke_text
     assert "_write_smoke_feature_flags(runtime_root)" in smoke_text
     assert "OVERLAY_ANCHOR_CALIBRATION_FILENAME" in smoke_text
@@ -187,6 +188,9 @@ def test_packaged_smoke_uses_explicit_feature_flags() -> None:
     assert "FORBIDDEN_PACKAGE_PATHS" in smoke_text
     assert 'child_env["LOCALAPPDATA"]' in smoke_text
     assert "runtime:data absent" in smoke_text
+    assert "_overlay_chain_status" in smoke_text
+    assert "_wait_for_overlay_heartbeats" in smoke_text
+    assert 'fixture in ("clean", "stale_sidecar", "populated_runtime")' in smoke_text
     for forbidden_rel in (
         "var",
         "data",

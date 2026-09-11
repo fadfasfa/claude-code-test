@@ -163,21 +163,29 @@ def validate_complete_provenance(source_files: Sequence[SourceProvenance]) -> No
     roles = {(item.source, item.artifact_role) for item in source_files}
     if len(roles) != len(source_files):
         raise SnapshotValidationError("generation provenance 角色重复")
-    required = {
+    common_required = {
         ("catalog", "champions"),
         ("catalog", "augments"),
         ("catalog", "versions"),
-        ("hextech", "stats"),
         ("apex", "synergy"),
         ("mayhem", "combos"),
     }
-    if roles != required:
-        raise SnapshotValidationError(f"generation provenance 不完整：missing={sorted(required - roles)}")
+    legacy_stats = ("hextech", "stats")
+    current_stats = {("aramkit", "scoped_stats"), ("blitz", "augment_ranking")}
+    current_complete = current_stats.issubset(roles)
+    legacy_complete = legacy_stats in roles
+    allowed = {*common_required, legacy_stats, *current_stats, ("catalog", "augment_assets")}
+    if not common_required.issubset(roles) or current_complete == legacy_complete or not roles.issubset(allowed):
+        raise SnapshotValidationError(
+            "generation provenance 不完整或包含未知角色："
+            f"missing={sorted(common_required - roles)} current_stats={current_complete} legacy_stats={legacy_complete} "
+            f"unknown={sorted(roles - allowed)}"
+        )
     catalog_ids = {item.catalog_generation_id for item in source_files}
     if len(catalog_ids) != 1:
         raise SnapshotValidationError("generation provenance 混用了不同 Catalog")
     for item in source_files:
-        if item.source in {"hextech", "apex", "mayhem"} and item.record_count <= 0:
+        if item.source in {"hextech", "aramkit", "blitz", "apex", "mayhem"} and item.record_count <= 0:
             raise SnapshotValidationError(f"{item.source} provenance 记录数必须大于 0")
 
 

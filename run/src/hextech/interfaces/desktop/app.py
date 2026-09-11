@@ -1,7 +1,13 @@
 """Desktop UI 组合类与进程入口。"""
 from __future__ import annotations
 
+from collections.abc import Callable
+import queue
+from .responsive_view import DesktopResponsiveMixin
+from .responsive_layout import DesktopLayout
+
 from hextech.interfaces.desktop.app_shared import (  # noqa: F401 - 保留历史 app 模块导入面
+    DesktopBuildConflict,
     DesktopInstanceAlreadyRunning,
     DesktopInstanceOwner,
     StartupTimingProbe,
@@ -17,6 +23,7 @@ from hextech.interfaces.desktop.app_shared import (  # noqa: F401 - 保留历史
     os,
     save_ui_feature_flags,
     scaled,
+    show_build_conflict_message,
     sys,
     threading,
     time,
@@ -30,18 +37,18 @@ from hextech.interfaces.desktop.app_view import DesktopViewMixin
 from hextech.interfaces.desktop.service_manager import ServiceManager
 # 保留 app.ui_runtime 兼容注入点，集成测试和嵌入方可替换进程启动函数。
 from hextech.interfaces.desktop import runtime as ui_runtime  # noqa: F401
+from hextech.interfaces.desktop.window_presentation import DesktopWindowPresentation
+from hextech.modules.vision.window import configure_process_dpi_awareness
 
 
-class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopControlsMixin, DesktopViewMixin):
+class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopControlsMixin, DesktopViewMixin, DesktopResponsiveMixin):
     """桌面伴生主界面，负责持有 UI 状态并协调后台运行时任务。"""
 
     def __init__(self):
         self.startup_timing = StartupTimingProbe()
         self.startup_timing.mark("init_start")
-        try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        except Exception:
-            logger.debug("设置 DPI 感知失败。", exc_info=True)
+        self._cohort_seed_installer: Callable[[], None] = lambda: None
+        configure_process_dpi_awareness()
 
         self.stop_event = threading.Event()
         self.pause_event = threading.Event()
@@ -56,6 +63,8 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._service_manager_lock = threading.Lock()
         self._service_manager_shutdown_in_progress: ServiceManager | None = None
         self._service_manager_shutdown_completed: ServiceManager | None = None
+        self._pending_process_jobs: dict[int, object] = {}
+        self._pending_process_jobs_lock = threading.Lock()
         self.session = None
         self.core_data = {}
         self._snapshot_client = None
@@ -111,6 +120,13 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._status_channels = {
             "service": {"text": "系统初始化中...", "color": UI_COLORS["muted"], "at": time.monotonic()},
             "overlay": {"text": "", "color": UI_COLORS["muted"], "at": 0.0},
+            "refresh": {
+                "text": "",
+                "color": UI_COLORS["muted"],
+                "state": "idle",
+                "at": 0.0,
+                "signature": (),
+            },
         }
         # 当前 generation created_at 的 epoch 秒；0 表示未知，状态行不显示时效后缀。
         self._data_created_ts = 0.0
@@ -133,11 +149,13 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._shutdown_done_event = threading.Event()
         self._initialize_background_runtime()
 
+        self._ui_callbacks = queue.Queue(maxsize=256)
+        self._desktop_layout = DesktopLayout(logical_width=320)
+        self._avatar_revision = 0
         self.root = tk.Tk()
+        self.root.withdraw()
         self.root.title("Hextech 伴生系统")
-        # 几何锁 1.0 维持基线"狭长"观感（窗宽/头像/padding 不乘 DPI，
-        # window_dpi_scale 保留在 app_shared 供将来选择性启用）；字体不走此旋钮，
-        # 由 ui_font 的正数磅值随系统 DPI 隐式放大，几何与字体彻底解耦。
+        # 隐藏壳仅供初始化；有效客户区/DPI 到来后统一应用响应式物理尺寸。
         self._ui_scale = 1.0
         self._window_height_px = WINDOW_BASE_HEIGHT
         self._overlay_pixel_width = WINDOW_EXPANDED_WIDTH
@@ -148,17 +166,43 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
         self._build_ui()
+        # 首次绑定前必须建立隐藏wrapper；直接给尚无wrapper的Tk child写-8会重设父窗口。
+        from .window_activation import suppress_desktop_activation
+        from .client_layer import desktop_wrapper_hwnd
+        with suppress_desktop_activation():
+            self.root.update_idletasks()
+        self._desktop_hwnd = desktop_wrapper_hwnd(self.root)
+        self._desktop_wrapper_revision = 1
+        self._desktop_window_presentation = DesktopWindowPresentation(self)
+        self._desktop_window_presentation.start()
+        self.root.bind("<Destroy>", self._on_desktop_root_destroy, add="+")
         self._start_desktop_tray()
+        ui_runtime.initialize_window_threads(self)
         self.startup_timing.mark("tk_shell_built")
         self.root.after_idle(self._mark_first_idle_visible)
         self.root.after(50, self._schedule_post_visible_bootstrap)
 
-def run_desktop():
+    def _on_desktop_root_destroy(self, event) -> None:
+        """直接销毁/Tcl 关闭也必须停止早期观察，不能把 UI 留给后台线程回收。"""
+        if event.widget is not self.root:
+            return
+        self._closing = True
+        from .avatar_loading import close_avatar_loader
+        close_avatar_loader(self)
+        self.stop_event.set()
+        self._desktop_window_presentation.close()
+        for thread in self.threads:
+            if thread.name in {"desktop-client-context", "desktop-window-probe", "desktop-candidates"} and thread.is_alive():
+                thread.join(timeout=1.2)
+
+def run_desktop(*, cohort_seed_installer: Callable[[], None] | None = None):
     """启动桌面伴生窗口。"""
 
     try:
         with DesktopInstanceOwner() as instance_owner:
             ui = HextechUI()
+            if cohort_seed_installer is not None:
+                ui._cohort_seed_installer = cohort_seed_installer
             ui.attach_instance_owner(instance_owner)
             try:
                 ui.root.mainloop()
@@ -169,6 +213,9 @@ def run_desktop():
     except DesktopInstanceAlreadyRunning as exc:
         # 第二次点击快捷方式只唤醒已存在的托盘实例；GUI 模式不能依赖 stderr。
         raise SystemExit(0 if exc.activation_sent else 2) from exc
+    except DesktopBuildConflict as exc:
+        show_build_conflict_message(exc.owner, exc.requester)
+        raise SystemExit(3) from exc
 
 
 if __name__ == "__main__":
