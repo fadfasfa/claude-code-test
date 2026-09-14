@@ -16,4 +16,4 @@
 - 不恢复旧 command、hook、自动 PR shipping、task resume 或高权限 worktree skill；`cleanup-worktrees` 只作为用户显性调用的 PR 合并残留清理入口。普通 merge 使用祖先关系，squash merge 必须通过唯一 merged PR、head/base 名称和 OID 证据链；dirty 与凭据类内容阻断，`audit` 类请求保持只读。
 - 新增 skill 必须先得到用户明确要求，并按 `AGENTS.md` 与当前事实源确认其必要性。
 - 其他 skill 不得覆盖 `AGENTS.md`、`docs/当前规则/10-工作区登记.md`、`docs/当前规则/20-Git与高危操作.md`、`docs/当前规则/30-验证与审查.md`、`docs/当前规则/40-Agent与Skill.md` 或用户本轮限制。
-- 未获当前任务授权时，不触碰 `run/**`、`sm2-randomizer/**`、`sms-monitor/**`、`heybox/**`、`subtitle_extractor/**`、`QuantProject/**` 或 `qm-run-demo`。
+- 未获当前任务授权时，不触碰 `run/**`、`sm2-randomizer/**`、`sms-monitor/**`、`heybox/**`、`subtitle_extractor/**` 或 `QuantProject/**`。

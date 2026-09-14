@@ -2,6 +2,12 @@
 .archive/
 .artifacts/
 
+# SC2 Coop Info：独立上游 fork，不由父仓接管源码或 Git 历史。
+/sc2-coop-info-zh/
+
+# 象棋研究室：源码只由本地私有分支和专用 worktree 跟踪。
+/chess-coach-test/
+
 # QuantProject：仅追踪源码/文档，忽略行情数据、金融隐私与执行数据
 QuantProject/data/*.csv
 QuantProject/data/*.csv.sha256
