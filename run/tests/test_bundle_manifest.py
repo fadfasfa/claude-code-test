@@ -90,6 +90,15 @@ def test_verified_snapshot_seed_is_validated_and_recorded(tmp_path, monkeypatch)
     DataSnapshotPublisher(snapshot_root).publish(payload)
     verified_snapshot_root = tmp_path / "verified-snapshots"
     published = DataSnapshotPublisher(verified_snapshot_root).publish(payload)
+    # This fixture intentionally has no source/Catalog closure: it exercises
+    # legacy v2 snapshot injection. Real v3 seed closure is tested separately.
+    for legacy_root in (snapshot_root, verified_snapshot_root):
+        current = json.loads((legacy_root / "current.v2.json").read_text(encoding="utf-8"))
+        legacy_path = legacy_root / "generations" / current["current_generation_id"] / "manifest.json"
+        legacy_manifest = json.loads(legacy_path.read_text(encoding="utf-8"))
+        legacy_manifest["schema_version"] = 2
+        legacy_manifest.pop("components", None)
+        legacy_path.write_text(json.dumps(legacy_manifest), encoding="utf-8")
     catalog_dir = tmp_path / "resources" / "catalog"
     catalog_dir.mkdir(parents=True)
     for name in CATALOG_FILES:

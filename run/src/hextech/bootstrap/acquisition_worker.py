@@ -49,6 +49,7 @@ def _hextech_worker_result(result: Mapping[str, Any] | bool, pointer_output: Pat
 
 def _missing_pointer_payload(source_result: Mapping[str, Any]) -> dict[str, Any]:
     return {
+        "source_result": dict(source_result),
         "reason_code": str(
             source_result.get("reason_code")
             or source_result.get("reason")
@@ -165,6 +166,7 @@ def run_worker(
     catalog_pointer: Path | None = None,
     catalog_compatibility_pointer: Path | None = None,
     coverage_policy: str = "catalog_adoption",
+    incremental: bool = False,
 ) -> dict[str, Any]:
     stop_event = threading.Event()
     threading.Thread(target=_watch_cancel, args=(cancel_file, stop_event), daemon=True).start()
@@ -172,6 +174,18 @@ def run_worker(
         os.environ["HEXTECH_CATALOG_POINTER_PATH"] = os.fspath(catalog_pointer)
 
     started = time.monotonic()
+    incremental_options: dict[str, Any] = {}
+    check_options: dict[str, Any] = {}
+    if incremental:
+        from hextech.modules.data.ports.paths import get_var_dir
+        from hextech.infrastructure.sources.download_context import read_download_context
+
+        control = get_var_dir() / "state" / "data-service" / "download_context.v1.json"
+        incremental_options["context"] = lambda: read_download_context(control)
+        from hextech.infrastructure.persistence.refresh_schedule import RefreshScheduleStore
+        old_check = RefreshScheduleStore(get_var_dir()).load().sources.get(source)
+        check_options = {"conditional_cache_root": get_var_dir() / "state" / "http-validators",
+                         "previous_failure_fingerprint": old_check.failure_fingerprint if old_check else ""}
     result: Mapping[str, Any] | bool
     if source == "catalog":
         from hextech.infrastructure.sources.catalog_versioned import refresh_catalog
@@ -181,18 +195,38 @@ def run_worker(
             allow_remote=True,
             promote_current=False,
             pointer_output=pointer_output,
+            stop_event=stop_event,
+            **incremental_options,
         )
     elif source == "aramkit":
         from hextech.infrastructure.sources.aramkit.service import CatalogBinding, refresh_aramkit
 
+        binding = CatalogBinding.active(compatibility_pointer=catalog_compatibility_pointer)
+        if incremental:
+            from hextech.infrastructure.sources.aramkit.units import publish_unit
+
+            units_root = pointer_output.parent / "units"
+
+            def rankings_ready(version, rows):
+                primary = publish_unit(version, rows, binding=binding,
+                                       pointer_output=units_root / "ranking.pointer.json")
+                atomic_write_json(pointer_output, primary, indent=2)
+
+            def champion_ready(version, champion_id, data):
+                publish_unit(version, data, binding=binding, champion_id=champion_id,
+                             pointer_output=units_root / f"hero-{champion_id}.pointer.json")
+
+            incremental_options.update(raw_cache_root=get_var_dir() / "raw-responses",
+                                       conditional_cache_root=check_options["conditional_cache_root"],
+                                       previous_failure_fingerprint=check_options["previous_failure_fingerprint"],
+                                       on_rankings=rankings_ready, on_detail=champion_ready, incremental_only=True)
         result = refresh_aramkit(
             force=force,
             promote_current=False,
             pointer_output=pointer_output,
             stop_event=stop_event,
-            catalog_binding=CatalogBinding.active(
-                compatibility_pointer=catalog_compatibility_pointer
-            ),
+            catalog_binding=binding,
+            **incremental_options,
         )
     elif source == "blitz":
         from hextech.infrastructure.sources.blitz.service import (
@@ -209,14 +243,32 @@ def run_worker(
                 compatibility_pointer=catalog_compatibility_pointer
             ),
             coverage_policy=coverage_policy,
+            **check_options,
         )
     elif source == "apex":
         from hextech.infrastructure.sources.apex.service import main as refresh_apex
 
+        if incremental:
+            from hextech.infrastructure.persistence.raw_responses import RawResponseCache
+            from hextech.modules.data.catalog.versioned import load_active_catalog
+
+            revision = load_active_catalog().generation_id + ":version-check-v1"
+            def report_progress(completed, total, phase):
+                atomic_write_json(pointer_output.parent / "source-progress.json",
+                    {"source": source, "completed_items": completed, "total_items": total,
+                     "phase": phase, "updated_at": time.time()}, indent=2)
+
+            incremental_options.update(
+                raw_cache=RawResponseCache(get_var_dir() / "raw-responses", source="apex", revision=revision),
+                stop_event=stop_event,
+                on_progress=report_progress,
+            )
         result = refresh_apex(
             dry_run=False,
             promote_current=False,
             pointer_output=pointer_output,
+            **incremental_options,
+            **check_options,
         )
     elif source == "mayhem":
         from hextech.infrastructure.sources.mayhem.service import run_mayhem_refresh
@@ -225,6 +277,7 @@ def run_worker(
             force=force,
             promote_current=False,
             pointer_output=pointer_output,
+            **check_options,
         )
     else:
         raise ValueError(f"未知来源：{source}")
@@ -234,6 +287,12 @@ def run_worker(
     source_result = (
         dict(result) if isinstance(result, Mapping) else {"success": bool(result)}
     )
+    if source == "catalog" and source_result.get("state") == "deferred":
+        return {"state": "deferred", "source": source,
+                "reason_code": str(source_result.get("reason_code") or "catalog_build_deferred_in_game"),
+                "elapsed_seconds": time.monotonic() - started, "source_result": source_result}
+    if source_result.get("success") is False:
+        raise SourceRefreshFailed(source, _missing_pointer_payload(source_result))
     if not pointer_output.is_file() and not _reuse_current_when_not_stale(source, source_result, pointer_output):
         raise SourceRefreshFailed(source, _missing_pointer_payload(source_result))
     pointer = _load_pointer(pointer_output, source)
@@ -261,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--self-check", action="store_true")
+    parser.add_argument("--incremental", action="store_true", help="保存原文与单英雄候选，消费局中下载上下文")
     args = parser.parse_args(argv)
     if not args.self_check:
         missing = [
@@ -289,6 +349,7 @@ def main(argv: list[str] | None = None) -> int:
                 catalog_pointer=args.catalog_pointer,
                 catalog_compatibility_pointer=args.catalog_compatibility_pointer,
                 coverage_policy=args.coverage_policy,
+                incremental=args.incremental,
             )
         exit_code = 0
     except SourceRefreshFailed as exc:

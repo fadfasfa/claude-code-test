@@ -166,6 +166,23 @@ def test_explicit_refresh_packages_the_refreshed_runtime_snapshot(monkeypatch, t
     assert build_package.prepare_runtime_data_for_package(refresh_data=True) == snapshot_root.resolve()
 
 
+@pytest.mark.parametrize("failed_source", ["blitz", "apex", "mayhem"])
+def test_optional_refresh_failure_does_not_block_verified_core_package(monkeypatch, tmp_path, failed_source):
+    from tooling.build import package as build_package
+    from hextech.bootstrap import refresh_once
+    from hextech.modules.data import generation
+
+    snapshot_root = tmp_path / "snapshots"
+    snapshot_root.mkdir()
+    monkeypatch.setattr(refresh_once, "refresh_runtime_once", lambda **kwargs: {
+        "state": "degraded", "generation_id": "g1", "failures": {failed_source: "unavailable"}})
+    monkeypatch.setattr(generation, "default_snapshot_root", lambda: snapshot_root)
+    monkeypatch.setattr(build_package, "validate_snapshot_seed", lambda root: {
+        "valid": True, "generation_id": "g1", "champion_count": 1,
+        "augment_count": 1, "stat_record_count": 1})
+    assert build_package.prepare_runtime_data_for_package(refresh_data=True) == snapshot_root.resolve()
+
+
 def test_dependency_files_split_runtime_build_and_dev_tools():
     requirements_dir = RUN_DIR / "tooling" / "requirements"
     runtime = (requirements_dir / "runtime.txt").read_text(encoding="utf-8")

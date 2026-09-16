@@ -28,6 +28,10 @@ from hextech.infrastructure.vision.slot_evidence import slot_evidence_fingerprin
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import get_var_dir
 from hextech.modules.session.build_identity import get_build_identity
+from .selection_capture_cache import (
+    SelectionCaptureBuffer, SelectionCaptureDraft, coalesce_selection_drafts,
+    persist_selection_capture, selection_cache_status,
+)
 
 
 FAILURE_EVIDENCE_SCHEMA_VERSION = 1
@@ -134,13 +138,15 @@ class FailureEvidenceWriter:
         max_queue: int = FAILURE_WRITER_MAX_QUEUE,
         record_limit: int = FAILURE_RECORD_LIMIT,
         retention_worker: Any | None = None,
+        cache_root: Path | None = None,
     ) -> None:
         self.root = Path(root) if root is not None else failure_inbox_root()
+        self.cache_root = Path(cache_root) if cache_root is not None else self.root.parent / "selection-cache-v2"
         self.max_queue = max(1, int(max_queue))
         self.record_limit = max(1, int(record_limit))
         self._retention_worker = retention_worker
         self._condition = Condition()
-        self._tasks: deque[FailureEvidenceDraft] = deque()
+        self._tasks: deque[FailureEvidenceDraft | SelectionCaptureDraft] = deque()
         self._journal: deque[dict[str, Any]] = deque(maxlen=200)
         self._thread: Thread | None = None
         self._stopping = False
@@ -150,6 +156,8 @@ class FailureEvidenceWriter:
         self._dropped_count = 0
         self._failed_count = 0
         self._last_error = ""
+        self._saved_count = 0
+        self._cache_status: dict[str, Any] = {"root": str(self.cache_root)}
 
     def start(self) -> None:
         with self._condition:
@@ -158,11 +166,29 @@ class FailureEvidenceWriter:
             self._thread = Thread(target=self._run, name="overlay-failure-evidence", daemon=True)
             self._thread.start()
 
-    def submit(self, draft: FailureEvidenceDraft) -> bool:
-        # 延迟启动：没有 evidence-starved 槽时不创建后台线程，也让短路测试/once
-        # 模式保持无副作用。
+    def submit(self, draft: FailureEvidenceDraft | SelectionCaptureDraft) -> bool:
+        # Direct/offline callers may start lazily; production starts once for read-only cache counts.
         self.start()
         with self._condition:
+            if self._stopping:
+                self._dropped_count += 1
+                self._last_error = "writer_stopping"
+                return False
+            if isinstance(draft, SelectionCaptureDraft):
+                for index, queued in enumerate(self._tasks):
+                    if isinstance(queued, SelectionCaptureDraft) and queued.diagnostic_id == draft.diagnostic_id:
+                        self._tasks[index] = coalesce_selection_drafts(queued, draft)
+                        return True
+                queued_captures = [item for item in self._tasks if isinstance(item, SelectionCaptureDraft)]
+                if len(queued_captures) >= 2:
+                    lowest = min(queued_captures, key=lambda item: item.priority)
+                    if draft.priority <= lowest.priority:
+                        self._dropped_count += 1
+                        self._last_error = "selection_cache_queue_full"
+                        return False
+                    self._tasks.remove(lowest)
+                    self._journal.append(_journal(lowest.slot_key, "selection_cache_preempted_by_priority"))
+                    self._dropped_count += 1
             duplicate = next((item for item in self._tasks if item.fingerprint == draft.fingerprint), None)
             if duplicate is not None:
                 # queued duplicate 只保留首张 ROI；slot_key 会在持久层 occurrence 中补入。
@@ -180,28 +206,54 @@ class FailureEvidenceWriter:
             return True
 
     def _run(self) -> None:
+        try:
+            initial = selection_cache_status(self.cache_root)
+            with self._condition:
+                self._cache_status = initial
+        except (OSError, ValueError):
+            with self._condition:
+                self._last_error = "selection_cache_inspection_failed"
         while True:
             with self._condition:
                 while not self._tasks and not self._stopping:
                     self._condition.wait()
                 if not self._tasks and self._stopping:
                     return
-                draft = self._tasks.popleft()
+                priority = max(
+                    range(len(self._tasks)),
+                    key=lambda index: self._tasks[index].priority
+                    if isinstance(self._tasks[index], SelectionCaptureDraft) else 300,
+                )
+                draft = self._tasks[priority]
+                del self._tasks[priority]
                 self._active = True
             try:
-                self._persist(draft)
+                if isinstance(draft, SelectionCaptureDraft):
+                    result = persist_selection_capture(self.cache_root, draft)
+                    with self._condition:
+                        manual_id = self._cache_status.get("last_manual_diagnostic_id", "")
+                        self._cache_status = result
+                        self._cache_status["last_diagnostic_id"] = draft.diagnostic_id
+                        self._cache_status["last_manual_save"] = draft.manual
+                        self._cache_status["last_manual_diagnostic_id"] = draft.diagnostic_id if draft.manual else manual_id
+                        self._saved_count += 1
+                elif self._persist(draft):
+                    with self._condition:
+                        self._saved_count += 1
             except Exception as exc:
+                detail = (str(exc) if isinstance(draft, SelectionCaptureDraft) and isinstance(exc, ValueError)
+                          and str(exc).startswith("selection_cache_") else exc.__class__.__name__)
                 with self._condition:
-                    self._journal.append(_journal(draft.slot_key, exc.__class__.__name__))
+                    self._journal.append(_journal(draft.slot_key, detail))
                     self._failed_count += 1
-                    self._last_error = exc.__class__.__name__
+                    self._last_error = detail
             finally:
                 with self._condition:
                     self._completed_count += 1
                     self._active = False
                     self._condition.notify_all()
 
-    def _persist(self, draft: FailureEvidenceDraft) -> None:
+    def _persist(self, draft: FailureEvidenceDraft) -> bool:
         self.root.mkdir(parents=True, exist_ok=True)
         index = load_failure_index(self.root)
         records: dict[str, Any] = index["records"]
@@ -216,7 +268,7 @@ class FailureEvidenceWriter:
             request = getattr(self._retention_worker, "request", None)
             if callable(request):
                 request()
-            return
+            return False
         entry = dict(records.get(record_id) or {})
         existing_record: dict[str, Any] | None = None
         if entry:
@@ -276,6 +328,7 @@ class FailureEvidenceWriter:
         request = getattr(self._retention_worker, "request", None)
         if callable(request):
             request()
+        return True
 
     def wait_empty(self, timeout: float = 5.0) -> bool:
         deadline = time.monotonic() + max(0.0, timeout)
@@ -307,9 +360,11 @@ class FailureEvidenceWriter:
                 "journal_count": len(self._journal),
                 "submitted": self._submitted_count,
                 "completed": self._completed_count,
+                "saved": self._saved_count,
                 "dropped": self._dropped_count,
                 "failed": self._failed_count,
                 "last_error": self._last_error,
+                "selection_cache": dict(self._cache_status),
             }
 
 
@@ -397,6 +452,21 @@ class FailureEvidenceCollector:
         self.pool_id = pool_id
         self._best: dict[tuple[str, int, int, int], tuple[float, FailureEvidenceDraft]] = {}
         self._recorded: set[tuple[str, int, int, int]] = set()
+        self.selection_buffer = SelectionCaptureBuffer(writer, pool_id=pool_id,
+            build_id=str(get_build_identity().get("build_id") or "dev"))
+
+    def capture_suspected(self, frame: Image.Image, raw_event: Mapping[str, Any]) -> None:
+        """Called before scene tracker admission; epoch is never fabricated for diagnostics."""
+        self.selection_buffer.capture(frame, raw_event)
+
+    def observe_result(self, event: Mapping[str, Any]) -> None:
+        self.selection_buffer.observe_result(event)
+
+    def save_recent(self) -> bool:
+        return self.selection_buffer.save_recent()
+
+    def status(self) -> dict[str, Any]:
+        return self.selection_buffer.status()
 
     @staticmethod
     def _boxes(frame: Image.Image, source: Mapping[str, Any], index: int):

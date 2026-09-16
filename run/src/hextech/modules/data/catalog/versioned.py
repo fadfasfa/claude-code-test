@@ -31,6 +31,7 @@ CATALOG_FILES = (
 )
 CATALOG_OPTIONAL_FILES = (
     ("augment_assets", "augment_assets.v1.json", "entries"),
+    ("augment_identities", "augment_identities.v2.json", "identities"),
 )
 
 
@@ -90,7 +91,7 @@ def _record_count(path: Path, list_key: str) -> int:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CatalogValidationError(f"Catalog JSON 无法读取：{path.name}: {exc}") from exc
     records = payload.get(list_key) if isinstance(payload, Mapping) else None
-    if not isinstance(records, list) or not records:
+    if not isinstance(records, list) or (not records and path.name != "augment_assets.v1.json"):
         raise CatalogValidationError(f"Catalog {path.name} 缺少非空 {list_key}")
     return len(records)
 
@@ -190,6 +191,22 @@ def validate_catalog_files(root: Path, manifest: CatalogManifestV2) -> None:
             target = (root / relative).resolve()
             if root.resolve() not in target.parents or not target.is_file() or sha256_file(target) != expected_sha:
                 raise CatalogValidationError(f"Catalog augment asset 校验失败：{relative}")
+    if "augment_identities" in counts:
+        from hextech.modules.acquisition.hextech.production_pool import (
+            validate_production_augment_pool, validate_pool_asset_descriptors,
+        )
+
+        try:
+            pool = json.loads((root / "augment_identities.v2.json").read_text(encoding="utf-8"))
+            if not isinstance(pool, Mapping) or pool.get("schema_version") != 2 or pool.get("mode") != "aram-mayhem":
+                raise ValueError("production_pool_metadata_invalid")
+            validate_production_augment_pool(pool)
+            if len(pool["identities"]) != counts["augment_identities"]:
+                raise ValueError("production_pool_count_invalid")
+            assets = json.loads((root / "augment_assets.v1.json").read_text(encoding="utf-8"))
+            validate_pool_asset_descriptors(pool, assets.get("entries"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise CatalogValidationError(f"Catalog enabled identities 无效：{exc}") from exc
     actual = build_catalog_manifest(root, created_at=manifest.created_at)
     if actual.content_sha256 != manifest.content_sha256:
         raise CatalogValidationError("Catalog content SHA-256 与文件不一致")

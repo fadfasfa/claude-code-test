@@ -624,13 +624,16 @@ def _resolve_runtime_cohort_expected(
         for source in ("aramkit", "blitz", "apex", "mayhem")
         if source in actual.pointers
     }
-    if len(source_run_ids) != 4 or any(not value for value in source_run_ids.values()):
+    is_v3 = getattr(actual, "snapshot_schema_version", 2) == 3
+    if (not source_run_ids.get("aramkit") or any(not value for value in source_run_ids.values())
+            or (not is_v3 and len(source_run_ids) != 4)):
         return dict(expected), ["启动刷新后的完整 cohort 缺少来源 run identity"]
     return {
         **expected,
         "generation_id": actual.generation_id,
         "catalog_generation_id": actual_catalog_id,
         "source_run_ids": source_run_ids,
+        **({"schema_version": 2, "snapshot_schema_version": 3, "units": dict(actual.units)} if is_v3 else {}),
     }, []
 
 
@@ -643,12 +646,28 @@ def _runtime_cohort_errors(root: Path, expected: dict[str, object]) -> list[str]
     source_run_ids = expected.get("source_run_ids")
     if not isinstance(source_run_ids, dict):
         return ["bundle cohort seed 缺少 source_run_ids"]
+    is_v3 = expected.get("schema_version") == 2 and expected.get("snapshot_schema_version") == 3
+    source_roles = {"aramkit", "blitz", "apex", "mayhem"}
+    if (not set(source_run_ids).issubset(source_roles) or any(not isinstance(value, str) or not value for value in source_run_ids.values())
+            or (is_v3 and "aramkit" not in source_run_ids)
+            or (not is_v3 and set(source_run_ids) != source_roles)):
+        return ["bundle cohort seed 来源 run identity 不完整或无效"]
+    candidate = None
+    if is_v3:
+        try:
+            candidate = validate_generation_cohort(root, generation_id)
+            if (candidate.snapshot_schema_version != 3 or dict(candidate.units) != expected.get("units")
+                    or {source: pointer.get("run_id") for source, pointer in candidate.pointers.items() if source != "catalog"}
+                    != source_run_ids):
+                return ["v3 runtime cohort unit closure 与部署候选不一致"]
+        except (OSError, TypeError, ValueError, SnapshotValidationError) as exc:
+            return [f"v3 runtime cohort unit closure 无效 error={type(exc).__name__}"]
     expected_fields = {
         Path("catalog/current.v2.json"): ("catalog_generation_id", catalog_id),
         Path("snapshots/current.v2.json"): ("current_generation_id", generation_id),
         **{
             Path(f"sources/{source}/current.v2.json"): ("run_id", str(source_run_ids.get(source) or ""))
-            for source in ("aramkit", "blitz", "apex", "mayhem")
+            for source in (source_run_ids if is_v3 else ("aramkit", "blitz", "apex", "mayhem"))
         },
     }
     for relative, (field, value) in expected_fields.items():
@@ -661,6 +680,11 @@ def _runtime_cohort_errors(root: Path, expected: dict[str, object]) -> list[str]
         if actual != value:
             errors.append(f"cohort current 不一致 path={relative.as_posix()} expected={value} actual={actual}")
         if relative.parts[0] == "sources" and isinstance(payload, dict):
+            if candidate is not None:
+                source_name = relative.parts[1]
+                binding = candidate.pointers[source_name]
+                if any(payload.get(key) != binding.get(key) for key in ("source", "manifest_sha256", "artifact")):
+                    errors.append(f"v3 cohort source pointer 绑定不一致 source={source_name}")
             actual_catalog = str(payload.get("catalog_generation_id") or "")
             if actual_catalog != catalog_id:
                 errors.append(
@@ -708,7 +732,11 @@ def _runtime_cohort_errors(root: Path, expected: dict[str, object]) -> list[str]
                 f"expected={generation_id} actual={actual}"
             )
     checkpoint_path = root / "state" / "data-service" / "refresh_checkpoint.v1.json"
-    if checkpoint_path.exists():
+    # v3 incremental refresh proves the active state through the validated
+    # generation/unit closure and refresh_schedule above.  The retired v1
+    # checkpoint is historical evidence only; legacy cohorts still require
+    # its original consistency checks.
+    if not is_v3 and checkpoint_path.exists():
         try:
             checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -850,10 +878,14 @@ def _runtime_build_errors(
                 if actual != expected:
                     errors.append(f"Sidecar cohort 不一致 field={field} expected={expected} actual={actual}")
             matrix_rows = sidecar.get("matrix_rows")
-            if not isinstance(matrix_rows, dict) or any(
+            from hextech.modules.acquisition.hextech.production_pool import production_capability_status_valid
+
+            invalid_matrices = (not production_capability_status_valid(sidecar, expected_pool_count)
+                if sidecar.get("production_pool_schema_version") == 2 else not isinstance(matrix_rows, dict) or any(
                 int(matrix_rows.get(channel) or 0) < expected_pool_count
                 for channel in ("icon", "name", "alt_name")
-            ):
+            ))
+            if invalid_matrices:
                 errors.append(f"Sidecar 生产矩阵行数不足：{matrix_rows}")
             excluded = sidecar.get("excluded_reason_counts")
             if not isinstance(excluded, dict) or any(

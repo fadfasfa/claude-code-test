@@ -1,3 +1,4 @@
+# Frozen V2 regression baseline only; not a production runtime entry point.
 """刷新候选的原子 generation 晋升事务。
 
 本模块只封装 coordinator 已验证 targets 的 publish、recovery point、journal 与
@@ -19,7 +20,7 @@ from hextech.infrastructure.persistence.refresh_schedule import SCHEDULE_SOURCES
 from hextech.infrastructure.persistence.retention import apply_retention
 from hextech.modules.data.freshness import SOURCE_INTERVALS
 from hextech.modules.data.generation import DataSnapshotClient
-from hextech.bootstrap.source_freshness import evaluate_source_expiry, iso_utc
+from .source_freshness import evaluate_source_expiry, iso_utc
 
 
 def _source_status(

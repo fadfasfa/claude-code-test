@@ -26,6 +26,11 @@ BODY_SHARD_OCR_NAMES = (
     "魔法抗性碎片",
     "技能急速碎片",
     "迅捷碎片",
+    # rf8 frame 21937, reviewed 2026-09-15: saved full selection SHA
+    # 7065a3b5bd5b509b221b0d3a3688216cb8422f573aaf218f76a3d876b8b12968.
+    # Negative-only names: neither creates a positive identity nor a template.
+    "法术穿透碎片",
+    "力量碎片",
 )
 
 

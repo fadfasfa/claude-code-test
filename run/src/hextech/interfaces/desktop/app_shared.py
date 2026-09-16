@@ -149,26 +149,184 @@ def format_data_age_suffix(created_ts: float, now_ts: float) -> str:
     return f" · 数据 {hours} 小时前"
 
 
+def data_refresh_status_signature(status: Mapping[str, object]) -> tuple[object, ...]:
+    """Build the immutable UI de-duplication key from the service-owned result."""
+
+    raw_outcomes = status.get("source_outcomes")
+    source_outcomes = tuple(sorted(
+        (
+            str(source),
+            str(outcome.get("state") or ""),
+            str(outcome.get("availability") or ""),
+            bool(outcome.get("used_last_good")),
+            str(outcome.get("reason_code") or ""),
+            str(outcome.get("check_status") or ""),
+            str(outcome.get("upstream_revision") or ""),
+            str(outcome.get("applied_revision") or ""),
+            str(outcome.get("last_checked_at") or ""),
+        )
+        for source, outcome in raw_outcomes.items()
+        if isinstance(outcome, Mapping)
+    )) if isinstance(raw_outcomes, Mapping) else ()
+    return (
+        str(status.get("state") or "idle"),
+        str(status.get("scope") or ""),
+        str(status.get("phase") or ""),
+        str(status.get("reason_code") or ""),
+        str(status.get("generation_id") or ""),
+        bool(status.get("checked")),
+        bool(status.get("content_changed")),
+        bool(status.get("catalog_changed")),
+        bool(status.get("last_good_available")),
+        str(status.get("catalog_state") or ""),
+        source_outcomes,
+        tuple(str(item) for item in status.get("pending_sources") or []),
+        float(status.get("started_at") or 0.0),
+        float(status.get("completed_at") or 0.0),
+    )
+
+
+def log_data_refresh_result(status: Mapping[str, object]) -> None:
+    state = str(status.get("state") or "idle")
+    if state not in {"completed", "unchanged", "failed", "deferred"}:
+        return
+    signature = data_refresh_status_signature(status)
+    outcomes = signature[10]
+    logger.info(
+        "DataService 检测结果 state=%s checked=%s content_changed=%s catalog_changed=%s sources=%s",
+        state,
+        bool(status.get("checked")),
+        bool(status.get("content_changed")),
+        bool(status.get("catalog_changed")),
+        ",".join(f"{source}:{outcome_state}" for source, outcome_state, *_ in outcomes),
+    )
+
+
 def format_data_refresh_status(status: Mapping[str, object]) -> tuple[str, str]:
     """把 DataService refresh_status 压成桌面单行状态与颜色。"""
 
     state = str(status.get("state") or "idle")
     scope = str(status.get("scope") or "due")
     reason = str(status.get("reason_code") or "")
+    phase = str(status.get("phase") or "")
+    optional_sources = status.get("optional_sources")
+    optional_failed = isinstance(optional_sources, Mapping) and any(
+        isinstance(item, Mapping) and item.get("state") == "failed" for item in optional_sources.values())
+    source_outcomes = status.get("source_outcomes")
+    outcomes = source_outcomes if isinstance(source_outcomes, Mapping) else {}
+    authoritative = all(key in status for key in ("checked", "content_changed", "catalog_changed"))
+    checked_sources = {
+        str(source)
+        for source, value in outcomes.items()
+        if isinstance(value, Mapping)
+        and (
+            value.get("checked") is True
+            or str(value.get("check_status") or "") in {"up_to_date", "changed"}
+        )
+    }
+    all_not_due = bool(outcomes) and all(
+        isinstance(value, Mapping)
+        and str(value.get("state") or "") in {"not_due", "deferred"}
+        for value in outcomes.values()
+    )
+
+    def terminal_copy(default: str) -> tuple[str, str]:
+        if not authoritative:
+            return default, UI_COLORS["green"]
+        if all_not_due:
+            return ("尚未到检测时间", UI_COLORS["muted"])
+        if status.get("checked") is not True:
+            has_last_good = bool(status.get("last_good_available")) or any(
+                isinstance(value, Mapping) and value.get("used_last_good") is True
+                for value in outcomes.values()
+            )
+            return (
+                "刷新未完成，沿用旧数据" if has_last_good else "刷新未完成",
+                UI_COLORS["error"],
+            )
+        if outcomes and not checked_sources:
+            if status.get("catalog_state") == "deferred":
+                return ("识别资源赛后更新", UI_COLORS["warn"])
+            return ("检测状态未知", UI_COLORS["warn"])
+        if status.get("content_changed"):
+            text = "数据已更新"
+        elif status.get("catalog_changed"):
+            text = "识别目录已更新"
+        else:
+            text = "已检来源与上游一致" if checked_sources else "已检查，与上游一致"
+        blitz = outcomes.get("blitz")
+        if isinstance(blitz, Mapping):
+            if blitz.get("state") == "confirmed_empty":
+                text += " · Blitz 已确认无记录"
+            elif blitz.get("state") == "last_good":
+                text += " · Blitz 沿用旧源"
+            elif blitz.get("state") == "unavailable":
+                text += " · Blitz 暂不可用"
+        if status.get("catalog_state") == "deferred":
+            text += " · 识别资源赛后更新"
+        if any(
+            source != "blitz"
+            and isinstance(value, Mapping)
+            and value.get("state") in {"last_good", "unavailable"}
+            for source, value in outcomes.items()
+        ):
+            text += " · 部分源待重试"
+        warned = status.get("catalog_state") == "deferred" or optional_failed or any(
+            isinstance(value, Mapping) and value.get("state") in {"last_good", "unavailable"}
+            for source, value in outcomes.items()
+            if source in {"blitz", "apex", "mayhem"}
+        )
+        return text, UI_COLORS["warn" if warned else "green"]
+    if state == "core_ready":
+        return ("核心数据已就绪，后台补齐其他英雄", UI_COLORS["green"])
+    if state == "running" and (
+        reason in {"local_missing", "local_corrupt", "repair_missing"}
+        or phase in {"repair", "repairing"}
+    ):
+        return ("本地数据缺失，正在补齐", UI_COLORS["warn"])
+    if state == "running" and any(
+        isinstance(value, Mapping) and str(value.get("check_status") or "") == "changed"
+        for value in outcomes.values()
+    ):
+        return ("发现更新，正在更新", UI_COLORS["warn"])
+    if state == "running" and phase in {"rankings", "details", "ranking_fallback", "download"}:
+        labels = {"rankings": "正在检测英雄排行", "details": "正在核对英雄海克斯详情",
+                  "ranking_fallback": "正在检测补充排名", "download": "正在检测来源资料"}
+        return (labels[phase], UI_COLORS["warn"])
     if state in {"queued", "running"}:
         if reason == "resumed_after_game":
-            return ("赛后继续刷新", UI_COLORS["warn"])
+            return ("赛后继续检测", UI_COLORS["warn"])
         if scope == "core":
-            return ("正在刷新核心数据", UI_COLORS["warn"])
+            return ("正在检测核心数据", UI_COLORS["warn"])
         return ("正在检查数据更新", UI_COLORS["warn"])
     if state == "deferred":
         return ("对局中暂停，赛后继续", UI_COLORS["warn"])
     if state == "completed":
-        return ("数据已更新", UI_COLORS["green"])
+        if authoritative:
+            return terminal_copy("数据已更新")
+        if reason == "core_complete_optional_failed" or optional_failed:
+            return ("核心数据可用，可选来源待重试", UI_COLORS["warn"])
+        return ("数据处理完成，更新状态未知", UI_COLORS["warn"])
     if state == "unchanged":
+        if authoritative:
+            return terminal_copy("数据已检查，无变化")
+        if status.get("catalog_state") == "deferred":
+            return ("核心数据已检查，无变化；识别资源赛后更新", UI_COLORS["warn"])
+        optional = status.get("optional")
+        if reason == "core_complete_optional_failed" or optional_failed or (isinstance(optional, Mapping) and optional.get("state") == "failed"):
+            return ("核心数据已检查，无变化；可选来源待重试", UI_COLORS["warn"])
         return ("数据已检查，无变化", UI_COLORS["green"])
     if state == "failed":
-        return ("刷新失败，沿用旧数据", UI_COLORS["error"])
+        if authoritative:
+            has_last_good = bool(status.get("last_good_available")) or any(
+                isinstance(value, Mapping) and value.get("used_last_good") is True
+                for value in outcomes.values()
+            )
+            return (
+                "检测失败，继续使用已验证数据" if has_last_good else "检测失败，暂无可用数据",
+                UI_COLORS["error"],
+            )
+        return ("检测失败，继续使用已验证数据", UI_COLORS["error"])
     return ("", UI_COLORS["muted"])
 
 

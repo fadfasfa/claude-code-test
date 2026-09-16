@@ -85,6 +85,14 @@ def validate_snapshot_seed(snapshot_root: Path) -> dict[str, Any]:
         and degraded_sources
         and degraded_sources.issubset({"blitz", "apex", "mayhem"})
     )
+    if view.manifest.schema_version == 3:
+        # A v3 seed is judged by its verified unit closure, not an optional
+        # source's availability or the age of otherwise valid statistics.
+        from hextech.infrastructure.persistence.cohort_recovery import validate_generation_cohort
+        if view.degraded or status.get("failed_generation_id"):
+            raise ValueError("v3 seed current is damaged; fallback cannot certify the requested generation")
+        validate_generation_cohort(root.parent, view.manifest.generation_id)
+        optional_degraded = status.get("state") == "degraded"
     if status.get("state") != "ready" and not optional_degraded:
         raise ValueError(f"seed generation invalid: {status.get('reason', 'unknown')}")
     manifest = view.manifest

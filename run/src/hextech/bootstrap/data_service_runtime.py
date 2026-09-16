@@ -30,12 +30,13 @@ from hextech.bootstrap.data_service_status import (
 from hextech.contracts import SourceProvenance
 from hextech.modules.data.generation import DataSnapshotPublisher
 from hextech.modules.data.ports.atomic import atomic_write_json
-from hextech.bootstrap.snapshot_contributions import (
+from hextech.modules.recommendation.identities import build_augment_identity_payload as _build_augment_identity_payload
+from hextech.infrastructure.persistence.source_artifacts import (
     open_baseline_view as _open_baseline_view,
     validated_source_artifact as _validated_source_artifact,
 )
-from hextech.bootstrap.aramkit_generation import build_aramkit_payloads as _aramkit_payloads
-from hextech.bootstrap.blitz_generation import build_blitz_details as _blitz_details
+from hextech.infrastructure.sources.aramkit.projection import build_aramkit_payloads as _aramkit_payloads
+from hextech.infrastructure.sources.blitz.projection import build_blitz_details as _blitz_details
 from hextech.bootstrap.legacy_generation import query_payloads_from_dataframe as _query_payloads_from_dataframe  # noqa: F401
 from hextech.bootstrap.startup_refresh import StartupRefreshSchedule, initial_auto_refresh_delay_seconds  # noqa: F401
 from hextech.bootstrap.game_refresh_gate import normalize_refresh_scope
@@ -53,88 +54,6 @@ class DataBuildResult:
 SnapshotBuilder = Callable[[], DataBuildResult]
 SeedPreparer = Callable[[], bool]
 RefreshAction = Callable[[bool, str], Mapping[str, Any]]
-def _build_augment_identity_payload(
-    overlay_hints: Mapping[str, Any],
-    catalog_entries: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """把 Vision stable ID 与源站数字统计 ID 收口到同一身份索引。"""
-
-    from hextech.modules.recommendation.hints import normalize_augment_id, normalize_augment_name
-
-    hint_map = overlay_hints.get("hints", {})
-    if not isinstance(hint_map, Mapping):
-        hint_map = {}
-
-    augments: dict[str, str] = {}
-    canonical_ids_by_name: dict[str, set[str]] = {}
-    for raw_id, raw_hint in hint_map.items():
-        if not isinstance(raw_hint, Mapping):
-            continue
-        canonical_id = str(raw_id).strip()
-        name = str(raw_hint.get("name") or "").strip()
-        if not canonical_id.isdecimal() or not name:
-            continue
-        augments[canonical_id] = name
-        canonical_ids_by_name.setdefault(normalize_augment_name(name), set()).add(canonical_id)
-
-    aliases: dict[str, str] = {}
-    for canonical_id, name in augments.items():
-        # 数字 ID 永远无歧义；名称只有唯一 canonical 候选时才可成为 alias。
-        # 旧逻辑用 setdefault 让同名项按遍历顺序 first-wins，会静默绑定错误统计。
-        for alias in (canonical_id,):
-            if alias:
-                aliases.setdefault(alias, canonical_id)
-    for normalized_name, candidates in canonical_ids_by_name.items():
-        if len(candidates) != 1:
-            continue
-        canonical_id = next(iter(candidates))
-        name = augments.get(canonical_id, "")
-        for alias in (name, normalize_augment_id(name), normalized_name):
-            if alias:
-                aliases[alias] = canonical_id
-
-    catalog_augments: dict[str, dict[str, Any]] = {}
-    for entry in catalog_entries:
-        if not isinstance(entry, Mapping):
-            continue
-        name = str(entry.get("name") or "").strip()
-        stable_id = normalize_augment_id(entry.get("augment_name_id"), name)
-        if not name or not stable_id:
-            continue
-        candidates = canonical_ids_by_name.get(normalize_augment_name(name), set())
-        canonical_id = next(iter(candidates)) if len(candidates) == 1 else ""
-        item = {
-            "vision_id": stable_id,
-            "name": name,
-            "tier": str(entry.get("tier") or "").strip(),
-            "canonical_id": canonical_id,
-            "stats_available": bool(canonical_id),
-            "ambiguous": len(candidates) > 1,
-        }
-        existing = catalog_augments.get(stable_id)
-        if existing and existing != item:
-            existing["ambiguous"] = True
-            existing["canonical_id"] = ""
-            existing["stats_available"] = False
-            continue
-        catalog_augments[stable_id] = item
-        if canonical_id:
-            for alias in (
-                stable_id,
-                str(entry.get("augment_name_id") or "").strip(),
-                name,
-                normalize_augment_id(name),
-                normalize_augment_name(name),
-            ):
-                if alias:
-                    aliases.setdefault(alias, canonical_id)
-
-    return {
-        "schema_version": 2,
-        "augments": augments,
-        "augment_aliases": aliases,
-        "catalog_augments": catalog_augments,
-    }
 
 
 def _source_provenance(source: str, pointer: Mapping[str, Any]) -> SourceProvenance:
@@ -187,7 +106,7 @@ def build_snapshot_from_runtime(
 
     from hextech.modules.data.catalog.versioned import load_active_catalog, load_runtime_catalog_from_pointer
     from hextech.modules.data.source_runs import load_source_current
-    from hextech.bootstrap.production_pool_binding import bind_production_pool
+    from hextech.infrastructure.persistence.production_pool_binding import bind_production_pool
 
     catalog = None
     if contributions is not None and isinstance(contributions.get("catalog"), Mapping):
@@ -486,10 +405,15 @@ class DataServiceCore:
         private_stats_enabled: bool,
         refresh_action: RefreshAction,
         initial_result: Mapping[str, Any] | None = None,
+        progress_provider: Callable[[], Mapping[str, Any]] | None = None,
     ) -> None:
         self.publisher = publisher
         self._private_stats_enabled = bool(private_stats_enabled)
         self._refresh_action = refresh_action
+        self._progress_provider = progress_provider
+        from hextech.modules.data.generation import DataSnapshotClient
+        self._snapshot_client = DataSnapshotClient(publisher.root)
+        self._status_lock = threading.Lock()
         self._action_lock = threading.Lock()
         self._last_result: dict[str, Any] = dict(initial_result or {"state": "starting", "generation_id": ""})
         _sync_startup_snapshot_status(self.publisher, self._last_result)
@@ -515,14 +439,17 @@ class DataServiceCore:
 
     def status(self) -> dict[str, Any]:
         result = dict(self._last_result)
+        if self._progress_provider is not None:
+            result["executor_progress"] = dict(self._progress_provider())
         result["desired_private_stats_enabled"] = self._private_stats_enabled
         try:
-            from hextech.modules.data.generation import DataSnapshotClient
-
-            snapshot = DataSnapshotClient(self.publisher.root).status()
+            with self._status_lock:
+                snapshot = self._snapshot_client.status()
         except Exception as exc:
             snapshot = {"state": "unavailable", "reason": str(exc)}
         result["snapshot"] = snapshot
+        if snapshot.get("generation_id"):
+            result["generation_id"] = snapshot["generation_id"]
         return result
 
     def _refresh_locked(self, *, force: bool = False, scope: str = "due") -> dict[str, Any]:
@@ -532,19 +459,39 @@ class DataServiceCore:
             result.setdefault("refresh_scope", normalized_scope)
             result.setdefault("force", bool(force))
             if result.get("state") == "degraded" and self.publisher.current_generation_id():
+                optional_only = result.get("reason_code") in {"optional_source_stale", "core_complete_optional_failed"}
                 result.setdefault(
                     "data_status",
-                    "fresh" if result.get("reason_code") == "optional_source_stale" else "data_stale",
+                    "fresh" if optional_only else "data_stale",
                 )
                 result.setdefault(
                     "data_reason",
                     "optional_source_stale"
-                    if result.get("reason_code") == "optional_source_stale"
+                    if optional_only
                     else "candidate_rejected_last_good_preserved",
+                )
+                outcomes = result.get("source_outcomes")
+                source_last_good = isinstance(outcomes, Mapping) and any(
+                    isinstance(outcome, Mapping) and outcome.get("used_last_good") is True
+                    for outcome in outcomes.values()
+                )
+                try:
+                    snapshot_last_good = bool(self._snapshot_client.status().get("generation_id"))
+                except Exception:
+                    snapshot_last_good = False
+                result.setdefault(
+                    "last_good_available",
+                    source_last_good or snapshot_last_good,
                 )
             return result
         except Exception as exc:
-            current_id = self.publisher.current_generation_id()
+            try:
+                fallback_status = self._snapshot_client.status()
+                current_id = str(fallback_status.get("generation_id") or "")
+            except Exception:
+                # A pointer alone is not proof of a usable last-good snapshot.
+                fallback_status = {}
+                current_id = ""
             return {
                 "state": "degraded" if current_id else "failed",
                 "generation_id": current_id,
@@ -555,6 +502,26 @@ class DataServiceCore:
                 "error_type": exc.__class__.__name__,
                 "refresh_scope": normalized_scope,
                 "force": bool(force),
+                "checked": False,
+                "content_changed": False,
+                "catalog_changed": False,
+                "last_good_available": bool(current_id),
+                "source_outcomes": {
+                    str(source): {
+                        "state": "last_good",
+                        "checked": False,
+                        "changed": False,
+                        "availability": "available",
+                        "used_last_good": True,
+                        "data_status": str(detail.get("data_status") or "unknown"),
+                        "reason_code": "refresh_exception_last_good_preserved",
+                    }
+                    for source, detail in (fallback_status.get("source_status") or {}).items()
+                    if isinstance(source, str)
+                    and isinstance(detail, Mapping)
+                    and int(detail.get("record_count") or 0) > 0
+                    and str(detail.get("data_status") or "") not in {"pending", "unavailable"}
+                },
             }
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Hextech DataService")
@@ -562,8 +529,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force-initial-refresh", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     from hextech.modules.session.settings import load_ui_feature_flags
-    from hextech.bootstrap.refresh_coordinator import CohortRefreshCoordinator
+    from hextech.infrastructure.sources.refresh_service import IncrementalRefreshService
     from hextech.modules.data.ports.paths import get_var_dir
+    from hextech.infrastructure.sources.download_context import read_priority_champion
     from hextech.infrastructure.sources.aramkit.service import probe_aramkit_upstream_marker
     from hextech.bootstrap.game_refresh_gate import probe_production_game_in_progress
 
@@ -584,18 +552,20 @@ def main(argv: list[str] | None = None) -> int:
         remove_role_owner("data-service")
         instance_lock.release()
         raise
-    coordinator = CohortRefreshCoordinator(
+    coordinator = IncrementalRefreshService(
         publisher=publisher,
-        builder=build_snapshot_from_runtime,
         root=get_var_dir(),
-        upstream_marker_probe=probe_aramkit_upstream_marker,
         game_state_probe=probe_production_game_in_progress,
+        champion_probe=read_priority_champion,
+        marker_probe=lambda: probe_aramkit_upstream_marker(
+            conditional_cache_root=get_var_dir() / "state" / "http-validators"),
     )
     core = DataServiceCore(
         publisher=publisher,
         private_stats_enabled=private_enabled,
         refresh_action=lambda force, scope: coordinator.refresh(force=force, scope=scope),
         initial_result=bootstrap_result,
+        progress_provider=coordinator.progress,
     )
     application = DataServiceApplication(core=core, parent_pid=args.parent_pid)
     server = LoopbackThreadingHTTPServer(("127.0.0.1", 0), application.handler())
@@ -608,23 +578,20 @@ def main(argv: list[str] | None = None) -> int:
     skip_auto_refresh = os.getenv("HEXTECH_DATA_SERVICE_SKIP_AUTO_REFRESH", "").strip().lower() in {"1", "true", "yes", "on"}
     initial_refresh = StartupRefreshSchedule.create(bootstrap_result, skip=skip_auto_refresh, now=time.monotonic())
     if initial_refresh.consume_if_due(time.monotonic()):
-        application.submit_action("refresh", {"force": args.force_initial_refresh})
-    next_refresh_at = time.monotonic() + 15 * 60
+        application.submit_action("refresh", {"force": args.force_initial_refresh, "scope": "core"})
+    next_refresh_at = time.monotonic() + coordinator.seconds_until_due()
     try:
         while not application.shutdown_requested.wait(0.5):
             if args.parent_pid and not psutil.pid_exists(args.parent_pid):
                 break
             if initial_refresh.consume_if_due(time.monotonic()):
-                payload = {"force": args.force_initial_refresh, "startup_grace_seconds": initial_refresh.delay_seconds}
+                payload = {"force": args.force_initial_refresh, "scope": "core", "startup_grace_seconds": initial_refresh.delay_seconds}
                 application.submit_action("refresh", payload)
-            if (resume_request := coordinator.poll_deferred_refresh()) is not None:
-                application.submit_action(
-                    "refresh",
-                    {**resume_request, "resumed_after_game": True},
-                )
-            if time.monotonic() >= next_refresh_at:
+            if coordinator.poll_context() and not skip_auto_refresh and not initial_refresh.pending:
+                application.submit_action("refresh", {"scope": "core"})
+            if not skip_auto_refresh and not initial_refresh.pending and time.monotonic() >= next_refresh_at:
                 application.submit_action("refresh")
-                next_refresh_at = time.monotonic() + 15 * 60
+                next_refresh_at = time.monotonic() + coordinator.seconds_until_due()
     finally:
         sync_startup_service_state(publisher, "stopping")
         application.request_shutdown()

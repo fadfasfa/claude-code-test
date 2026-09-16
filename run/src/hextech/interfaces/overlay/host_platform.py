@@ -79,9 +79,9 @@ def build_overlay_window_config() -> dict[str, Any]:
         "show_missing_synergy_reason": True,
         "follow_window_titles": [LOL_GAME_WINDOW_TITLE],
         "top_offset": 132,
-        # 三档轮询：无游戏窗口 250ms、游戏存在但未选择 50ms、选择期 16ms。
+        # 两档轮询：无游戏窗口 250ms；游戏存在及选择期均只读内存邮箱 16ms。
         "event_poll_ms": 250,
-        "game_event_poll_ms": 50,
+        "game_event_poll_ms": 16,
         "fast_event_poll_ms": 16,
         "fast_event_hold_ms": 1200,
         "diagnostic_mode": False,

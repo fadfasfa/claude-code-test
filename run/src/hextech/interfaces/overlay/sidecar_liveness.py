@@ -93,6 +93,7 @@ def read_sidecar_liveness(
         "build_id": str(payload.get("build_id") or ""),
         "sidecar_instance_id": str(payload.get("sidecar_instance_id") or ""),
         "vision_pool_fingerprint": str(payload.get("vision_pool_fingerprint") or ""),
+        "recognition_catalog_id": str(payload.get("recognition_catalog_id") or payload.get("catalog_generation_id") or ""),
         "vision_pool_origin_generation_id": str(
             payload.get("vision_pool_origin_generation_id")
             or payload.get("vision_pool_generation_id")

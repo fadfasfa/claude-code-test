@@ -533,6 +533,10 @@ def _write_overlay_session_report(
         "slots": safe_slots,
         "rows": safe_rows,
         "context": str((context or {}).get("error") or "") if isinstance(context, Mapping) else "",
+        "context_input_error": str(visibility.get("context_input_error") or ""),
+        "context_input_game_instance_id": str(
+            visibility.get("context_input_game_instance_id") or ""
+        ),
         "presentation": {
             "state": str(presentation.get("state") or "hidden"),
             "failure_reason": str(presentation.get("failure_reason") or ""),
@@ -659,6 +663,23 @@ def _write_overlay_session_report(
         "timing": {
             **{str(key): value for key, value in event_timing.items()},
             "host_read_at": float(visibility.get("host_read_at") or 0.0),
+            "event_read_started_at": float(visibility.get("event_read_started_at") or 0.0),
+            "event_read_completed_at": float(visibility.get("event_read_completed_at") or 0.0),
+            "input_sequence": int(visibility.get("input_sequence") or 0),
+            "input_age_seconds": visibility.get("input_age_seconds"),
+            "input_error": str(visibility.get("input_error") or ""),
+            "context_requested_at": float(visibility.get("context_requested_at") or 0.0),
+            "context_read_started_at": float(visibility.get("context_read_started_at") or 0.0),
+            "context_read_completed_at": float(visibility.get("context_read_completed_at") or 0.0),
+            "context_input_sequence": int(visibility.get("context_input_sequence") or 0),
+            "context_input_error": str(visibility.get("context_input_error") or ""),
+            "context_input_game_instance_id": str(
+                visibility.get("context_input_game_instance_id") or ""
+            ),
+            "context_input_age_seconds": visibility.get("context_input_age_seconds"),
+            "context_gate_evaluated_at": float(
+                visibility.get("context_gate_evaluated_at") or 0.0
+            ),
             "context_confirmed_at": float(visibility.get("context_confirmed_at") or 0.0),
             "draw_started_at": float(visibility.get("draw_started_at") or 0.0),
             "draw_completed_at": float(visibility.get("draw_completed_at") or 0.0),

@@ -14,7 +14,7 @@ import shutil
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -28,11 +28,12 @@ from hextech.contracts import (
     SourceStatusV2,
 )
 from hextech.modules.data.catalog.runtime_store import get_runtime_root_dir
-from hextech.modules.data.freshness import SOURCE_INTERVALS, evaluate_source_expiry, normalize_utc
+from hextech.modules.data.freshness import SOURCE_INTERVALS, parse_refresh_time
 from hextech.modules.data.ports.atomic import atomic_write_json
 from .validation import (
     SNAPSHOT_ROLES,
     SnapshotValidationError,
+    champion_detail_complete,
     content_fingerprint,
     count_records,
     safe_generation_file,
@@ -41,7 +42,7 @@ from .validation import (
 )
 
 
-SNAPSHOT_SCHEMA_VERSION = 2
+SNAPSHOT_SCHEMA_VERSION = 3
 _GENERATION_ID_RE = re.compile(r"^\d{8}T\d{6}-[0-9a-f]{10}$")
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,41 @@ def _semantic_source_status(
 _count_records = count_records
 
 
+def _snapshot_components(payloads: Mapping[str, Any], provenance: Sequence[SourceProvenance],
+                         components: Mapping[str, Any] | None) -> dict[str, Any]:
+    if components is not None:
+        DataSnapshotManifest.validate_components(components)
+        return deepcopy(dict(components))
+    # Compatibility for existing full-snapshot callers: content-address the
+    # actual immutable units, never invent a successful upstream source run.
+    def digest(value: Any) -> str:
+        return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                         separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    catalog_ids = {item.catalog_generation_id for item in provenance}
+    catalog_id = next(iter(catalog_ids)) if len(catalog_ids) == 1 else "payload-" + digest(payloads["identities"])
+    result = {
+        "ranking": {"source_version": digest(payloads["champions"]), "catalog_id": catalog_id},
+        "champions": {
+            str(detail["hero_id"]): {
+                "source_version": digest(detail), "catalog_id": catalog_id,
+                "complete": champion_detail_complete(detail),
+            }
+            for detail in payloads["champion_hextech"].values()
+        },
+    }
+    stats = [item for item in provenance if (item.source, item.artifact_role) in {("aramkit", "scoped_stats"), ("hextech", "stats")}]
+    ranking = [item for item in provenance if (item.source, item.artifact_role) in {("aramkit", "hero_rankings"), ("blitz", "augment_ranking")}]
+    ranking = ranking or stats
+    if len(ranking) == 1:
+        result["ranking"].update(run_id=ranking[0].run_id, catalog_id=ranking[0].catalog_generation_id)
+    if len(stats) == 1:
+        for component in result["champions"].values():
+            component.update(run_id=stats[0].run_id, catalog_id=stats[0].catalog_generation_id)
+    DataSnapshotManifest.validate_components(result)
+    return result
+
+
 class DataSnapshotPublisher:
     """DataService 专用的 generation 发布器。"""
 
@@ -108,6 +144,7 @@ class DataSnapshotPublisher:
         health: str = "healthy",
         degraded_sources: Sequence[str] = (),
         source_status: Mapping[str, Mapping[str, Any] | SourceStatusV2] | None = None,
+        components: Mapping[str, Any] | None = None,
     ) -> DataSnapshotManifest | None:
         """返回语义内容完全相同的 current；易变检查时钟不参与比较。"""
 
@@ -117,6 +154,7 @@ class DataSnapshotPublisher:
             for item in source_files
         )
         fingerprint = content_fingerprint(provenance)
+        normalized_components = _snapshot_components(normalized, provenance, components)
         candidate_payload_hashes = _payload_hashes(normalized)
         normalized_source_status = {
             str(key): value if isinstance(value, SourceStatusV2) else SourceStatusV2.from_mapping(value)
@@ -128,7 +166,9 @@ class DataSnapshotPublisher:
             return None
         current_payload_hashes = {item.role: item.sha256 for item in current.manifest.files}
         if (
-            current.manifest.content_fingerprint == fingerprint
+            current.manifest.schema_version == SNAPSHOT_SCHEMA_VERSION
+            and current.manifest.components == normalized_components
+            and current.manifest.content_fingerprint == fingerprint
             and current.manifest.source_files == provenance
             and current_payload_hashes == candidate_payload_hashes
             and current.manifest.health == str(health)
@@ -150,14 +190,16 @@ class DataSnapshotPublisher:
         refreshed_sources: Sequence[str] = (),
         degraded_sources: Sequence[str] = (),
         source_status: Mapping[str, Mapping[str, Any] | SourceStatusV2] | None = None,
+        components: Mapping[str, Any] | None = None,
     ) -> DataSnapshotManifest:
         normalized = {role: payloads.get(role) for role in SNAPSHOT_ROLES}
-        champion_count, augment_count, stat_record_count = _count_records(normalized)
+        champion_count, augment_count, stat_record_count = _count_records(normalized, schema_version=SNAPSHOT_SCHEMA_VERSION)
         provenance = tuple(
             item if isinstance(item, SourceProvenance) else SourceProvenance.from_mapping(item)
             for item in source_files
         )
         fingerprint = content_fingerprint(provenance)
+        normalized_components = _snapshot_components(normalized, provenance, components)
         normalized_source_status = {
             str(key): value if isinstance(value, SourceStatusV2) else SourceStatusV2.from_mapping(value)
             for key, value in (source_status or {}).items()
@@ -168,6 +210,7 @@ class DataSnapshotPublisher:
             health=health,
             degraded_sources=degraded_sources,
             source_status=normalized_source_status,
+            components=normalized_components,
         )
         if current is not None:
             self.last_promotion_disposition = "unchanged"
@@ -206,6 +249,7 @@ class DataSnapshotPublisher:
                 refreshed_sources=tuple(str(item) for item in refreshed_sources),
                 degraded_sources=tuple(str(item) for item in degraded_sources),
                 source_status=normalized_source_status,
+                components=normalized_components,
             )
             atomic_write_json(staging / "manifest.json", manifest.to_dict(), ensure_ascii=False, indent=2)
             validate_generation_directory(
@@ -284,30 +328,171 @@ class DataSnapshotView:
     _payloads: Mapping[str, Any]
     degraded: bool = False
     failed_generation_id: str = ""
+    _runtime_root: Path | None = None
+
+    def _runtime_check_states(self) -> Mapping[str, Mapping[str, Any]]:
+        """读取 snapshot 同一 runtime 的易变检测证据；失败时不虚构 fresh。"""
+
+        if self._runtime_root is None:
+            return {}
+        path = self._runtime_root / "state" / "data-service" / "refresh_schedule.v1.json"
+        try:
+            payload = _read_json(path)
+        except SnapshotValidationError:
+            return {}
+        sources = payload.get("sources") if isinstance(payload, Mapping) else None
+        if not isinstance(sources, Mapping):
+            return {}
+        return {
+            str(source): state
+            for source, state in sources.items()
+            if isinstance(source, str) and isinstance(state, Mapping)
+        }
+
+    def _bound_check_state(
+        self,
+        source: str,
+        projected: Mapping[str, Any],
+        state: Mapping[str, Any] | None,
+        observed_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        """只接受与本 snapshot 实际来源绑定的上游检查证据。"""
+
+        unknown = {
+            "check_status": "unknown",
+            "upstream_revision": "",
+            "applied_revision": "",
+            "last_checked_at": "",
+            "check_interval_seconds": int(SOURCE_INTERVALS.get(source, timedelta()).total_seconds()),
+            "check_evidence_bound": False,
+        }
+        if not isinstance(state, Mapping):
+            return unknown
+        current_run_id = str(state.get("current_run_id") or "")
+        projected_run_id = str(
+            projected.get("run_id")
+            or (projected.get("catalog_id") if source == "catalog" else "")
+            or ""
+        )
+        actual_run_ids = {
+            item.run_id for item in self.manifest.source_files if item.source == source
+        }
+        if (
+            not current_run_id
+            or not projected_run_id
+            or current_run_id != projected_run_id
+            or current_run_id not in actual_run_ids
+        ):
+            return unknown
+        check_status = str(state.get("check_status") or "unknown")
+        if check_status not in {"up_to_date", "changed", "unknown", "failed", "never_checked"}:
+            return unknown
+        upstream_revision = str(state.get("upstream_revision") or "")
+        applied_revision = str(state.get("applied_revision") or "")
+        last_checked_at = str(state.get("last_checked_at") or "")
+        try:
+            interval_seconds = int(state.get("check_interval_seconds") or 0)
+        except (TypeError, ValueError):
+            return unknown
+        expected_interval = int(SOURCE_INTERVALS.get(source, timedelta()).total_seconds())
+        if interval_seconds <= 0 or interval_seconds != expected_interval:
+            return unknown
+        check_time = parse_refresh_time(last_checked_at)
+        observation = observed_at or datetime.now(timezone.utc)
+        if observation.tzinfo is None:
+            observation = observation.replace(tzinfo=timezone.utc)
+        checked = check_time is not None and check_time <= observation + timedelta(minutes=5)
+        if check_status == "up_to_date" and (
+            not checked
+            or not upstream_revision
+            or upstream_revision != applied_revision
+        ):
+            return unknown
+        if check_status == "up_to_date" and source in {"aramkit", "catalog"}:
+            ranking = self.manifest.components.get("ranking")
+            if not isinstance(ranking, Mapping):
+                return unknown
+            if source == "aramkit" and (
+                str(ranking.get("run_id") or "") != current_run_id
+                or str(ranking.get("source_version") or "") != applied_revision
+            ):
+                return unknown
+            if source == "catalog" and str(ranking.get("catalog_id") or "") != applied_revision:
+                return unknown
+        if check_status == "changed" and (
+            not checked
+            or not upstream_revision
+            or not applied_revision
+            or upstream_revision == applied_revision
+        ):
+            return unknown
+        if check_status in {"unknown", "never_checked"}:
+            return {
+                **unknown,
+                "check_status": check_status,
+                "check_interval_seconds": interval_seconds,
+            }
+        return {
+            "check_status": check_status,
+            "upstream_revision": upstream_revision,
+            "applied_revision": applied_revision,
+            "last_checked_at": last_checked_at,
+            "check_interval_seconds": interval_seconds,
+            "check_evidence_bound": True,
+        }
 
     def status(self, now: datetime | None = None) -> dict[str, Any]:
-        observed_at = normalize_utc(now or datetime.now(timezone.utc))
+        # The observation clock validates check evidence, never expires business data by age.
         source_status: dict[str, dict[str, Any]] = {}
         effective_degraded_sources = set(self.manifest.degraded_sources)
+        runtime_states = self._runtime_check_states()
         for source, value in self.manifest.source_status.items():
             projected = value.to_dict()
-            interval = SOURCE_INTERVALS.get(source)
             raw_data_at = str(projected.get("data_at") or "").strip()
             data_at = raw_data_at or self.manifest.created_at
             if not raw_data_at and data_at:
                 # 旧 generation 没有 data_at；统一把 created_at 作为可见回退，
                 # 让推荐、桌面和报告使用同一时间，而不是各自猜测。
                 projected["data_at"] = data_at
-            if interval is not None:
-                expired, age_seconds = evaluate_source_expiry(data_at, interval, observed_at)
-                if expired:
-                    projected["data_status"] = "data_stale"
-                    if not str(projected.get("data_reason") or "").strip():
-                        projected["data_reason"] = "source_data_expired"
-                    projected["stale_age_seconds"] = age_seconds
+            evidence = self._bound_check_state(source, projected, runtime_states.get(source), now)
+            projected.update(evidence)
+            check_status = str(evidence["check_status"])
+            if str(projected.get("data_reason") or "") == "source_data_expired":
+                # 旧构建曾把“数据生成时间超过检测周期”固化为 stale。该原因
+                # 没有证明上游变化，读取时先还原为有效数据，再由检查证据投影。
+                projected.update(
+                    freshness="fresh",
+                    data_status="fresh",
+                    data_reason="",
+                    stale_age_seconds=0,
+                )
+            data_status = str(projected.get("data_status") or "unknown")
+            if check_status == "changed" and data_status not in {
+                "pending",
+                "confirmed_empty",
+                "unavailable",
+            }:
+                projected.update(
+                    freshness="last_good",
+                    data_status="data_stale",
+                    data_reason="upstream_revision_changed",
+                )
+            elif check_status == "failed":
+                if str(projected.get("freshness") or "unknown") == "fresh":
+                    projected["freshness"] = "last_good"
+                if not str(projected.get("data_reason") or ""):
+                    projected["data_reason"] = "upstream_check_failed"
+            elif check_status in {"unknown", "never_checked"}:
+                if str(projected.get("freshness") or "unknown") == "fresh":
+                    projected["freshness"] = "unknown"
+                if not str(projected.get("data_reason") or ""):
+                    projected["data_reason"] = "upstream_check_unknown"
             # Catalog 是否过期由 adoption-held 独立门处理；它不是用户统计来源。
             # manifest 若明确把 Catalog 标为 degraded，初始化集合仍会保留该 lineage。
-            if source != "catalog" and str(projected.get("data_status") or "") != "fresh":
+            if source != "catalog" and (
+                str(projected.get("freshness") or "unknown") != "fresh"
+                or str(projected.get("data_status") or "unknown") != "fresh"
+            ):
                 effective_degraded_sources.add(source)
             source_status[source] = projected
         return {
@@ -323,6 +508,7 @@ class DataSnapshotView:
             # 的绝对时效，供 Desktop 与严格验收消费，二者不能互相覆盖。
             "effective_degraded_sources": sorted(effective_degraded_sources),
             "source_status": source_status,
+            "components": deepcopy(dict(self.manifest.components)),
         }
 
     def get_champions(self) -> list[dict[str, Any]]:
@@ -349,6 +535,16 @@ class DataSnapshotView:
     def get_champion_detail(self, champion_id_or_name: object) -> dict[str, Any] | None:
         detail = self._champion_detail(champion_id_or_name)
         return deepcopy(dict(detail)) if detail is not None else None
+
+    def is_champion_complete(self, champion_id_or_name: object) -> bool:
+        detail = self._champion_detail(champion_id_or_name)
+        if not champion_detail_complete(detail):
+            return False
+        if self.manifest.schema_version == 2:
+            return True
+        hero_id = str(detail.get("hero_id") or "") if detail else ""
+        component = self.manifest.components.get("champions", {}).get(hero_id, {})
+        return component.get("complete") is True
 
     def get_champion_augments(self, champion_id_or_name: object) -> list[dict[str, Any]]:
         detail = self._champion_detail(champion_id_or_name)
@@ -520,13 +716,15 @@ class DataSnapshotClient:
         """固定并返回一代数据，供单次响应内完成全部查询。"""
 
         manifest, payloads, degraded, failed_id = self._load()
-        return DataSnapshotView(manifest, payloads, degraded, failed_id)
+        runtime_root = self.root.parent if self.root.name == "snapshots" else None
+        return DataSnapshotView(manifest, payloads, degraded, failed_id, runtime_root)
 
     def open_generation(self, generation_id: str) -> DataSnapshotView:
         """按 ID 固定打开 immutable generation；不存在或损坏时明确失败。"""
 
         manifest, payloads = self._load_generation(str(generation_id or ""))
-        return DataSnapshotView(manifest, payloads)
+        runtime_root = self.root.parent if self.root.name == "snapshots" else None
+        return DataSnapshotView(manifest, payloads, _runtime_root=runtime_root)
 
     def load_manifest(self) -> DataSnapshotManifest:
         return self._load()[0]

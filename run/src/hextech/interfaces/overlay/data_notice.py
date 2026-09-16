@@ -1,4 +1,4 @@
-"""Overlay 阶段附近的数据时效提示。"""
+"""Overlay 只显示实际缺失/损坏；数据年龄与待切代信息留在诊断中。"""
 
 from __future__ import annotations
 
@@ -58,67 +58,29 @@ def build_data_notice(
     rows: Sequence[Mapping[str, Any]] = (),
     stats_scope: Mapping[str, Any] | None = None,
 ) -> DataNoticeModel | None:
-    """把来源 freshness 汇总为阶段附近的单条提示，不污染卡片正文。"""
+    """时效不影响已经验证的数据可用性，不能单独生成 Canvas 提示。"""
 
     source_status = snapshot_status.get("source_status") if isinstance(snapshot_status, Mapping) else None
     source_status = source_status if isinstance(source_status, Mapping) else {}
-    if isinstance(stats_scope, Mapping) and bool(stats_scope.get("new_generation_available")):
-        return {
-            "text": "当前选择沿用上一代统计，下一轮采用新数据",
-            "source": "aramkit",
-            "reason": "new_generation_available",
-            "data_at": "",
-            "state": "updating",
-            "age_seconds": None,
-        }
-    for primary_source in ("aramkit", "hextech"):
-        primary = source_status.get(primary_source)
-        if not isinstance(primary, Mapping):
+    for name in ("aramkit", "hextech", "blitz"):
+        source = source_status.get(name)
+        if not isinstance(source, Mapping):
             continue
-        stale = (
-            str(primary.get("freshness") or "unknown") != "fresh"
-            or str(primary.get("data_status") or "unknown") == "data_stale"
+        reason = str(source.get("data_reason") or "")
+        unavailable = (
+            source.get("data_status") in {"failed", "unavailable", "missing", "invalid"}
+            or source.get("state") in {"failed", "unavailable"}
+            or any(part in reason for part in ("missing", "corrupt", "invalid", "unavailable"))
         )
-        if stale:
-            reason = str(primary.get("data_reason") or "")
-            data_at = str(primary.get("data_at") or "")
+        if unavailable:
             return {
-                "text": stats_stale_text(reason, data_at),
-                "source": primary_source,
-                "reason": reason,
-                "data_at": data_at,
-                "state": "stale",
-                "age_seconds": data_age_seconds(data_at),
-            }
-    blitz = source_status.get("blitz")
-    if isinstance(blitz, Mapping):
-        stale = (
-            str(blitz.get("freshness") or "unknown") != "fresh"
-            or str(blitz.get("data_status") or "unknown") == "data_stale"
-        )
-        if stale:
-            data_at = str(blitz.get("data_at") or "")
-            return {
-                "text": "Blitz 排名暂不可用",
-                "source": "blitz",
-                "reason": str(blitz.get("data_reason") or "optional_source_stale"),
-                "data_at": data_at,
+                "text": "Blitz 排名暂不可用" if name == "blitz" else "统计暂不可用",
+                "source": name,
+                "reason": reason or "source_unavailable",
+                "data_at": str(source.get("data_at") or ""),
                 "state": "unavailable",
-                "age_seconds": data_age_seconds(data_at),
+                "age_seconds": None,
             }
-    for row in rows:
-        if str(row.get("stats_source") or "") != "aramkit" or str(row.get("data_status") or "") != "stale":
-            continue
-        data_at = str(row.get("source_data_at") or "")
-        reason = str(row.get("data_reason") or "")
-        return {
-            "text": stats_stale_text(reason, data_at),
-            "source": "aramkit",
-            "reason": reason,
-            "data_at": data_at,
-            "state": "stale",
-            "age_seconds": data_age_seconds(data_at),
-        }
     return None
 
 

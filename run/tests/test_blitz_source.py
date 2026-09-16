@@ -51,6 +51,18 @@ class FixtureFetcher:
         }
 
 
+class ConditionalFixtureFetcher(FixtureFetcher):
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        super().__init__({})
+        self.responses = list(responses)
+        self.kwargs: list[dict[str, object]] = []
+
+    def __call__(self, url: str, **kwargs: object) -> object:
+        self.calls.append(url)
+        self.kwargs.append(dict(kwargs))
+        return self.responses.pop(0)
+
+
 @pytest.fixture
 def isolated_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(source_runs, "var_path", lambda *parts: tmp_path.joinpath(*parts))
@@ -385,6 +397,35 @@ def test_refresh_fails_closed_on_403(isolated_sources: Path) -> None:
     assert manifest["outcomes"][0]["failure_kind"] == "http_403"
 
 
+def test_429_retry_after_is_preserved_in_source_result(isolated_sources: Path) -> None:
+    response = {
+        "status_code": 429,
+        "text": "",
+        "error": "http_429",
+        "error_kind": "http_429",
+        "response_headers": {"Retry-After": "180"},
+    }
+
+    result = service.refresh_blitz(
+        fetcher=lambda *_args, **_kwargs: response,
+        catalog_binding=_binding(),
+    )
+
+    assert result["success"] is False
+    assert result["failure_kind"] == "http_429"
+    assert result["failure_stage"] == "fetch"
+    assert result["retry_after_seconds"] == 180
+
+
+def test_default_fetcher_applies_transport_response_limit(monkeypatch) -> None:
+    captured = {}
+    monkeypatch.setattr(service, "fetch_text", lambda _url, **kwargs: captured.update(kwargs))
+
+    service._default_fetcher(service.DATA_URL)
+
+    assert captured["max_response_bytes"] == service.MAX_RESPONSE_BYTES
+
+
 def test_refresh_honors_worker_cancel_before_network(isolated_sources: Path) -> None:
     stop_event = threading.Event()
     stop_event.set()
@@ -414,18 +455,10 @@ def _install_current_blitz(isolated_sources: Path, *, last_success_at: str) -> t
     return payload, pointer
 
 
-@pytest.mark.parametrize(
-    ("age", "expected_reason"),
-    (
-        (timedelta(hours=2, minutes=29, seconds=59), "not_stale"),
-        (timedelta(hours=2, minutes=30), "not_stale"),
-        (timedelta(hours=2, minutes=30, seconds=1), "ready"),
-    ),
-)
-def test_same_marker_reuse_obeys_two_and_half_hour_boundary(
+@pytest.mark.parametrize("age", (timedelta(hours=3), timedelta(days=7)))
+def test_same_marker_reuse_is_version_driven_not_age_driven(
     isolated_sources: Path,
     age: timedelta,
-    expected_reason: str,
 ) -> None:
     now = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
     payload, _pointer = _install_current_blitz(
@@ -440,11 +473,39 @@ def test_same_marker_reuse_obeys_two_and_half_hour_boundary(
     )
 
     assert result["success"] is True
-    assert result["reason"] == expected_reason
+    assert result["reason"] == "not_stale"
+
+
+def test_missing_parser_revision_reprojects_same_upstream_once(
+    isolated_sources: Path,
+) -> None:
+    now = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+    payload, pointer = _install_current_blitz(
+        isolated_sources,
+        last_success_at=now.isoformat(),
+    )
+    manifest_path = source_runs.source_run_dir("blitz", pointer["run_id"]) / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["metadata"].pop("parser_revision")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    pointer["manifest_sha256"] = service.sha256_file(manifest_path)
+    source_runs.source_current_path("blitz").write_text(json.dumps(pointer), encoding="utf-8")
+
+    repaired = service.refresh_blitz(
+        fetcher=FixtureFetcher(payload),
+        catalog_binding=_binding(),
+        now=now,
+    )
+    repaired_manifest = source_runs.load_source_run_manifest("blitz", repaired["run_id"])
+
+    assert repaired["reason"] == "ready"
+    assert repaired["run_id"] != pointer["run_id"]
+    assert repaired_manifest is not None
+    assert repaired_manifest.metadata["parser_revision"] == service.PARSER_REVISION
 
 
 @pytest.mark.parametrize("last_success_at", ("", "not-a-time"))
-def test_missing_or_invalid_blitz_success_time_forces_full_refresh(
+def test_missing_or_invalid_blitz_success_time_does_not_override_verified_marker(
     isolated_sources: Path,
     last_success_at: str,
 ) -> None:
@@ -460,7 +521,7 @@ def test_missing_or_invalid_blitz_success_time_forces_full_refresh(
     )
 
     assert result["success"] is True
-    assert result["reason"] == "ready"
+    assert result["reason"] == "not_stale"
 
 
 def test_expired_blitz_failure_preserves_verified_current_bytes(isolated_sources: Path) -> None:
@@ -498,3 +559,62 @@ def test_force_blitz_refresh_never_reuses_same_marker(isolated_sources: Path) ->
 
     assert result["reason"] == "ready"
     assert result["pointer"]["run_id"] != pointer["run_id"]
+
+
+def test_conditional_304_reuses_blitz_body_without_new_run(isolated_sources: Path) -> None:
+    payload = {"data": [_row(value) for value in (1001, 1002, 7001, 7002)]}
+    fetcher = ConditionalFixtureFetcher(
+        [
+            {
+                "status_code": 200,
+                "text": json.dumps(payload),
+                "response_headers": {"ETag": '"blitz-v1"'},
+            },
+            {"status_code": 304, "text": "", "response_headers": {}},
+        ]
+    )
+    raw_root = isolated_sources / "raw-responses"
+    first = service.refresh_blitz(
+        fetcher=fetcher,
+        catalog_binding=_binding(),
+        raw_cache_root=raw_root,
+    )
+    current = source_runs.source_current_path("blitz")
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.write_text(json.dumps(first["pointer"]), encoding="utf-8")
+
+    second = service.refresh_blitz(
+        fetcher=fetcher,
+        catalog_binding=_binding(),
+        raw_cache_root=raw_root,
+    )
+
+    assert second["reason"] == "not_stale"
+    assert second["pointer"]["run_id"] == first["run_id"]
+    assert fetcher.kwargs[1]["headers"]["If-None-Match"] == '"blitz-v1"'
+
+
+def test_same_validation_failure_fingerprint_does_not_create_another_run(
+    isolated_sources: Path,
+) -> None:
+    payload = {"data": [_row(1001)]}
+    raw_root = isolated_sources / "raw-responses"
+    first = service.refresh_blitz(
+        fetcher=FixtureFetcher(payload),
+        catalog_binding=_binding(),
+        raw_cache_root=raw_root,
+    )
+    before = sorted(path.name for path in (source_runs.source_root("blitz") / "runs").iterdir())
+
+    second = service.refresh_blitz(
+        fetcher=FixtureFetcher(payload),
+        catalog_binding=_binding(),
+        raw_cache_root=raw_root,
+        previous_failure_fingerprint=first["failure_fingerprint"],
+    )
+    after = sorted(path.name for path in (source_runs.source_root("blitz") / "runs").iterdir())
+
+    assert first["reason"] == "production_coverage_insufficient"
+    assert second["reason"] == "validation_unchanged"
+    assert second["diagnostics"]["deduplicated"] is True
+    assert after == before

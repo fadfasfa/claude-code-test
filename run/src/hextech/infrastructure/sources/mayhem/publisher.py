@@ -22,6 +22,10 @@ def publish_mayhem_run(
     run_id: str,
     started_at: str,
     report: Mapping[str, Any],
+    data_at: str | None = None,
+    upstream_revision: str = "",
+    applied_revision: str = "",
+    parser_revision: str = "",
     promote_current: bool = False,
     pointer_output: str | Path | None = None,
 ) -> tuple[str, SourceRunManifest]:
@@ -69,6 +73,12 @@ def publish_mayhem_run(
             record_count=len(items),
         ),
         outcomes=outcomes,
+        metadata={
+            "data_at": data_at or started_at,
+            "upstream_revision": upstream_revision,
+            "applied_revision": applied_revision,
+            "parser_revision": parser_revision,
+        },
     )
     publish_source_run(
         manifest,

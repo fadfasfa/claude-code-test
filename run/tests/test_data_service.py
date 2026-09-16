@@ -199,6 +199,7 @@ def test_failed_refresh_preserves_last_generation(tmp_path: Path) -> None:
     assert first["state"] == "ready"
     assert failed["state"] == "degraded"
     assert failed["reason_code"] == "refresh_failed_last_good_preserved"
+    assert failed["last_good_available"] is True
     assert DataSnapshotClient(tmp_path).status()["generation_id"] == first["generation_id"]
 
 

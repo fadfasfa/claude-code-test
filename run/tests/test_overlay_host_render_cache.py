@@ -238,16 +238,16 @@ def test_active_selection_uses_one_frame_event_poll_interval() -> None:
     ) == 16
 
 
-def test_host_polling_uses_250_50_16_millisecond_tiers() -> None:
+def test_host_polling_uses_250_idle_and_16_game_millisecond_tiers() -> None:
     from hextech.interfaces.overlay.host_platform import build_overlay_window_config
     from hextech.interfaces.overlay.host_render_state import resolve_event_render_delay_ms
 
     config = build_overlay_window_config()
 
     assert config["event_poll_ms"] == 250
-    assert config["game_event_poll_ms"] == 50
+    assert config["game_event_poll_ms"] == 16
     assert resolve_event_render_delay_ms(config, {}) == 250
-    assert resolve_event_render_delay_ms(config, {"target_hwnd": 100}) == 50
+    assert resolve_event_render_delay_ms(config, {"target_hwnd": 100}) == 16
     assert resolve_event_render_delay_ms(
         config,
         {"target_hwnd": 100, "selection_window_active": True},

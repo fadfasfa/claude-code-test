@@ -8,7 +8,7 @@ Catalog/来源 pointer。模块不选择 bundle、不刷新网络，也不会只
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -41,6 +41,8 @@ class CohortCandidate:
     pointers: Mapping[str, Mapping[str, Any]]
     production_pool_id: str
     production_pool_count: int
+    snapshot_schema_version: int = 2
+    units: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     @property
     def sort_time(self) -> datetime:
@@ -100,7 +102,7 @@ def validate_generation_cohort(root: str | Path, generation_id: str) -> CohortCa
 
     runtime = Path(root)
     view = DataSnapshotClient(runtime / "snapshots").open_generation(generation_id)
-    validate_complete_provenance(view.manifest.source_files)
+    validate_complete_provenance(view.manifest.source_files, schema_version=view.manifest.schema_version)
     hints = view.get_overlay_hints()
     source = hints.get("source") if isinstance(hints, Mapping) else None
     pool = source.get("production_augment_pool") if isinstance(source, Mapping) else None
@@ -140,18 +142,29 @@ def validate_generation_cohort(root: str | Path, generation_id: str) -> CohortCa
         or len(pool.get("identities") or ()) != len(pool.get("canonical_ids") or ())
     ):
         raise ValueError("generation production pool 与 Catalog 不一致")
+    if view.manifest.schema_version == 3 and (
+        int(pool.get("full_catalog_count") or 0) != descriptors["augments"].record_count
+        or "augment_assets" not in descriptors
+        or descriptors["augment_assets"].record_count != (
+            sum(item.get("icon_ready") is True for item in pool.get("identities", []))
+            if pool.get("schema_version") == 2 else len(pool.get("canonical_ids") or ()))
+    ):
+        raise ValueError("v3 production pool 完整目录/资源数量不一致")
 
-    provenance = {item.source: item for item in view.manifest.source_files if item.source in SOURCE_ROLES}
+    provenance = [item for item in view.manifest.source_files if item.source in SOURCE_ROLES]
+    if view.manifest.schema_version == 2 and {item.source for item in provenance} != set(SOURCE_ROLES):
+        raise ValueError("generation provenance 缺少来源")
     pointers: dict[str, Mapping[str, Any]] = {"catalog": catalog_pointer}
-    for source_name in SOURCE_ROLES:
-        item = provenance.get(source_name)
-        if item is None:
-            raise ValueError(f"generation provenance 缺少来源：{source_name}")
+    units: dict[str, Mapping[str, Any]] = {}
+    for item in provenance:
+        source_name = item.source
         run_root = runtime / "sources" / source_name / "runs" / item.run_id
         manifest_path = run_root / "manifest.json"
         run_manifest = SourceRunManifestV2.from_mapping(_read_object(manifest_path))
         if run_manifest.artifact is None:
             raise ValueError(f"{source_name} immutable run 缺少 artifact")
+        if view.manifest.schema_version == 3 and not run_manifest.publishable:
+            raise ValueError(f"{source_name} v3 unit 未通过来源完整性门")
         artifact_path = (run_root / run_manifest.artifact.relative_path).resolve()
         if (
             run_manifest.source != source_name
@@ -161,13 +174,15 @@ def validate_generation_cohort(root: str | Path, generation_id: str) -> CohortCa
             or sha256_file(manifest_path) != item.manifest_sha256
             or run_manifest.artifact.sha256 != item.artifact_sha256
             or run_manifest.artifact.record_count != item.record_count
+            or run_manifest.artifact.role != item.artifact_role
+            or run_manifest.artifact.content_schema_version != item.content_schema_version
             or run_root.resolve() not in artifact_path.parents
             or not artifact_path.is_file()
             or artifact_path.stat().st_size != run_manifest.artifact.size
             or sha256_file(artifact_path) != run_manifest.artifact.sha256
         ):
             raise ValueError(f"{source_name} immutable run 与 generation provenance 不一致")
-        pointers[source_name] = SourcePointerV2(
+        pointer = SourcePointerV2(
             source=source_name,
             run_id=run_manifest.run_id,
             catalog_generation_id=catalog_id,
@@ -177,6 +192,12 @@ def validate_generation_cohort(root: str | Path, generation_id: str) -> CohortCa
             completed_at=run_manifest.completed_at,
             last_success_at=run_manifest.completed_at,
         ).to_dict()
+        units[f"{source_name}/{item.run_id}"] = pointer
+        primary_run = view.manifest.components.get("ranking", {}).get("run_id")
+        if source_name not in pointers or item.run_id == primary_run:
+            pointers[source_name] = pointer
+        if view.manifest.schema_version == 3 and item.artifact_role == "scoped_stats":
+            _validate_scoped_children(artifact_path, run_manifest.artifact.record_count)
 
     return CohortCandidate(
         generation_id=view.manifest.generation_id,
@@ -185,7 +206,36 @@ def validate_generation_cohort(root: str | Path, generation_id: str) -> CohortCa
         pointers=pointers,
         production_pool_id=str(pool.get("pool_id") or ""),
         production_pool_count=len(pool.get("canonical_ids") or ()),
+        snapshot_schema_version=view.manifest.schema_version,
+        units=units if view.manifest.schema_version == 3 else {},
     )
+
+
+def _validate_scoped_children(index_path: Path, expected_records: int) -> None:
+    """Root-local validation, never resolve a bundle through default live runtime."""
+    index = _read_object(index_path)
+    files = index.get("files")
+    if index.get("schema_version") != 1 or not isinstance(files, list) or len(files) != index.get("champion_count"):
+        raise ValueError("scoped_stats 子文件索引无效")
+    seen: set[str] = set()
+    records = 0
+    for item in files:
+        if not isinstance(item, Mapping):
+            raise ValueError("scoped_stats 子文件描述无效")
+        champion_id = str(item.get("champion_id") or "")
+        relative = str(item.get("relative_path") or "")
+        path = (index_path.parent / relative).resolve()
+        if (not champion_id or champion_id in seen or index_path.parent.resolve() not in path.parents
+                or not path.is_file() or path.stat().st_size != item.get("size")
+                or sha256_file(path) != item.get("sha256")):
+            raise ValueError("scoped_stats 子文件身份/路径/摘要无效")
+        count = item.get("record_count")
+        if type(count) is not int or count < 0:
+            raise ValueError("scoped_stats 子文件计数无效")
+        records += count
+        seen.add(champion_id)
+    if records != expected_records or records != index.get("record_count"):
+        raise ValueError("scoped_stats 子文件计数不一致")
 
 
 def due_schedule(candidate: CohortCandidate, *, updated_at: str | None = None) -> RefreshScheduleV1:
@@ -193,7 +243,7 @@ def due_schedule(candidate: CohortCandidate, *, updated_at: str | None = None) -
 
     sources: dict[str, RefreshSourceState] = {}
     for source in SCHEDULE_SOURCES:
-        pointer = candidate.pointers[source]
+        pointer = candidate.pointers.get(source, {})
         raw_run_id = pointer.get("catalog_generation_id") if source == "catalog" else pointer.get("run_id")
         current_run_id = str(raw_run_id or "")
         sources[source] = RefreshSourceState(current_run_id=current_run_id, state="due")
@@ -228,6 +278,9 @@ def build_recovery_point(
         else normalize_schedule(candidate, schedule if isinstance(schedule, Mapping) else None)
     )
     return CohortRecoveryPointV1(
+        schema_version=2 if candidate.snapshot_schema_version == 3 else 1,
+        snapshot_schema_version=candidate.snapshot_schema_version,
+        units=candidate.units,
         generation_id=candidate.generation_id,
         generation_created_at=candidate.generation_created_at,
         recorded_at=recorded_at or utc_now_iso(),
@@ -270,6 +323,9 @@ def refresh_recovery_schedule(root: str | Path, schedule: RefreshScheduleV1) -> 
     write_recovery_point(
         root,
         CohortRecoveryPointV1(
+            schema_version=point.schema_version,
+            snapshot_schema_version=point.snapshot_schema_version,
+            units=point.units,
             generation_id=point.generation_id,
             generation_created_at=point.generation_created_at,
             recorded_at=utc_now_iso(),

@@ -6,7 +6,7 @@ generation，也不负责选择或晋升 cohort。真实完整性校验由 persi
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from .data_pipeline import DataContractError, require_identifier
@@ -26,17 +26,29 @@ class CohortRecoveryPointV1:
     pointers: Mapping[str, Mapping[str, Any]]
     schedule: Mapping[str, Any]
     schema_version: int = COHORT_RECOVERY_POINT_SCHEMA_VERSION
+    snapshot_schema_version: int = 2
+    units: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.schema_version != COHORT_RECOVERY_POINT_SCHEMA_VERSION:
+        if type(self.schema_version) is not int or self.schema_version not in {1, 2}:
             raise DataContractError(f"不支持的 cohort recovery point schema：{self.schema_version}")
         require_identifier(self.generation_id, field_name="recovery_point.generation_id")
         if not self.generation_created_at or not self.recorded_at:
             raise DataContractError("recovery point 时间字段不能为空")
         if self.manifest_health not in {"healthy", "degraded"}:
             raise DataContractError("recovery point manifest_health 无效")
+        if not isinstance(self.units, Mapping):
+            raise DataContractError("recovery point units 必须是对象")
         expected_roles = {"catalog", "aramkit", "blitz", "apex", "mayhem", "generation"}
-        if set(self.pointers) != expected_roles:
+        if self.schema_version == 2:
+            if self.snapshot_schema_version != 3 or not isinstance(self.units, Mapping) or not self.units:
+                raise DataContractError("v2 recovery point 必须绑定 snapshot v3 units")
+            if not {"catalog", "aramkit", "generation"}.issubset(self.pointers) or not set(self.pointers).issubset(expected_roles):
+                raise DataContractError("v3 recovery point 指针角色无效")
+            for key, pointer in self.units.items():
+                if not isinstance(pointer, Mapping) or key != f"{pointer.get('source')}/{pointer.get('run_id')}":
+                    raise DataContractError("recovery point unit 身份无效")
+        elif self.snapshot_schema_version != 2 or self.units or set(self.pointers) != expected_roles:
             raise DataContractError("recovery point 指针角色不完整")
         generation = self.pointers.get("generation")
         if not isinstance(generation, Mapping):
@@ -58,6 +70,8 @@ class CohortRecoveryPointV1:
         try:
             return cls(
                 schema_version=payload["schema_version"],
+                snapshot_schema_version=payload.get("snapshot_schema_version", 2),
+                units=payload.get("units", {}),
                 generation_id=str(payload["generation_id"]),
                 generation_created_at=str(payload["generation_created_at"]),
                 recorded_at=str(payload["recorded_at"]),
@@ -75,6 +89,8 @@ class CohortRecoveryPointV1:
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
+            "snapshot_schema_version": self.snapshot_schema_version,
+            "units": {key: dict(value) for key, value in self.units.items()},
             "generation_id": self.generation_id,
             "generation_created_at": self.generation_created_at,
             "recorded_at": self.recorded_at,

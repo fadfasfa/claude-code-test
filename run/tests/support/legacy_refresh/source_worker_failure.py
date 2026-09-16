@@ -1,3 +1,4 @@
+# Frozen V2 regression baseline only; not a production runtime entry point.
 """隔离来源 worker 的结构化失败。
 
 协调器读取本异常携带的有限 payload 并写入刷新 schedule；本模块不运行抓取、

@@ -8,6 +8,34 @@
 
 2026-09-09 r10 联合回归增量见 [overlay-r10-regression.md](overlay-r10-regression.md)。默认桌面策略现为 `client_foreground`，不再把选人或数据准备作为窗口显示前置条件。
 
+## 2026-09-14 当前源码候选
+
+### 2026-09-16 版本驱动刷新（源码未部署）
+
+PR前复核补充：Host 的3秒 Context TTL按 `publisher_instance_id/publication_seq/published_at` 的真实新publication计算。同一文件反复读取不续期，首次过期publication、seq回退、同seq改内容和退休publisher回流均拒绝；无publication的legacy上下文仅有同游戏一次有界宽限。用户已反馈rf10真机试用基本可用，这三项审查边界修复仍只完成源码/隔离回归，不把反馈换算为新的逐项量化真机通过。
+
+当前刷新合同以 [版本驱动检测与更新](version-driven-refresh.md) 为准：ARAMKit/Apex/Mayhem每4小时只检查，Blitz保留2小时、Catalog保留24小时。检查周期不再充当数据有效期；相同版本且本地完整不重建run/generation，不移动previous。条件请求、状态迁移、失败指纹、Retry-After和各来源检查证据分别落入既有runtime合同。旧[刷新历史](overlay-refresh-v2-history.md)中的年龄淘汰口径仅作历史，不再用于判定当前数据是否最新。本改动未打包，不改变已交付rf9测试入口。
+
+### 2026-09-15 rf8 真机问题修复增量（源码未部署）
+
+正式安装已在 9 月 14 日部署 rf8 `20260914T095639Z-242eef6854f3`；下文“候选未部署”不再描述该历史部署，而只适用于当前新修复。此次没有打包、启停正式进程或部署。源码修改与真机验收分别记账。
+
+- 场景面板不再以金色边框占比作为必要条件。固定卡槽内要求左右连续亮度边缘、至少一端边缘、内部暗度和边框对比；最多三处局部横向检测，不改变 OCR/渲染几何或全屏搜索。按钮和至少两块面板的联合场景门、碎片否定与 0.95 exact / 3-of-5 身份门保留。
+- 本轮另从 rf8 frame 21937 原图逐字复核“法术穿透碎片”“力量碎片”，仅补入严格完整名称否定词表。该图三个名称的旧后缀视觉分数为 0，OCR 可正确读取，但旧否定词表只含“技能急速碎片”；新词不成为正身份、不生成模板，0.95 exact 与两不同绑定槽的否定门不变。局部名称回放不是整局碎片验收。
+- 选择缓存分别存 `raw_scene_evidence` / `final_classification`，同帧绑定不覆盖原始触发。低价值弱触发只存首个恢复快照和结束帧；队列同组最多 12 帧，保首/清晰/末帧、异常代表和有限真实转场。人工、异常、成功、弱触发依次优先，低级新任务不能淘汰高级组。同组严重等级不下降，三槽第一次完整 READY 的 `full_ready_elapsed_ms` 只锁存一次；单槽先 READY 不停止计时，未采样重随不能借旧帧锁零。
+- 持久化由 `selection_capture_persistence.py` 承接原缓存所有者，仍只管理自己的 200 组/256 MiB；未知、人工、标注、部分写入、reparse 和外部内容保护不变。同内容 PNG 复用前校验旧资产；manifest 最后提交。稀疏缓存明确 `qualified=false`、`temporal_acceptance=false`，不替代完整验收图/时间线。
+- Host 事件与 Context 各有一个后台读取线程；事件先入容量一 mailbox 并记录首选截止，不等待 Context。Context 绑定游戏/窗口，独立单调时钟 3 秒过期，迟到结果不为旧事件续期。游戏期间事件观察和 Tk 轻量邮箱检查均为 16ms，无游戏 250ms；旧文中的游戏期 50ms 由本增量替代。仅语义变化重绘，Tk 归属与 HWND/捕获排除/合成验证不变。
+- 时间线增加 scene evaluated/admitted、identity reduced 时钟；OCR 记录实际排队批次首个提交、推理开始/结束和证据绑定时钟。缓存命中标为 `inference_reused` 并保留原推理时钟，不冒充新帧推理。真正原图出现选卡的起点仍来自人工真值区间，不由内部场景状态推断。
+- 刷新服务统一输出 `checked/content_changed/catalog_changed/source_outcomes`。generation/run 变化本身不代表业务变化；桌面不再由指针变化自报更新，core-ready 只称“核心数据已就绪”。仅有可验证 last-good 才称沿用旧源，missing/confirmed_empty 分开，旧 v1 checkpoint 在已验证的 v3 incremental 闭包中仅作历史证据，legacy 仍校验。
+
+`python -m tooling.diagnostics.selection_replay --group <组目录> --scene-only` 可无 Catalog/无 OCR 只读回放场景，校验哈希和实际捕获范围；不允许组合标签导出，不生成真值或资格结论。9 月 14 日灰白边框原反例在本轮开始前已被旧 runtime 轮转，缺少同图修复后复验；现存金色/棱彩整帧回归与生成灰白样本不能补充冒认该项通过。五局及真实 P95 仍待独立验收。
+
+独立识别 Catalog、逐身份能力、启动 core/unchanged、局中 deferred 和默认有界选择缓存以 [overlay-adaptive-recognition.md](overlay-adaptive-recognition.md) 为当前增量合同。本文的历史样本数量不是现行固定门槛；最终打包与真机验收未完成。
+
+当前 DataService 生产入口使用 `IncrementalRefreshService`；本页描述隔离工作树源码合同，不代表正式安装已替换。旧 V2 刷新协调器六文件已移至 `tests/support/legacy_refresh/`，只供冻结回归。旧口径见 [overlay-refresh-v2-history.md](overlay-refresh-v2-history.md)；原始问题、人工真值反例与证据缺口见 [overlay-case-baseline.md](overlay-case-baseline.md)。r10/r11/r12 是历史修复记录，仍有效的窗口、捕获排除、物理字号和留存硬边界继续保留。
+
+30 秒性能目标、全量 fresh 网络链路、原生窗口与 5 局真机稳定门均未验证。离线回归、内部 READY 或 smoke 不能宣布所有 Vision 案例关闭。
+
 ## 当前契约与兼容边界
 
 2026-09-07 游戏内显示 v3 增量及现存发布阻塞见 [overlay-display-repair-v3.md](overlay-display-repair-v3.md)。
@@ -23,6 +51,8 @@
 | Overlay session report | v2 | 历史报告不改写 | `build_id` |
 | Host visibility status | v2 | v1、v2 | `build_id` |
 | Vision timeline | v2 | v1 与身份不明文件永久只读 | `build_id`、Sidecar PID/instance |
+| DataSnapshot manifest | v3 | v2、v3；V2 DTO 默认构造仍为 2 | `generation_id`、components/provenance |
+| Cohort recovery point | v2 | v1 绑定旧全量代；v2 明确绑定 snapshot v3 | `generation_id` 与完整 `units` |
 
 冻结态的 `bundle_manifest.json` 是构建身份唯一事实源。Desktop、Sidecar、Overlay host、事件和会话报告必须显示或记录同一个 `build_id`；任一组件不一致都视为旧进程或旧包混用，不能继续把真机现象归因于当前源码。
 
@@ -30,12 +60,13 @@ Host visibility status v2 可选增加独立的 `game_window_mode`，字段为 `
 
 ## 识别与展示规则
 
-- 生产候选不是完整资源 Catalog，也不是“有非空统计”的子集。每个数据 generation 都从 metadata 的 `enabled=true` 身份构建 `overlay_hints.source.production_augment_pool` v1；旧 206 个 ID 只作为迁移 fixture。2026-08-13 当前已验证 marker 为 245 条 metadata、237 个启用身份、8 个禁用身份；相对上一 236 池新增 2140/2143，7008 转为禁用。上游 marker 变化后数量允许继续动态变化，任何具体数量都不能成为永久硬编码门槛。
-- `production_augment_pool` 中每个数字 `canonical_id` 必须唯一映射一个文字身份和至少一个已验证视觉 variant；`null` 统计身份仍留在识别池，禁用身份与 Arena、Weapon、Stat、Strawberry、Special 等审计资源不进入生产矩阵。共享图标必须标记歧义，图标通道不得单独授权 `ready`。
-- Vision 模板只读取启动时绑定的 production pool 与 Catalog generation。pool 不可用、缺 ID、重复 ID、名称冲突、observed-name exemplar 无法唯一绑定或资产摘要不一致时 fail closed，保持“识别中/识别服务异常”；禁止回退到完整 Catalog 名称矩阵。Sidecar status v2 以 `vision_pool_generation_id`、`catalog_generation_id`、`production_pool_id/state/count`、`rank_identity_count` 和各通道 `matrix_rows` 证明该绑定，`stats_generation_id` 明确留空并标记为 Host 所有；旧 `data_generation_id` 仅兼容表示 Vision pool，不得再解释为统计代际。
-- ARAMKit 四字段 marker 与共享绝对时效共同决定英雄总体及 Stage 1–4 是否刷新：marker 相同只允许在 `last_success_at`（缺失时回退 manifest `completed_at`）年龄不超过 5 小时时复用，时间非法或超过 5 小时必须完整抓取；marker 变化时 Catalog、ARAMKit、Blitz、Apex、Mayhem 全部进入同一刷新周期。Overlay 优先显示当前英雄当前 Stage 的 ARAMKit 胜率/出场率，缺 Stage 行时回退同英雄 `all`，再缺失才显示 Blitz tier；Blitz 不提供胜率、选择率或样本量，禁止从 tier 推断百分比。production pool 仍只由同一 Catalog generation 的 `augment_assets.v1.json` 决定，任何统计来源都不参与 eligibility。generation 发布前逐 ID 核对 pool 的 `canonical_id`、路径和 SHA-256；即使 marker probe 网络失败，也不能晋升混合代。
+- 生产候选不是完整资源 Catalog，也不是“有非空统计”的子集。当前识别池直接来自 DataService 已发布的独立 Catalog metadata 启用身份，不再等待统计 generation；旧 v1 snapshot 内嵌池保留兼容读取。旧 206/237 等数量只作历史 fixture，不作为固定门槛。
+- 新 Catalog 的 `augment_identities.v2.json` 是身份与启用状态权威；每个数字 `canonical_id` 唯一，按文字/图标实际能力建立通道矩阵。缺图标或 `null` 统计不删除合法身份；metadata-only 不伪称已有视觉能力。禁用与模式外身份不进入生产池。共享图标必须标记歧义，图标通道不得单独授权 `ready`。
+- Vision 模板只读取启动时绑定的 production pool 与 Catalog generation。pool 结构或摘要失效时 fail closed；逐身份缺资源或歧义按能力降级/拒绝该通道，不扩大为全池故障。observed-name exemplar 必须唯一绑定，禁止回退到完整审计资源矩阵。Sidecar status v2 以 `vision_pool_generation_id`、`catalog_generation_id`、`production_pool_id/state/count`、`rank_identity_count` 和各通道 `matrix_rows` 证明该绑定，`stats_generation_id` 明确留空并标记为 Host 所有；旧 `data_generation_id` 仅兼容表示 Vision pool，不得再解释为统计代际。
+- ARAMKit 排行和单英雄 `all`/Stage 1–4 作为独立 immutable unit 发布；排行先就绪可生成 snapshot v3，未完成英雄明确 pending，不伪造完整统计。原始响应按来源/revision/URL 缓存，再经绑定 Catalog 规范化验证，新 revision 不复用旧 revision raw，跨 Catalog unit 拒绝。Overlay 优先当前英雄当前 Stage，缺行回退同英雄 `all`，再缺才使用 Blitz tier；Blitz 不提供百分比或样本量。新识别 eligibility 来自 `augment_identities.v2.json`，资源路径和 SHA-256 门继续有效；旧统计保持其历史 Catalog 绑定。
 - 模板缓存和权威矩阵保持连续 `float16`；Sidecar ready 前一次性建立连续 `float32` 计算镜像。同一帧三槽按 icon、primary name、alt name、observed name 分组批处理，热路径不得重复转换完整矩阵。FP32 镜像分配失败时 Sidecar 以 `vision_compute_memory_unavailable` 明确失败，不回退到混合精度慢路径。
-- 单帧证据分为 `strong`、`medium`、`weak`。人工真值 exemplar，或两套字体指向同一 canonical ID、置信度均至少 0.92、较小 margin 至少 0.01 且较大 margin 至少 0.025，才是 `strong`；margin 为 0 的共享/并列 icon 只作诊断，高置信且 margin 至少 0.03 的明确冲突 icon 会阻断 strong-dual 快速确认。低于 strong-dual 门槛但两字体仍一致的候选保留为 `medium`，不能被一次 icon 误判清空。两字体 Top-1 分歧时，只有双方 Top-3 中存在唯一共同身份、两路置信度均至少 0.78、各自距 Top-1 不超过 0.08 且共同候选合并分数领先次名至少 0.04，才产生 `medium`。另一个窄路径要求其中一套文字与 icon 同名、文字 `confidence >= 0.78/margin >= 0.005`、icon `confidence >= 0.75/margin >= 0.05`，且另一文字通道身份不同并处于 `margin <= 0.01` 的近并列；它也只产生需要 3/5 的 `medium`。除此以外，单字体、优势字体和图标短名单只写诊断，绝不能独立产生 `ready`。
+- 以下合成字体准入只用于旧 v1 池兼容，不适用于当前 v2：单帧证据分为 `strong`、`medium`、`weak`。人工真值 exemplar，或两套字体指向同一 canonical ID、置信度均至少 0.92、较小 margin 至少 0.01 且较大 margin 至少 0.025，才是 `strong`；margin 为 0 的共享/并列 icon 只作诊断，高置信且 margin 至少 0.03 的明确冲突 icon 会阻断 strong-dual 快速确认。低于 strong-dual 门槛但两字体仍一致的候选保留为 `medium`，不能被一次 icon 误判清空。两字体 Top-1 分歧时，只有双方 Top-3 中存在唯一共同身份、两路置信度均至少 0.78、各自距 Top-1 不超过 0.08 且共同候选合并分数领先次名至少 0.04，才产生 `medium`。另一个窄路径要求其中一套文字与 icon 同名、文字 `confidence >= 0.78/margin >= 0.005`、icon `confidence >= 0.75/margin >= 0.05`，且另一文字通道身份不同并处于 `margin <= 0.01` 的近并列；它也只产生需要 3/5 的 `medium`。除此以外，单字体、优势字体和图标短名单只写诊断，绝不能独立产生 `ready`。
+- 当前 v2 身份固定携带 `requires_exact_ocr=true`，合成字体与下载图标的候选仅用于诊断，不可因重复帧自行确认，也不可阻挡正确OCR。只有 canonical ID、标准名称与 augmentNameId 均与人工实拍基线一致且通过既有0.92/0.08门槛的 `observed_name` 保留快路径；其余走0.95 exact OCR与3/5独立帧确认。模板缓存合同升为6，旧缓存不可绕过此门。
 - 槽位确认只由时序仲裁器负责：`strong` 在最近 3 个原始观察中同身份命中 2 次，`medium` 在最近 5 个原始观察中命中 3 次且窗口内没有其他 `strong` 身份。窗口按真实 `captured_at` / `recognition_completed_at` 排序，不假定固定帧率；单帧 miss、weak 候选或鼠标遮挡作为空观察占据窗口，不能跳过空帧累计旧证据，也不清空仍在 6 秒证据寿命内的累计。
 - 同一帧同一身份出现在多个槽时，只有唯一 `strong` 候选可以进入时序窗口，其余重复候选按空观察处理；没有唯一 `strong` 或出现多个 `strong` 时全部抑制。已经稳定在一个槽的身份不能再在其他槽累计出第二个 `ready`。
 - 已确认槽在当前 selection epoch 内持续保留。普通模板候选或感知指纹漂移没有换卡授权，无论重复多少帧都不得撤下 last-good；相同卡名后续获得更强图标证据时只补充 `visual_variant_id` 与 tier，不递增 `selection_revision`。
@@ -44,14 +75,14 @@ Host visibility status v2 可选增加独立的 `game_window_mode`，字段为 `
 - transition 只增加 `slot_generation`；`selection_revision` 只在新身份最终确认时增加。同一帧一个或多个槽发生真实替换时，revision 只增加一次，未变化槽的身份、generation 和展示都保持不变。
 - Sidecar 输出 `cursor_over_slots`。鼠标遮挡的稳定槽保持原结果；未遮挡槽继续识别，不能因为一个槽被遮挡而冻结全部三槽。
 - 已识别槽立即显示。选择窗口存续期间，尚未稳定、通道分歧或低 margin 的槽始终显示“识别中”；不存在固定 3 秒识别失败。只有模板索引、持续截图或 Sidecar 进程等硬故障才能进入失败态。空槽和硬故障都不能推断为来源无数据。
-- 未稳定槽在至少 5 次原始观察、持续至少 2 秒且任一身份最高命中仍不足 2 次时，诊断为 `evidence_starved`；公共状态仍为 `detecting`，展示“识别未确认”，不得生成 `failed` 或 `RECOGNITION_MISSING`。该诊断只说明证据饥饿，不能据此全局放宽 OCR 阈值。
+- 未稳定槽在至少 5 次原始观察、持续至少 2 秒且任一身份最高命中仍不足 2 次时，诊断为 `evidence_starved`；公共状态仍为 `detecting`，展示“识别未确认”，不得生成 `failed` 或 `RECOGNITION_MISSING`。当前机制关联有限 failure-inbox 和默认选择区域缓存供人工复盘，但不据此放宽阈值或自动晋升 exemplar。
 - 碎片硬拦截从清理后的文字 mask 提取最右两个相邻、尺寸一致的有效字形，不再按整段名称宽度比例裁切。至少两槽达到既有强阈值才进入 `body_shard`；命中后在当前 selection epoch 内 latch，输出 `active=false`、`ready_slots=0`、`reason=body_shard_only` 并清空本 epoch 普通海克斯候选，场景确认结束前不得恢复普通识别。动画粘连块、淡出残字和单字不能作为后缀证据。
 - 场景门丢失采用统一 0.75 秒真实时间宽限，未满三槽与三槽均 ready 不再使用不同延迟；场景恢复立即取消宽限并沿用原 epoch、revision 和证据。已经进入 active 后，若选择按钮仍存在且卡面或名称仍有残留，必须进入 `scene_button_hold`，不得启动宽限或输出 `scene_loss_confirmed`。按钮消失后才开始 0.75 秒计时；明确卡面点击或 `selection_confirmed` 立即结束，重随按钮点击只为目标槽开启 replacement。`scene_grace_hold` 内未遮挡、尚未 READY 且名称仍可见的槽继续累计本帧有效候选，candidate miss 不冲掉 pending window；稳定槽和鼠标遮挡槽冻结。
 - `game_not_foreground`、计分板、临时最小化、短暂截图不可用和 client size 抖动使用 `transient_pause`：Host 隐藏窗口，但 Sidecar 保留当前 epoch、revision、稳定槽和证据；同一 `game_instance_id` 返回后继续识别。仅暂停期的低频 gameflow 探测明确确认结束时，才发布携带刚结束 epoch/revision 的 `gameflow_ended` 事件并清空；新游戏实例和明确选择完成也可清空。gameflow 探测在后台 daemon 线程执行并缓存结论，识别循环只读缓存不被本机 HTTP 阻塞；返回前台或换局的 reset 会作废仍在途的旧结论。
 - 外部 layered-window Overlay 只支持 `Borderless` 和 `Windowed`。窗口探针按当前 `League of Legends.exe` PID 取得真实 EXE，配置路径固定为 `Path(executable).parent / "Config" / "game.cfg"`；WeGame 的实际形态是 `...\Game\League of Legends.exe` 对应 `...\Game\Config\game.cfg`，不能误取 EXE 父目录的上一级 `...\Config\game.cfg`。`WindowMode=0/1/2` 分别解释为 `fullscreen/borderless/windowed`；缺失、解析失败、权限失败和未知值均为 `unknown/error` 并 fail closed。探针以游戏进程身份、配置大小和 `mtime_ns` 缓存，最多每秒复核一次，16 ms 识别循环不得重复读盘。Full Screen 或 unknown 时 Host 以 `unsupported_fullscreen_mode` / `game_window_mode_unknown` 降级并隐藏，Sidecar 在截图前非破坏性 pause，不截图、不识别、不清空当前 epoch/稳定槽；只有明确确认 Full Screen 时 Desktop 才持续提示“游戏当前为全屏模式，请在游戏内视频设置切换为无边框”，unknown 只保留结构化状态、有限日志和诊断，不持续占用用户状态栏。程序不得修改 `game.cfg`、不得触发 Web fallback，也不要求重启；用户切换为 Borderless/Windowed 后下一次探针更新自动恢复原游戏实例和上下文。
 - 显示使用固定客户区版式 `fixed_card_layout_v2`，不再消费逐帧 `layout_transform`、按钮宽度、OCR 或 READY 数量。参考为指引关闭的 2560×1600 真机帧，统计位于各卡片下部留白并整段居中（中心约 952px）；16:9/16:10 共用卡槽横向比例，纵向按各自版式。正式适配 1920×1080、1920×1200、2560×1440、2560×1600，分别覆盖 DPI 100/125/150/175/200%，1280×720 保留兼容回归；其他比例标记为未验收。统计基础字号按卡框比例和格式上界一次确定，不按当前值缩放；Tk 使用负像素字号，DPI 不重复放大。长状态在固定统计条内换行，compact 联动使用固定 96px 参考高度，expanded 使用卡片上方固定可用区域，内容只换行或省略，不驱动框高。生产 Tk 与离线 Canvas 使用实际字体测量；窗口位置、客户区和 DPI 自动读取，截图支持副屏负坐标，不依赖品牌/英寸/EDID。
 - 每段可见文字只创建一个 Canvas text item，不绘制偏移黑色副本文字；可信 Context Broker publication 通过游戏实例、窗口、进程时间和 publication 序号校验后首 tick 即可渲染。Live Client 优先读取 `/allgamedata` 的 `gameData.gameTime`，`activeplayer` 只作无 epoch 证明的内容回退；游戏 epoch 优先使用 `PID + process_started_at`，身份不可用时才退到窗口。新 epoch 立即撤下旧英雄，只有有限 `gameTime <= process age + 30s` 或仍在 120 秒内且来自上一游戏窗口消失后的本局选人 ticket 能证明归属；两路有效但英雄冲突时 fail closed。无法证明时发布空英雄和 `context_game_epoch_unconfirmed`，冲突发布 `context_source_conflict`，不得用英雄是否变化猜测换局。
-- Host 按 session、selection epoch/revision、逐槽 generation/身份、Context revision、整局固定的 `stats_generation_id`、Stage/scoped run、布局、viewport 和 DPI 计算语义键；`vision_pool_generation_id` 只证明识别矩阵来源，不参与统计换代。confidence、时间戳和 evidence hit 等诊断噪声不参与；相同语义键跳过 projector 与 Canvas 重绘。Stage 变化可以更新展示但不增加 Vision slot revision；新槽尚在识别时先呈现轻量 detecting shell，同一 epoch 未变化槽复用 last-good 身份、统计和联动，不先清空 Canvas，也不产生空白中间帧。
+- Host 按 session、selection epoch/revision、逐槽 generation/身份、Context revision、首次选择开始后冻结的 `stats_generation_id`、Stage/scoped run、布局、viewport 和 DPI 计算语义键；`vision_pool_generation_id` 只证明识别矩阵来源，不参与统计换代。confidence、时间戳和 evidence hit 等诊断噪声不参与；相同语义键跳过 projector 与 Canvas 重绘。Stage 变化可以更新展示但不增加 Vision slot revision；新槽尚在识别时先呈现轻量 detecting shell，同一 epoch 未变化槽复用 last-good 身份、统计和联动，不先清空 Canvas，也不产生空白中间帧。
 - Sidecar status 暴露 `compute_profile=float32_batched`、计算镜像字节数、预热耗时和单帧各通道耗时；异宽指纹必须直接报错，不能静默丢行。
 - OCR runtime 复用已通过场景门的三个卡名 ROI，在单 CPU 工作线程中运行 `ch_PP-OCRv4_rec_infer.onnx`。每张 RGB 名称图先以亮色阈值 130 求文字包围盒、四边扩展 5px 并限制在原图内；没有有效亮色内容时保留原图。裁剪结果同时进入模型、精确 SHA 与 cache，摘要域分隔为 `OCRMODELINPUTv2`，不得复用旧输入结果。`HEXTECH_OCR_MODE` 支持 `off/observe/admit`，两个 OCR 环境变量都未设置时默认 `admit`；旧 `HEXTECH_OCR_SHADOW_ENABLED=0/1` 仅兼容映射为 `off/observe`。模型按固定大小和 SHA-256 校验，初始化、校验或推理失败记录兼容诊断 `ocr_shadow_unavailable`，模板主链继续运行。production mailbox 按 `(session, epoch, slot, slot_generation)` 独立 coalesce，三槽 round-robin 并可合批；新帧只能替换同槽旧任务。`observe` 使用独立低优先级 latest-only 队列和 5 秒限频，production 始终优先。
 - OCR 只与当前 production pool 的唯一数字 canonical ID 词表匹配。生产准入必须同时满足规范化 `match_rule=exact`、唯一 canonical ID、`confidence >= 0.95` 和完整上下文绑定；`unique_containment`、编辑距离与 fuzzy Top-3 永远只作 Shadow 诊断。OCR exact 是 `medium` 证据，首次 READY 和不同身份替换都需要 3/5 个独立 captured frame；strong 模板与 OCR exact 身份冲突时记录 `ocr_template_conflict` 并 fail closed。模板为 medium/none 时，OCR exact 才可作为 `ocr_exact_fallback`。
@@ -64,24 +95,25 @@ Host visibility status v2 可选增加独立的 `game_window_mode`，字段为 `
 - 四档分辨率/五档DPI参数化覆盖不等于逐规格实机确认；16:9锚点须以真实同规格、指引关闭的画面复验，不得用拉伸16:10图片宣称完成。字体度量对Canvas使用弱引用，避免字体缓存循环把Tcl清理推到后台线程。
 
 - `OverlayDataPreparation` 是 Host 内唯一的数据准备工作线程，拥有 generation、Stage、scoped stats 与 hint 缓存；待处理请求容量为 1，按游戏实例、session、窗口、英雄、epoch/revision 和槽位身份合并。Tk 只读事件/上下文、消费准备结果、绘制与处理显隐，不执行整代哈希校验、全量 hint 复制或 scoped 文件加载。
-- Host 启动即在后台校验当前 seed，尚无游戏局时仅记录 bootstrap generation；可信游戏实例出现后固定本局 generation，英雄确认后预热 scoped 视图。新局或请求版本变化会丢弃旧结果，退出时停止工作线程；冷启动暂时没有 snapshot 时按有限间隔重试，不能永久固定空视图。
+- Host 启动即在后台校验当前 seed，尚无游戏局时仅记录 bootstrap generation；可信游戏实例出现后可以在首次选择开始前采用当前英雄完整的新代，英雄确认后预热 scoped 视图。首次选择截止后本局冻结，不能因迟到读取而补换代；新局或请求版本变化拒绝旧结果。冷启动未到截止且暂无 snapshot 时按有限间隔重试；截止时仍无已验证 view，本局保持明确不可用，不能绕过截止补绑。
 - `DataSnapshotView.get_overlay_display_hints()` 只为 Host 提供名称、tier、联动与名称索引的独立副本，不复制未参与显示的全英雄历史统计；原 `get_overlay_hints()` 与不可变 generation 内容不变。Host 只缓存最近三代 display hint。
 - 场景确认即绘制轻量 detecting shell，不等待完整数据投影。有匹配的逐槽联动可先于慢 scoped 统计发布；统计尚未确认时显示“统计准备中”，不伪造百分比。没有匹配明确记录 `NO_MATCH`，不解释为抓取延迟。
 - 碎片 `body_shard` 同时经过 Tracker 和 Host 的硬门，清空普通卡缓存并作废在途数据结果；短暂按钮/卡面漏检、鼠标遮挡、Alt-Tab 和旧 OCR 均不能解除。明确选择完成、连续 0.75 秒无按钮/卡面/名称的结束确认或新游戏实例才结束该状态，Host 仍拒绝同轮或更旧的 READY 回流。
-- 碎片 observation 与 terminal 同样进入有界 timeline v2，但始终不计入普通 Hextech 性能分母。默认不增加 PNG，也不改写历史 timeline。
+- 碎片 observation 与 terminal 同样进入有界 timeline v2；工作负载性能分类可单列，独立人工真值 span 不能用自身 body_shard 分类排除错误 READY。新选择缓存可保存有限区域 PNG，不改写历史 timeline，也不以自身分类生成 truth。
 - session report v2 可选增加 `render.layout`、`display_context`、`data_preparation`、`synergy_states`、`synergy_slots_drawn`。呈现中的 `bound_timing` 冻结同一次绘制的 event/host-read/context/draw 时间；后续轮询不得覆盖已绘制事件的阶段耗时。来源就绪、没有匹配、尚未绘制与实际绘制分别记录，报告仍不能代替人眼真机确认。
 
 ## 分来源 freshness 与联动
 
 - generation 的聚合 `health=degraded` 只用于 Desktop 状态页和诊断。Overlay 的 ARAMKit Stage/`all` 行只读取 `source_status.aramkit`，回退 Blitz tier 时只读取 `source_status.blitz`；一方 fresh 不得掩盖另一方 stale。旧 `hextech/stats` generation 仅用于已固化回滚包，不参与新候选的阶段投影。
-- ARAMKit 为 fresh 而 Blitz 只能复用同 Catalog 的 verified last-good 时，generation 仍以 `data_status=fresh` 提供阶段/全量百分比，聚合 `health=degraded`、`data_reason=optional_source_stale`；Blitz 状态必须为 `last_good/data_stale/production_coverage_insufficient`，Canvas、session report 的公开行和公开 DTO 均清空 tier/rank/score。只有 ARAMKit 本身 stale 或失败时聚合状态才是 `data_stale`。
-- 已通过 scoped manifest/path/size/SHA-256 校验的 ARAMKit 记录即使 `last_good/data_stale` 仍可用于 lineage 和诊断，但 Overlay 必须 fail closed：清空胜率、出场率、排名和 tier，不得把过期数值伪装为当前统计；显示 `统计数据为 N 小时前`、`统计数据为 N 天前`，时间缺失/未来/不可解析时统一显示 `统计数据暂非最新`。原始 stats、sample count、generation、run、scope 和 `data_at` 只保留在 recommendation DTO 与 session report。只有来源明确 fresh 时才允许 Canvas 绘制百分比。
-- `DataSnapshotView.status(now=None)` 每次读取都按共享的 `SOURCE_INTERVALS × 1.25` 策略重新投影各来源绝对时效，优先使用 `data_at`，旧 generation 缺失时回退 immutable manifest 的 `created_at`；ARAMKit 的实际边界为 5 小时。超过边界只设置 `data_status=data_stale`、缺少更具体原因时设置 `data_reason=source_data_expired`，并记录总年龄 `stale_age_seconds`；不改写 manifest、`health`、`degraded_sources` 或表示 lineage 的 `freshness`。推荐、阶段统计、session report、桌面状态和 Overlay hint cache 都消费同一实时投影；桌面“数据 X 前”优先使用 ARAMKit `data_at`。Apex/Mayhem 的来源状态仍只影响联动区域，不污染胜率和出场率。
-- DataService 的构建顺序固定为“ARAMKit scoped artifact → Blitz 海克斯 tier 排名投影 → Catalog 补全名称、稀有度 tier、图标和最终身份集 → 当前 generation 联动投影”。Host 在 game session 首次出现时固定 `stats_generation_id`，同局后台换代只记录 `new_stats_generation_id`，下一局才采用；stats-only 换代不重建 Vision matrix。Host 从同一 Live Client 请求读取 `championName + level`，按 3–6/7–10/11–14/15+ 解析 Stage 1–4；等级缺失时仅使用本局已确认的 0–3 次选择推导下一 Stage。每个 epoch 最多等待两秒并固定 champion、Stage、ARAMKit run 和单英雄 view，下一 epoch 可重算阶段但继续使用本局 generation。单英雄文件按 index path/size/SHA-256 校验，LRU 容量为 2。阶段只在游戏窗口右上角显示单行 `阶段 N`，卡片不拼接阶段、样本、综合回退或 freshness 文案。`sample_count < 100` 时胜率仍显示、出场率改为真实 `出场数 N`；`100–999` 保留两个百分比；两档当前阶段统计用柔和红 `#F87171`。`sample_count >= 1000` 的当前阶段统计沿用金色。`stats_scope=all` 的综合回退始终用蓝色 `#3FA9DC`，低于 1000 时再叠加红色细内框；缺少或非法 `sample_count` 时保留百分比并不推断低样本。Blitz 的 `source_tier` 是全局排名，`champion_tier` 只在来源列出的最多五个英雄中存在，当前用“该英雄 Tn · 全局 Tn”或“全局 Tn”展示。
+- Core 与 Optional 独立验证；缺 Blitz/Apex/Mayhem 不阻止已验证排行和完整英雄 unit 发布。每来源 freshness、data_at、pending/unavailable 及聚合 degraded 继续进入诊断和报告，不互相冒充成功。
+- 已通过 scoped manifest/path/size/SHA-256 校验的统计不会只因自然变旧而清空胜率、出场率、tier。年龄仅进入诊断，不在 Canvas 显示年龄或“下一轮采用新数据”；实际缺失、损坏、不可用和错绑仍 fail closed，不能拿其他英雄或未确认数据填补。
+- `DataSnapshotView.status(now=None)` 仍按 `SOURCE_INTERVALS × 1.25` 投影诊断时效，优先 data_at、旧代回退 created_at；不改 immutable health/degraded_sources/freshness。pending/confirmed_empty/unavailable 不被自然年龄覆盖。Apex/Mayhem 仅影响各自联动，不污染核心统计。
+- Host 使用已有 verified view 回退；可信本局出现后、首次选择开始前，只有当前英雄 `is_champion_complete()` 为真才可采用新 snapshot。candidate/active/blocked 或 selection_window_active 边界触发冻结，不等 READY；后台慢读取结束后必须复核身份与截止。冻结后本局保持 stats generation，下一局重新开放采用。stats-only 更新不重建 Vision matrix。
+- Host 从同一 Live Client 请求读取 `championName + level`，按 3–6/7–10/11–14/15+ 解析 Stage 1–4；等级缺失时仅使用本局已确认的 0–3 次选择推导下一 Stage。每个 epoch 最多等待两秒并固定 champion、Stage、ARAMKit run 和单英雄 view，下一 epoch 可重算阶段但继续使用本局 generation。单英雄文件按 index path/size/SHA-256 校验，LRU 容量为 2。阶段只在游戏窗口右上角显示单行 `阶段 N`，卡片不拼接阶段、样本、综合回退或 freshness 文案。`sample_count < 100` 时胜率仍显示、出场率改为真实 `出场数 N`；`100–999` 保留两个百分比；两档当前阶段统计用柔和红 `#F87171`。`sample_count >= 1000` 的当前阶段统计沿用金色。`stats_scope=all` 的综合回退始终用蓝色 `#3FA9DC`，低于 1000 时再叠加红色细内框；缺少或非法 `sample_count` 时保留百分比并不推断低样本。Blitz 的 `source_tier` 是全局排名，`champion_tier` 只在来源列出的最多五个英雄中存在，当前用“该英雄 Tn · 全局 Tn”或“全局 Tn”展示。
 - `overlay_hints.source.synergy_projection` v1 记录英雄、条目、唯一名称、Catalog 可解析名称、投影覆盖、含联动 hint、Catalog-only 命中和有限未解析样本。输入联动和 Catalog 可解析集合都必须非空，可解析名称投影覆盖至少 99%，且不能较 last-good 回退超过 5 个百分点。
 - Overlay 只显示当前英雄与当前三槽实际候选命中的最佳联动，不常驻列出英雄的全部联动；未解析污染名称只进入报告，不显示也不补造。
 - Apex 英雄详情页的“没有解析出联动”不是单独的发布结论：页面身份匹配且存在明确空态文案时记为 `confirmed_empty`，解析异常、身份缺失或无空态证据仍记为失败。全英雄 success/confirmed-empty 门禁保持不变，不能用部分发布绕过失败。
-- Apex 与 Mayhem 作为同一联动 cohort 原子晋升；单侧真实失败时共同保留 last-good。恢复后允许复用与当前 Catalog、manifest 和 artifact 哈希一致的已保存候选，不得手工改写正式 pointer。
+- Apex/Mayhem 各自保持来源验证，失败不阻止排名或完整英雄 unit 发布；每次 snapshot 冻结实际纳入的联动及 provenance，缺 Optional 明确 pending/unavailable，不伪造空来源 pointer。
 
 ## 缺失原因与用户文案
 
@@ -98,13 +130,15 @@ Host visibility status v2 可选增加独立的 `game_window_mode`，字段为 `
 
 ## 诊断与时间链路
 
+Host 的 `HostInputObserver` 后台独立读取 event 与 context，向 Tk 提供容量一 mailbox；Tk tick 不直接读这些 JSON，也不复制完整 snapshot。事件线程先记录首次选择截止并发布事件，不等待 Context 线程。旧事件超过事件 TTL 即失效；Context 有独立 3 秒单调 TTL，Context 完成不续期事件。`OverlayDataPreparation` 在独立后台完成 snapshot/scoped/hint 投影，结果返回前复核请求版本、游戏身份与截止。报告写入继续使用已有有界后台 writer，输入观察器不是新增外部服务。
+
 Host 呈现必须按 `should_show → canvas_drawn → map_requested → mapped → composed/failed`
 解释。`game_overlay_visibility.v1.json` 继续保持 schema v2；兼容字段
 `decision.window_visible` 只等同旧版显示请求，和 `decision.should_show` 同义，绝不代表
 用户实际看见像素。Host 创建顶层 HWND 后、首次映射前必须设置并回读
 `WDA_EXCLUDEFROMCAPTURE`；visibility/session report v2 在 `presentation.capture_exclusion`
 写入可选的 `status=applied|unsupported|failed`、requested/applied affinity、query/set 结果和有限原因码。无法确认 `applied` 时立即 withdraw 并以 `capture_exclusion_unavailable` fail closed。
-`presentation.state=mapped` 只证明 HWND 的 `WS_VISIBLE`、非 iconic、非 cloaked、扩展样式和同 DPI 物理 client rect 通过；`host_surface_probe=matched` 证明当前 Canvas 存在足够的不透明内容，affinity 回读后 `composition_probe=excluded` 才进入 `composed` 并写 `presented_at`。Desktop DC/GetPixel 在不同 Windows 构建上可能返回人眼合成像素或黑色，不能再用“是否看见 Overlay 颜色”判断捕获泄漏。packaged presentation smoke 另用已知底色、高对比探针和 Sidecar 同类 `ImageGrab` 路径证明 `desktop_capture_excluded`；Full Screen/unknown 下仍不得运行该捕获门。默认运行不保存截图，真实 League 最终可见性仍须用户确认。
+`presentation.state=mapped` 只证明 HWND 的 `WS_VISIBLE`、非 iconic、非 cloaked、扩展样式和同 DPI 物理 client rect 通过；`host_surface_probe=matched` 证明当前 Canvas 存在足够的不透明内容，affinity 回读后 `composition_probe=excluded` 才进入 `composed` 并写 `presented_at`。Desktop DC/GetPixel 在不同 Windows 构建上可能返回人眼合成像素或黑色，不能再用“是否看见 Overlay 颜色”判断捕获泄漏。packaged presentation smoke 另用已知底色、高对比探针和 Sidecar 同类 `ImageGrab` 路径证明 `desktop_capture_excluded`；Full Screen/unknown 下仍不得运行该捕获门。默认不保存完整游戏截图；新有界选择区域缓存另按专项合同保存，真实 League 最终可见性仍须用户确认。
 
 Host 使用单线程有界队列异步写入报告，Tk 渲染线程不执行 JSON 文件写入、历史轮转或截图。队列满时合并同状态任务并优先保留最新结果；`game_overlay_visibility.v1.json` 暴露 `report_queue_depth` 和 `report_dropped_count`。完整 READY revision 首次达到 `composed` 后立即提交 JSON evidence；只有显式截图仍要求两个稳定 presentation tick。
 
@@ -114,10 +148,11 @@ Host 使用单线程有界队列异步写入报告，Tk 渲染线程不执行 JS
 - 真实会话证据：`var/state/session_evidence/`
 - 逐选择观察：`var/state/overlay_vision_timelines/selection-*.jsonl`
 - 时间线轮转：只在 schema v2 集合内最多保留最近 20 个真实 selection epoch；每文件最多 1 MiB/512 条，并为一次终止 marker 预留空间。v1、空文件、损坏或身份不明 timeline 永久 pinned，不占 v2 数量上限和 12 MiB 分类预算
-- 默认模式：不生成 PNG
+- Host session-evidence 默认不生成 PNG；Sidecar 默认生成下述有界选择区域缓存，两者不可混称。
+- 自动证据固定 `automatic_exemplar_eligible=false`、`requires_manual_truth=true`；采集结果不是人工真值。
 - 显式 `--diagnostic`：允许后台线程异步保存 Overlay 矩形裁剪图，不保存完整屏幕；每个合格 active Hextech epoch 最多保存第一张完整三槽 READY 裁剪图，并沿用 session-evidence 留存
 
-`evidence_starved` 会进入有界失败证据链：Runner 从 Tracker 内部显式传递三槽 `slot_generation`，该私有字段不进入 Overlay event。每个 `(session, epoch, slot, slot_generation)` 只提交一次最佳名称、图标和选择按钮 ROI，不保存完整游戏画面。记录包含 production pool、候选、confidence、margin、通道分歧、场景类型和失败原因；内容寻址图片跨会话去重，writer 队列上限 32、唯一记录上限 200、每记录只保留最新 20 次 occurrence 并另记累计次数。淘汰记录时同时清理 index 和无引用 blob，写入失败只进入有界 journal。所有记录固定 `automatic_exemplar_eligible=false`、`requires_manual_truth=true`；只有人工绑定并通过独立 corpus replay 后才能成为生产资源。
+生产取证改用 `recognition/selection-cache-v2`：复用前台捕获保留两秒/4fps选择区域缓冲，疑似结构触发独立诊断组，保留首帧、清晰帧、末帧与真实槽位裁图；candidate、无epoch和READY均可留存，不再等待 `evidence_starved`。重随增长封存旧组，界面可请求保存最近缓冲。PNG/哈希/配额检查均由已有后台writer处理，200组/256MiB包含手动、未知和半写数据，但只淘汰本功能完整、未标注的自动组。旧 `failure-inbox` 作为历史格式保留，不由新生产入口继续写入或清理。所有记录禁止自动晋升模板，人工标签与原图哈希绑定；详见 [独立识别与留存合同](overlay-adaptive-recognition.md)。
 
 五类 ROI corpus 为普通海克斯、锻体碎片、动画、淡出和无效裁切。私有真机 ROI 与人工标签冻结在本 worktree ignored `var/recognition/corpus`，不得提交 Git；`tooling.diagnostics.overlay_roi_corpus` 校验允许根、文件大小、SHA-256、碎片 hard block 和非普通场景 `ready_slots=0`。2026-08-14 当前普通、动画、淡出和无效裁切已有冻结 private runtime report；旧私有碎片 ROI 已被 live debug 轮转，只剩仓库内真实脱敏 fixture 可验证像素 hard block，因此本轮 `body_shard` private runtime report 门仍为未完成，必须由后续至少两次真实碎片选择补齐，不能以 fixture 代替。
 
@@ -129,33 +164,21 @@ Sidecar 在识别完成后先原子发布用户可见 Overlay event，再把 tra
 
 持续诊断统一登记在 `diagnostic_retention.v1.json`，全局硬预算为 128 MiB，不允许搬到 Temp、release、桌面或其他目录规避。分类上限固定为：session evidence 48 MiB/30 天/100 bundles，`debug/overlay_vision` 28 MiB/7 天/32 observations，failure-inbox 12 MiB/30 天/200 records，Vision timeline v2 12 MiB/14 天/20 epochs，Overlay session reports 8 MiB/14 天/200 reports，runtime logs 12 MiB/14 天，Supervisor events 4 MiB/14 天（1 MiB active 加 3 段），trace/status 4 MiB/14 天。`diagnostic_retention` 是所有诊断删除/轮转的唯一所有者；writer 只 append，Host、Sidecar、Desktop 都不得自行扫描删除。留存器使用共享 `var/locks/diagnostic-retention.lock` 跨进程独占锁和共享最短运行间隔 60 秒，selection active 时不启动全目录清理；60 秒内请求记录 `skipped_interval`，锁忙记录 `skipped_lock_busy`，只有测试可显式 `force=True`。`diagnostic_retention.v1.json` 的 `last_run.disposition=completed|skipped_interval|skipped_lock_busy`、`next_eligible_at` 和锁结果必须可审计。只有首条非空 JSON 明确为 schema v2 的 timeline 才在 v2 集合内部执行年龄、数量、单文件和分类字节门；旧 v1、空文件、损坏或身份不明 timeline 永久 pin 为只读，且不占 v2 数量或分类字节。删除前验证目标仍位于登记根并拒绝 symlink、junction、reparse point 或越界路径。无法安全清理时丢弃新的低优先级诊断并累计错误，不触碰 generation、source run、Catalog、asset、模型、模板、设置或用户数据。
 
-性能报告只把同一目标 Build、同一 Sidecar instance 且同时满足 `selection_type=hextech`、至少一帧 `scene_state=active`、至少一帧 `selection_window_active=true` 的 epoch 计为合格 Hextech epoch。`candidate`、`body_shard`、`blocked`、纯 pause、`gameflow_ended` 和不足一次 active 的临时 epoch 必须从三槽覆盖率、首次 Canvas 与 recognition P95 中排除，并分别写入 `excluded_epochs_by_reason`。报告同时输出 capture、recognition、capture+recognition total 三段，保留每 session 最慢 10 个 observation 的纯结构化 `matching_timing`，不增加图片。不得通过排除慢帧、修改时间戳语义或减少真实样本伪造通过。
+工作负载性能探针仍按同一目标 Build、Sidecar instance、`selection_type=hextech` 等内部场景字段分类，用 `excluded_epochs_by_reason` 解释未纳入集合的 epoch；这不等于独立人工真值分母。`overlay_truth_probe` 以人工 span 为准，candidate/inactive/body_shard/非 Hextech 自分类及未 captured 观察不能让失败消失；缺边界图或中间 recognition 图使覆盖失败。错误 scene 下的错 READY 仍计数，candidate-only 保留未确认槽；人工 seq1 捕获10秒、seq2捕获12秒反例是2080ms而非80ms。身份、独立 frame ID、完整图 SHA、OCR binding 与去重门保留；显式人工负标签可计 false-positive，不由 OCR 生成真值。capture/recognition/total 分段和最慢观察仍记录，不删慢帧、不改变时间语义。
 
 `overlay_vision_trace_history.v1.json` 仅在状态签名变化时追加；`cursor_over_cards` / `hover_occluded` 属于鼠标位置噪声，不参与签名（字段仍写入条目），避免空闲期把 256 条历史冲成无价值的空槽帧。离线分离度分析使用 `tooling/diagnostics/vision_separation.py`：读取 `overlay_vision_timelines/*.jsonl` 与人工真值，输出三通道 top1 命中率、命中/未命中的 confidence 与 margin 分布及 Cohen's d；识别阈值只允许依据该报告调整，不得盲调。
 
 显式设置 `HEXTECH_OVERLAY_SIDECAR_DEBUG_DUMP=1` 可启用 diagnostic 模式：为每个真实 selection epoch 连续保存前 5 个独立 observation 的按钮、三槽图标和三槽卡名 ROI，每组带 observation 序号、三项时间戳和固定有限的 `matching_timing`；不保存完整游戏截图，并沿用受限轮转。识别线程只把帧引用和事件快照提交给容量 8 的 `roi_dump_writer`，裁剪、PNG 编码、JSON 和目录轮转全部在后台完成；满载或失败只增加 Sidecar status v2 的可选 `roi_dump_writer` 计数，不改变候选、READY 或 revision。ROI 位于 `var/debug/overlay_vision/overlay_roi_v2`。持久开关位于 `var/state/overlay_diagnostic_settings.v1.json`，解析优先级固定为 Sidecar 启动显式参数、显式环境变量（含关闭值）、持久设置、默认关闭；部署器的 `preserve/on/off` 只在显式部署时生效，失败必须恢复部署前原始设置。Sidecar status v2 的 `debug_dump_enabled` 是部署验收字段，不改变协议版本。识别改动前至少收集 3 局、10 个带人工真值的有效 epoch，并用 `tooling/diagnostics/vision_separation.py` 分析；单个截图不得复制成多帧证据。只有独立构建样本与 holdout 均满足 observed-name `confidence >= 0.92`、`margin >= 0.08`，且既有 full-frame fixture 无 false-ready 时，才允许增加脱敏 `name_exemplar`。旧 Build 真机报告测得端到端中位数约 207.5 ms、P95 约 259.2 ms；本轮只建立真实指标，若新 Build P95 仍高于 180 ms，应单独优化热路径，不能通过放宽识别规则掩盖。
 
-## 对局期间的数据刷新
+## 增量刷新、原始响应与恢复
 
-存在可用 current generation 时，对局期间延后 Catalog、ARAMKit、Blitz、Apex、Mayhem 的自动刷新和手动核心刷新，状态为 `refresh_state=deferred`、`deferred_reason=game_in_progress`。这不是 `data_stale`，不计入失败和 backoff。Desktop 标题栏“刷新”调用 `POST /v1/actions/refresh` 的 `scope=core, force=true`；空 body 仍是旧的 due check。核心强刷不会无条件抓取 Optional，但正常到期的 Apex/Mayhem仍同行，ARAMKit marker 或 Catalog 变化会扩展为完整同代刷新。
-
-刷新门由 DataService 的独立三态探针提供，不以 Host visibility 作为唯一事实源：Live Client 2999 或 LCU gameflow 明确 `InProgress` 时在局中；接口 unknown 但 `League of Legends.exe` 或游戏窗口存在时保守按在局中；只有无游戏进程/窗口且 LCU 明确非对局或不可用时才允许刷新。worker 运行期间每不超过 50 ms 读取 cancel signal；游戏门、Desktop shutdown 和 hard timeout 分别写 `cancel_reason=game_in_progress/shutdown_requested/hard_timeout`。取消先给 2 秒协作退出窗口，再关闭 Job Object 回收完整进程树；游戏取消不写来源失败/backoff，shutdown 不发布新 candidate 或 generation。
-
-当前正式活动 Catalog 独立刷新：ARAMKit fresh 后可以发布新 generation；Blitz 失败时只能复用同 Catalog 且哈希验证通过的 last-good 并 fail-closed 隐藏排名，Apex/Mayhem 必须成对复用同 Catalog last-good。ARAMKit 失败不发布新 generation。Catalog 内容 SHA 变化时禁止两阶段混代，所有依赖来源必须绑定新 Catalog 后才能整体晋升。
-
-若 fresh ARAMKit 上游出现活动 Catalog 未登记 ID，默认仍整轮拒绝；唯一例外是该 ID 同时存在于已验证的 blocked adoption Catalog。此时只把这些 adoption-only 行从活动 artifact 的 `all/stages` 投影中剥离，并在 ARAMKit manifest/report 的 `compatibility_filtered_augment_ids` 记录精确 ID；任意未被 adoption 证明的未知英雄/海克斯、重复、非法 rate、空 stage 或错绑仍 fail closed。严格全链允许活动 Catalog 显示为 `adoption_held`，但 ARAMKit 仍必须在 4 小时内 `fresh/fresh`，generation 的 degraded 来源只能属于 Blitz/Apex/Mayhem 且必须 last-good/data-stale。
-
-Blitz 采用同一窄兼容合同：只有已验证 blocked adoption Catalog 能证明、但活动 Catalog 尚未收录的海克斯 ID 才从排名 artifact 过滤；过滤后必须重算 artifact 的 `record_count` 与 canonical content SHA-256，并在 manifest/report 精确记录 `compatibility_filtered_augment_ids`。这不会切换活动 Catalog、恢复 adoption lane 或扩大 production pool；任何未被证明的未知海克斯、未知英雄、schema 错误和过滤后 production 覆盖不足仍拒绝整个候选。
-
-`refresh_checkpoint.v1.json` 只记录当前活动 Catalog 的发布周期；`catalog_adoption_checkpoint.v1.json` 独立保存待采用的新 Catalog、已完成 candidates、真实 pending、失败原因与 backoff。首次读到 Catalog 不同且没有 core generation 的旧 `full_catalog_rebind` 时，原证据原子复制到 adoption checkpoint 并标记 blocked，原 checkpoint 标记 migrated 而不删除；`pending_sources` 始终等于 due 减 completed。活动 checkpoint 只为仍 pending 的来源保留 `reason_code/failure_stage/error_type/fallback_used/last_good_available/diagnostics`，完成来源的失败证据必须消失；诊断有深度、数量和长度上限，并剔除 traceback、命令行、环境、proxy、credential、token、cookie 与 secret。新 Catalog 只有 Blitz 覆盖至少 95% 且 ARAMKit、Apex、Mayhem 全部同 Catalog 后才能整体采用，普通 active refresh 不会续跑或晋升 adoption lane。
-
-若刷新过程中进入游戏，Core 发布前取消 worker 并保留 checkpoint；Core 已发布后只取消或延后 Optional，已发布 generation 不回滚。checkpoint 与延后门保留原请求的 `scope/force`，对局结束后等待 30 秒只恢复一次等价请求。`GET /v1/status.refresh_status` 暴露 `state/scope/phase/reason_code/generation_id/pending_sources/started_at/completed_at`；Desktop 对 running/deferred 使用粘性文案，对 completed/unchanged/failed 显示 6 秒。没有可用 snapshot 的冷启动不受此策略阻塞。
-
-Blitz marker 相同时也必须服从共享绝对时效：verified pointer 的 `last_success_at` 年龄在 2 小时 30 分以内才可返回 `not_stale`，恰好边界允许复用；超过边界、时间缺失或非法时完整抓取。所有来源与严格 verifier 共用 `SOURCE_INTERVALS × 1.25`，不再重复定义 Apex/Mayhem 阈值。Snapshot manifest 的 `health/degraded_sources` 仍是 immutable lineage；消费者数据读取时过期合并进 `effective_degraded_sources`，Catalog 由 `adoption_held` 独立门处理，Desktop 与严格门优先消费 effective 字段。
-
-Blitz 的公开 JSON 仍由 Scrapling 静态 `get` 主抓；只有最终归类为 `tls_error` 或 `network_error`、host circuit 未打开且总预算仍有剩余时，才允许一次 `requests` 静态 fallback。403、429、schema/identity/coverage 错误、无效 payload 与 2 MiB 超限都不得 fallback；主路径和 fallback 都执行相同大小门与 TLS 校验。manifest/report 必须记录实际 `fetch_backend`、`fallback_used` 和 `fallback_from`，但不得引入 browser、stealth、代理、Firecrawl 或旧 `run/crawler`。
-
-冻结包若已安装完整 verified bundle seed，DataService 必须先发布该 generation，再给首次自动远端刷新 30 秒启动宽限；手动刷新不受宽限限制，宽限到期若已进入游戏仍走既有 `game_in_progress` 延后/取消。Blitz 失败按 optional stale 保留同 Catalog last-good；ARAMKit 失败保留既有 current 供降级显示，但不发布 generation，也不能满足新候选 fresh-data 构建门。
+- DataService 生产执行器是 `infrastructure/sources/refresh_service.py:IncrementalRefreshService`。Core 排行/英雄与 Optional lane 分开运行，发布锁串行化短事务；scope=due|core、force、重复触发合并和 shutdown 入口保留。executor_progress/RefreshProgress 报告实际阶段，不以内部 ready 代替最终显示。
+- 对局开始不再统一取消来源 worker。短寿命 `download_context.v1.json` 使下载领取优先当前英雄；未知 Context 可暂停领取背景任务，已运行任务不因游戏开始被取消。Catalog 身份更新仍非对局时执行，冷启动对局中缺 Catalog 明确失败。shutdown/hard timeout 保留取消、协作退出与进程树回收；停止后不能启动新 worker 或发布新 generation。
+- ARAMKit 先发布 hero_rankings，再逐个发布验证完的 scoped_stats unit；完整英雄必须具有总体统计和 Stage 1–4。v3 `components` 记录 ranking 及每 hero 的 source_version、catalog_id、complete、可选 run_id；production 完整 unit 必须有 provenance/run 绑定。rank-only snapshot 合法，但 pending 英雄不能通过 Host 完整性采用门。
+- 原始响应缓存默认每 revision 2 GiB、每来源 6 GiB，预算包含未完成/孤立 body，source/revision 锁协调并发。缓存命中仍核对 hash/size，跨 revision 隔离；超预算明确 budget stop。当前没有自动 prune，也未实现“只保留两个版本”的自动清理，不能把预算拒绝写入说成已释放空间。
+- `BackgroundLoadGuard` 对同一游戏实例的新 captured recognition 观察保留最近 10 个有效捕获加识别耗时；至少 5 个大于 180ms 时暂停背景领取，最近 10 个全部不超过 150ms 时恢复。重复/乱序帧和无效时间不入样本，换实例重置；当前英雄优先，已开始任务不因该门取消。这是采样降速保护，不是验收 P95，也不证明识别正确性。
+- 每个 snapshot 只纳入实际有效 units，缺 Optional 以 source_status 的 pending/confirmed_empty/unavailable 等状态表达；跨 Catalog 引用拒绝。相同语义和组件版本不重发 generation、不移动 previous；失败回滚 journal 与内存候选，不把 fallback 标成本轮新下载成功。
+- 旧 snapshot v2 全量 cohort 门不放宽。旧“游戏中取消、结束后延时恢复、blocked adoption 全源协调”只作为[冻结历史合同](overlay-refresh-v2-history.md)保存，不是当前生产入口。已有 seed 的首次自动网络启动宽限是独立机制，不表示整条下载链30秒内完成；该性能目标仍待实测。
 
 ## 备战席显示与客户端右侧停靠
 
@@ -191,17 +214,19 @@ Blitz 的公开 JSON 仍由 Scrapling 静态 `get` 主抓；只有最终归类�
 
 ## 打包、部署与旧包防错
 
-打包前运行目标测试、完整 pytest、开发门禁、Ruff、Pyright、Scrapling 静态 smoke 和 packaged startup smoke。普通打包只生成候选，必须明确标记“候选未部署”；构建只允许使用 manifest v3。部署器拒绝缺少构建身份或 `runtime_contracts` 不等于 Overlay v3、Sidecar v2、session report v2 的候选。
+打包前运行目标测试、完整 pytest、开发门禁、Ruff、Pyright、Scrapling 静态 smoke 和 packaged startup smoke。普通打包只生成候选，必须明确标记“候选未部署”；构建只允许使用 manifest v3。`package.py --deploy` 必须现场确认当前工作树恰为 `main`；非 `main`、detached HEAD 或 Git 分支无法判定时只能生成候选，禁止替换 `C:\HextechCompanion` 和正式桌面入口。部署器拒绝缺少构建身份或 `runtime_contracts` 不等于 Overlay v3、Sidecar v2、session report v2 的候选。
 
-使用 `--verified-snapshot-root` 构建时，bundle 除 snapshot seed 外还必须携带 `resources/cohort-seed`：当前 Catalog generation（含 content-addressed 图标和 `augment_assets.v1.json`）、ARAMKit/Blitz/Apex/Mayhem immutable run、六个 current 所需绑定与同代 schedule。冻结 Desktop 在 runtime logging 与首屏就绪后、启动 DataService/Supervisor 前安装该 seed，复用相同哈希文件，最后提交 snapshot pointer；所有子角色禁止 seed。不删除旧 generation 或历史用户数据。`--refresh-data` 成功时必须以实际刷新后的 `var/snapshots` 为打包输入，不能继续打旧 `resources/seeds`。
+`package.py` 在构建开始和冻结 smoke 开始前自动核验并结束受控 Hextech EXE：仅允许稳定安装的准确 EXE 路径，以及本次 artifacts 根 `releases/staging` 下独立候选的准确 EXE 路径。全部身份通过后才结束进程，限时等待后重新枚举；身份不明、其他 Hextech 路径或退出后重新启动都阻止继续。真实 `League of Legends.exe` 运行时拒绝执行；不结束 League Client、其他程序，不改写正式安装、运行数据或快捷方式。
+
+使用 `--verified-snapshot-root` 构建时，bundle 除 snapshot seed 外还须携带 `resources/cohort-seed`。v2 保留完整四来源要求；v3 seed metadata schema 2 列出实际 primary source_run_ids 和全部 units，包括每个 ARAMKit immutable run 的 child 文件及当前 Catalog/production assets。缺 Optional 不伪造 pointer。冻结 Desktop 在 logging 与首屏就绪后、启动服务前安装，复用相同 hash 文件，最后提交 snapshot pointer；子角色禁止 seed，不删除旧 generation 或用户资产。`--refresh-data` 只能使用实际刷新后的 snapshot；本次未宣称全量 fresh 网络构建通过。
 
 打包器在任何 packaged smoke 之前枚举冻结目录中的 `*.dll` 与 `*.pyd`，按候选落盘后的真实绝对路径执行 Win32 原生加载预算门；任一路径超过 259 字符就以 `native_runtime_path_too_long` 拒绝候选。构建 artifacts 根和 release 名必须保持短，例如本工作树使用 `.artifacts\hx`，不能把长 `.tmp_overlay_*` 根继续叠加进 PyInstaller `_internal`。每个 packaged fixture 在启动 Desktop 前还必须运行同一 EXE 的 `--acquisition-worker --self-check`，验证 `curl_cffi._wrapper`、ARAMKit service 与 Blitz service 都能从冻结路径导入并绑定当前 Build ID；该自检无网络，失败时不得继续 smoke。
 
-bundle 安装前先恢复未完成 promotion journal，再枚举 current、previous、`cohort_recovery_point.v1.json`、全部本地 immutable generation 和 bundle generation。每个候选都必须重建并验证 generation、provenance、Catalog、四来源 run/manifest/artifact/hash 与 production pool 绑定；只在完整候选中按 generation `created_at` 单调选择最新者，来源优先级只用于同时间平局。旧程序把 current 倒退为 G1、previous 仍指向 G3，而新 bundle 携带 G2 时必须恢复 G3，并记录 `install_state=runtime_restored`；`cohort_selection.v1.json` 保存选择来源、选中代、bundle 代和全部 valid/rejected 诊断。schedule 与 recovery point 和 generation pointer 由同一 promotion journal 提交，崩溃必须整体回滚；retention 必须保护 recovery point 直接引用及其 provenance 闭包。
+bundle 安装前先恢复未完成 promotion journal，再枚举 current、previous、`cohort_recovery_point.v1.json`、全部本地 immutable generation 和 bundle generation。每个候选都必须重建并验证 generation、provenance、Catalog、实际来源全部 unit/run/manifest/artifact/child hash 与 production pool 绑定（v2 仍须四来源）；只在完整候选中按 generation `created_at` 单调选择最新者，来源优先级只用于同时间平局。旧程序把 current 倒退为 G1、previous 仍指向 G3，而新 bundle 携带 G2 时必须恢复 G3，并记录 `install_state=runtime_restored`；`cohort_selection.v1.json` 保存选择来源、选中代、bundle 代和全部 valid/rejected 诊断。schedule 与 recovery point 和 generation pointer 由同一 promotion journal 提交，崩溃必须整体回滚；retention 必须保护 recovery point 直接引用及其 provenance 闭包。
 
-完整验证成功后写入 `cohort_validation_receipt.v1.json`。只有 Build/source fingerprint、current pointer、generation manifest、全部验证文件的 size/mtime 与 validator contract 完全一致且 promotion journal 不存在时，Desktop 才可走 metadata 快路径；任一漂移立即回退完整哈希。真正 promotion 重新写 receipt，写失败只影响下次启动。刷新候选的 Catalog、四来源 immutable pointer/provenance、payload 与 production pool 内容身份完全不变时，返回 `promotion_disposition=unchanged`，不创建 generation、不移动 previous、不打开 promotion journal；`checked_at`、`stale_age_seconds` 和本轮 refreshed sources 不参与 immutable generation 身份。
+旧 snapshot v2 的完整验证成功后可写 `cohort_validation_receipt.v1.json`，原 Build/current/manifest/全部文件 metadata 与 journal 缺席门保持不变。snapshot v3 使用 receipt schema 2，不复用旧v1证书。写证重新验证当前完整closure，记录全部unit manifest/artifact/scoped child、Catalog资产metadata和小型header哈希；current/previous/recovery/schedule以及source pointer的存在/缺席和身份均绑定。读取时校验完整文件集合、Build/fingerprint及generation一级目录inventory；新增未追踪generation或任一漂移立即退回完整验证，命中不重哈希全部历史。真实冷启动性能仍未验证。恢复点 schema 2 明确绑定 snapshot schema 3 与 units；retention 保护 current、previous、recovery point 和 journal 的全部 unit/Catalog 引用。版本和语义完全相同不创建 generation、不移动 previous；checked_at 等观察时钟不充当内容身份。
 
-Sidecar 另发布 `vision_pool_fingerprint`、`vision_pool_origin_generation_id` 与 `observed_data_generation_id`。fingerprint 只由 Catalog/pool、模板资源和矩阵合同决定；stats-only promotion 不重启 Sidecar，Host 下一 game session 才采用新 stats generation。fingerprint 真变化时 Supervisor 先预热，selection active 时延后，inactive 后以显式目标 generation/fingerprint 切换；失败只恢复旧 Sidecar，Host 保持运行。旧 Sidecar 心跳恢复记录 `sidecar_recovered`，只有 PID/instance 与 readiness 真变化才能记录 restart。
+Sidecar 另发布 `vision_pool_fingerprint`、`vision_pool_origin_generation_id` 与 `observed_data_generation_id`。fingerprint 只由独立 Catalog/pool、模板资源和矩阵合同决定；stats-only promotion 不重启 Sidecar，Host 首次选择开始前可采用当前英雄已完整的新 stats generation，截止后下一 game session 才重新采用。fingerprint 真变化时必须等明确非局中上下文，selection inactive 本身不足以授权预热/切换，未知或过期上下文同样阻止切换。安全后以显式目标 Catalog/fingerprint 采用；失败恢复旧 Sidecar，Host 保持运行。旧 Sidecar 心跳恢复记录 `sidecar_recovered`，只有 PID/instance 与 readiness 真变化才能记录 restart。
 
 packaged startup smoke 必须以 Web 关闭、Overlay 与私用统计开启的配置，串行验证 clean、stale-sidecar 与 populated-runtime 三组 fixture；populated-runtime 预装 8 个 generation、其中 4 个 legacy，并携带 current/previous/recovery 与 blocked Catalog adoption。三组都必须真实拉起 Desktop → DataService → Supervisor → Host → Sidecar，在既有 20 秒 Host 预算内 ready，且只出现 Desktop seed owner；同时核对当前 Build、存活 PID、连续心跳、Host `stats_generation_id`、Sidecar/event `vision_pool_generation_id`、角色声明与带结构化 `stats_scope` 的当前 Build session report。每个 fixture 还必须创建已知底色的模拟游戏窗口，绘制三槽 READY 与三行统计，运行生产 Tk/Win32 presentation 状态机，并要求 HWND、物理 rect、扩展样式、非 cloaked 与有限像素合成探针全部通过。冻结 Host self-check 与 Sidecar `--once` 继续保留，`--once` 仍核对 Vision pool generation、Catalog、pool ID、production pool count、`rank_identity_count`、各矩阵行以及 `observed_name > 0`，但它们不能单独令 smoke 通过。
 
@@ -216,7 +241,7 @@ v5 packaged smoke 还必须预置 20 个真实形态 v1 timeline，再写入 v2 
 
 部署过程不得清理 `%LOCALAPPDATA%\HextechNexus\var`、历史报告或用户数据。显式部署获准后，部署器不依赖托盘退出或窗口 `WM_CLOSE`：候选复制与 hash 校验完成后，强制结束所有名为 `Hextech伴生终端.exe` 的稳定版、`.previous`、便携版进程，以及源码启动的 Overlay Host / Vision Sidecar；任何残留或权限不足都必须中止目录切换。已有更新 runtime 的 current validation receipt 只能跳过当前代重选，不能跳过新 Build bundle baseline 的逐文件校验、immutable 物化和完整 cohort 验证；baseline 物化不得改写更新的 current pointer。
 
-新版本落盘后无论旧客户端此前是否运行，都必须直接从 `C:\HextechCompanion\Hextech伴生终端.exe` 启动。部署器只有在以下条件同时成立时才返回成功：Desktop、DataService、Supervisor、Overlay Host、Vision Sidecar 均来自稳定目录且各 1 个；自动刷新期间允许存在同一稳定目录的短生命周期 acquisition worker，但它不算常驻角色；不存在旧目录或源码识别进程；Catalog、ARAMKit、Blitz、Apex、Mayhem 与 snapshot 六个 current 属于同一完整 cohort，schedule、checkpoint、recovery point 与 current generation 收敛且来源没有 failure。若启动期间恰好完成到期刷新，只允许接受经完整 generation/provenance/source artifact/hash 验证、时间不早于 bundle seed、且 Catalog 与 production pool 身份完全不变的新 generation；Sidecar 的 Vision generation 可继续使用 bundle seed，但 Host/session report 的 stats generation 必须跟随新 current，不能把跨角色合法分离误判成混合 Build。Sidecar status 必须为 `running`、PID 对应唯一 Sidecar、production pool 与矩阵身份数精确匹配；`startup_timing.v1.json`、Sidecar status、Overlay event、visibility 和最新 session report 均由本次启动刷新，协议版本正确且 `build_id` 与 bundle manifest 一致。任一条件超时或不一致都触发部署失败并恢复安装目录、ROI 设置和部署前 13 个 cohort pointer、schedule、checkpoint、recovery、selection、adoption 与 journal 原始字节，不得报告部署成功，也不得继续分析识别率。失败回滚必须先确认新进程退出；Windows 已无匹配进程但映像或目录句柄仍在释放时，只允许在固定 3 秒预算内重试删除新安装和原子恢复旧目录，永久错误或超时继续 fail closed。
+新版本落盘后无论旧客户端此前是否运行，都必须直接从 `C:\HextechCompanion\Hextech伴生终端.exe` 启动。部署器只有在以下条件同时成立时才返回成功：Desktop、DataService、Supervisor、Overlay Host、Vision Sidecar 均来自稳定目录且各 1 个；自动刷新期间允许存在同一稳定目录的短生命周期 acquisition worker，但它不算常驻角色；不存在旧目录或源码识别进程；Catalog、snapshot 与该 schema 实际要求的 source current 属于同一验证 cohort；v2 仍须四来源，v3 必须验证完整 units closure，缺 Optional 单列而不伪称失败来源成功；schedule/recovery point 与 current generation 收敛。若启动期间恰好完成到期刷新，只允许接受经完整 generation/provenance/source artifact/hash 验证、时间不早于 bundle seed、且 Catalog 与 production pool 身份完全不变的新 generation；Sidecar 的 Vision generation 可继续使用 bundle seed，但 Host/session report 的 stats generation 必须符合当前英雄完整性与首选截止合同，不能把跨角色合法分离误判成混合 Build。Sidecar status 必须为 `running`、PID 对应唯一 Sidecar、production pool 与矩阵身份数精确匹配；`startup_timing.v1.json`、Sidecar status、Overlay event、visibility 和最新 session report 均由本次启动刷新，协议版本正确且 `build_id` 与 bundle manifest 一致。任一条件超时或不一致都触发部署失败并恢复安装目录、ROI 设置和部署前 13 个 cohort pointer、schedule、checkpoint、recovery、selection、adoption 与 journal 原始字节，不得报告部署成功，也不得继续分析识别率。失败回滚必须先确认新进程退出；Windows 已无匹配进程但映像或目录句柄仍在释放时，只允许在固定 3 秒预算内重试删除新安装和原子恢复旧目录，永久错误或超时继续 fail closed。
 
 正式部署只更新既有 `C:\Users\apple\OneDrive\Desktop\Hextech伴生终端.lnk` 到 `C:\HextechCompanion\Hextech伴生终端.exe`；仅处理指向稳定安装或本仓 release 的重复快捷方式。`C:\HextechCompanion.previous` 始终保留部署前的一代正式版本，作为唯一紧急回滚目录。
 
@@ -227,8 +252,8 @@ v5 packaged smoke 还必须预置 20 个真实形态 v1 timeline，再写入 v2 
 - 至少 20 个独立 `event_written_at → presented_at` 样本，Host event→present P95 ≤ 100 ms。
 - 瞬时错误候选不得撤下稳定槽，鼠标只冻结实际覆盖槽。
 - Hextech fresh 时不得因 Apex/Mayhem last-good 显示“上一代数据”；复仇焰魂命中“虚幻武器”等已知方案时必须显示当前英雄联动。
-- 默认会话不得生成 PNG。
-- 游戏期间不得存在 acquisition worker 或 Scrapling 逐请求摘要日志。
+- 默认会话只允许新 `selection-cache-v2` 的有界选择区域证据 PNG（含逐槽 `slot_rois`）；不保存完整游戏截图。旧显式 debug dump 默认仍关闭，人工 truth 不自动生成，200 组/256 MiB 与受保护资产边界见专项合同。
+- 游戏期间允许受预算、取消和领取优先级约束的静态 acquisition worker；不启动 browser/stealth 抓取，不输出高频 Scrapling 逐请求摘要日志。不得把“存在 worker”单独判为回归；需验证后台领取保护、当前英雄优先、实际识别时延与停止回收。
 - EXE、manifest、Desktop、Sidecar、Overlay host 和 session report 的 `build_id` 必须一致。
 - `slot_starvation_count=0`；每个合格 epoch 都有 retained timeline v2、terminal marker、对应 session report，并且最多一张 Overlay-only 裁剪图；两次留存周期和一次应用重启后证据仍存在，`timeline_missing=0`、`FileNotFoundError=0`。
 
@@ -243,5 +268,5 @@ Augment/Arena 胜率、出场率网站、应用或 Overlay 只按用户决定保
 - 实际逻辑宽≥300为normal（三列开关、横向指标），230–299为narrow（两列开关、指标另起一行），200–229为minimum（单列开关、指标另起一行）。变窄立即重排，扩展需超过断点8逻辑像素。窄幅标题/关闭保留首行，刷新/诊断换行；英雄名最多两行并提供完整名称悬停提示，状态按真实字体度量最多两行，不再依赖18字常量。
 - 字体、头像尺寸、列表行及按钮同步应用布局；固定操作区和状态区先分配空间，只有列表滚动。重排保留控件身份、开关、忙碌状态及首个可见英雄偏移，不为重排读取统计或启动刷新。头像按原始资源重采样，尺寸版本不匹配的迟到结果丢弃。
 - 桌面后台回调经有界队列进入GUI owner，后台不触碰Tk控件或PhotoImage。映射期NOACTIVATE保留到下一消息周期再恢复，过期映射回调无效。
-- 诊断包含逻辑/物理尺寸、DPI、客户端比例、档位、最小尺寸和受限原因；Overlay包含安全区、空隙档位、字号和可用的真实Canvas bbox。协议主版本不变，不新增默认PNG。
+- 诊断包含逻辑/物理尺寸、DPI、客户端比例、档位、最小尺寸和受限原因；Overlay包含安全区、空隙档位、字号和可用的真实Canvas bbox。协议主版本不变；默认图片仅限当前有界选择证据机制，不增加完整游戏截图。
 - 自动验证覆盖桌面四屏×五DPI×四客户端宽度×四位置情形、三档原生控件及游戏80组参数布局；合成窗口模式与模拟DPI不是实际League/混合DPI显示器验证。缺少真实各规格各稀有度内框帧及双屏选人/五局证据时，候选只能标记未部署、真机待验收。

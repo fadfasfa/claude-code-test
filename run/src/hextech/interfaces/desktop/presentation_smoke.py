@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import ctypes
+import json
 import os
 import socket
 import subprocess
@@ -198,11 +199,25 @@ def run_desktop_presentation_smoke() -> dict:
                 blocker = new_window(panel_rect, topmost=topmost)
                 win32gui.SetWindowPos(blocker, -1 if topmost else 0, 0, 0, 0, 0,
                                       0x0010 | 0x0001 | 0x0002 | 0x0200)
+                before = {"layer": controller.status().get("layer"), "panel_above": _above(win32gui, hwnd, blocker)}
                 # Wait the production 100ms probe interval; do not mutate lease state.
                 time.sleep(.11)
+                recovery_started = time.perf_counter()
                 controller.apply_latest()
                 _pump(ui.root)
-                _require(_above(win32gui, hwnd, blocker), "panel remained below owned blocker")
+                above = _above(win32gui, hwnd, blocker)
+                after = controller.status()
+                occluder = ((after.get("layer") or {}).get("occlusion") or {}).get("occluder_hwnd", 0)
+                failure_detail = {
+                    "blocker_topmost": topmost, "blocker_hwnd": blocker,
+                    "wrapper_hwnd": hwnd, "current_wrapper_hwnd": desktop_wrapper_hwnd(ui.root),
+                    "inner_hwnd": int(ui.root.winfo_id()), "before": before,
+                    "after": after, "panel_above": above,
+                    "occluder_scope": "none" if not occluder else "owned-fixture" if occluder in windows else "outside-fixture",
+                    "recovery_ms": (time.perf_counter()-recovery_started)*1000,
+                    "foreground_unchanged": native_foreground() == original_foreground,
+                }
+                _require(above, "panel remained below owned blocker: " + json.dumps(failure_detail, ensure_ascii=False))
                 _require(win32gui.GetWindow(hwnd, 4) == 0, "blocker recovery introduced owner")
                 blockers.append({"topmost": topmost, "panel_above": True})
                 win32gui.DestroyWindow(blocker)

@@ -204,6 +204,12 @@ def _candidate_from_top(
     identity = _identity(candidate)
     if not identity:
         return None
+    # Synthetic fonts and downloaded icons are correlated similarity signals,
+    # not independent identity evidence for the changing v2 enabled catalog.
+    # Only a qualifying manually observed exemplar can keep the fast path;
+    # otherwise the existing strict OCR admission/reducer owns confirmation.
+    if candidate.get("requires_exact_ocr") is True and rule != "observed_name":
+        return None
     raw_top = evidence.get("top_candidates") if isinstance(evidence.get("top_candidates"), Sequence) else []
     top_candidates = tuple(dict(item) for item in list(raw_top)[:3] if isinstance(item, Mapping))
     channels = slot.get("channels") if isinstance(slot.get("channels"), Mapping) else {}
@@ -403,6 +409,11 @@ def arbitrate_slot_candidates(
             by_identity.setdefault(candidate.identity, []).append(index)
 
     rejection_reasons = [""] * slot_count
+    for index, candidate in enumerate(candidates):
+        raw = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {}
+        if candidate is None and any(_top(_channel(raw, channel)).get("requires_exact_ocr") is True
+                                     for channel in ("text", "text_alt", "icon")):
+            rejection_reasons[index] = "exact_ocr_required"
     for identity, indexes in by_identity.items():
         if len(indexes) <= 1:
             continue
@@ -503,6 +514,7 @@ def strong_evidence_identities(slot: Mapping[str, Any]) -> set[str]:
     identity = _identity(text_top)
     if (
         identity
+        and text_top.get("requires_exact_ocr") is not True
         and identity == _identity(alternate_top) == _identity(icon_top)
         and _number(text_top.get("confidence")) >= 0.90
         and _number(alternate_top.get("confidence")) >= 0.90

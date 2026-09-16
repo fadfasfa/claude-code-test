@@ -335,7 +335,7 @@ def test_runner_e4_control_flow_uses_one_full_capture_then_reconfirms(monkeypatc
         if sleeps >= 6:
             raise StopLoop()
 
-    monkeypatch.setattr(runner, "SharedOverlayDataSource", lambda **kwargs: FakeSource())
+    monkeypatch.setattr(runner, "CatalogVisionDataSource", lambda **kwargs: FakeSource())
     monkeypatch.setattr(runner, "load_or_build_default_template_runtime", lambda **kwargs: runtime)
     monkeypatch.setattr(runner, "_prepare_compute_runtime", lambda *_: None)
     monkeypatch.setattr(runner, "_write_sidecar_status", lambda *a, **k: None)

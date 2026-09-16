@@ -16,7 +16,7 @@ from hextech.contracts import ArtifactDescriptor, ItemOutcome, SourceHealth, Sou
 from hextech.modules.data.catalog.versioned import build_catalog_manifest, sha256_file
 from hextech.modules.data.generation import DataSnapshotPublisher
 from hextech.modules.data.ports.atomic import atomic_write_json
-from hextech.bootstrap.production_pool_binding import _catalog_production_pool, validate_production_pool_assets
+from hextech.infrastructure.persistence.production_pool_binding import _catalog_production_pool, validate_production_pool_assets
 from hextech.modules.acquisition.hextech.production_pool import validate_production_augment_pool
 
 
@@ -250,6 +250,13 @@ def _fixture_runtime(tmp_path: Path) -> tuple[Path, dict[str, object]]:
         health="healthy",
         refreshed_sources=("catalog", "aramkit", "blitz", "apex", "mayhem"),
     )
+    # This is the legacy v2 cohort fixture; its opaque source artifact is not a
+    # v3 scoped-stats child index. Keep old receipt/recovery assertions explicit.
+    legacy_manifest = published.to_dict()
+    legacy_manifest["schema_version"] = 2
+    legacy_manifest.pop("components")
+    atomic_write_json(runtime / "snapshots" / "generations" / published.generation_id / "manifest.json",
+                      legacy_manifest, indent=2)
     schedule = {
         "schema_version": 1,
         "updated_at": "2026-08-13T00:00:02+00:00",
@@ -315,7 +322,7 @@ def test_collect_cohort_seed_binds_catalog_sources_and_production_pool(tmp_path:
     assert {path.name for path in seed.files if path.name == "current.v2.json"} == {"current.v2.json"}
 
 
-def test_build_seed_accepts_fresh_aramkit_with_only_optional_sources_degraded(tmp_path: Path) -> None:
+def test_legacy_fresh_label_without_check_evidence_cannot_certify_degraded_seed(tmp_path: Path) -> None:
     from tooling.build.manifest import validate_snapshot_seed
 
     runtime, expected = _fixture_runtime(tmp_path)
@@ -333,10 +340,10 @@ def test_build_seed_accepts_fresh_aramkit_with_only_optional_sources_degraded(tm
     }
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    health = validate_snapshot_seed(runtime / "snapshots")
-
-    assert health["valid"] is True
-    assert health["optional_degraded"] is True
+    # A handwritten legacy freshness label is not verified upstream evidence.
+    # Keep the existing v2 seed gate fail-closed; v3 uses its complete unit closure.
+    with pytest.raises(ValueError, match="seed generation invalid"):
+        validate_snapshot_seed(runtime / "snapshots")
 
 
 def test_install_cohort_upgrades_existing_current_and_preserves_old_generation(tmp_path: Path) -> None:

@@ -1472,9 +1472,37 @@ def test_build_deploy_arguments_are_explicit(monkeypatch):
     assert roi_args.roi_dump_mode == "on"
 
 
+def test_stable_deploy_requires_main_branch(monkeypatch):
+    from tooling.build import package
+
+    monkeypatch.setattr(package, "current_git_branch", lambda: "main")
+    package.require_main_branch_for_stable_deploy()
+
+    for branch in ("codex/refactor/run-simplification", ""):
+        monkeypatch.setattr(package, "current_git_branch", lambda branch=branch: branch)
+        with pytest.raises(RuntimeError, match="仅允许从 main 分支"):
+            package.require_main_branch_for_stable_deploy()
+
+
+def test_non_main_deploy_stops_before_runtime_shutdown(monkeypatch):
+    from tooling.build import package
+
+    monkeypatch.setattr(package.sys, "platform", "win32")
+    monkeypatch.setattr(package, "current_git_branch", lambda: "codex/refactor/run-simplification")
+    monkeypatch.setattr(
+        package,
+        "shutdown_for_package",
+        lambda *_args, **_kwargs: pytest.fail("non-main deploy reached runtime shutdown"),
+    )
+
+    with pytest.raises(RuntimeError, match="仅允许从 main 分支"):
+        package.main(["--deploy"])
+
+
 def test_build_without_deploy_does_not_call_deployer(tmp_path, monkeypatch, capsys):
     from tooling.build import package
 
+    monkeypatch.setattr(package, "shutdown_for_package", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(package, "cleanup", lambda: None)
     monkeypatch.setattr(package, "prepare_runtime_data_for_package", lambda **_kwargs: package.BASE_DIR / "resources" / "seeds")
     monkeypatch.setattr(package, "write_generated_manifest", lambda *_args, **_kwargs: tmp_path / "manifest.json")
@@ -1498,6 +1526,7 @@ def test_build_without_deploy_does_not_call_deployer(tmp_path, monkeypatch, caps
 
 def test_packaged_smoke_runs_overlay_self_check_after_desktop_seed_chain(tmp_path, monkeypatch):
     from tooling.acceptance import smoke_packaged_startup as smoke
+    monkeypatch.setattr(smoke, "_runtime_environment_conflict", lambda _: "")
 
     package_dir = _package(tmp_path / "HextechCompanion-20260720")
     events: list[str] = []

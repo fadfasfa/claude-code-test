@@ -82,7 +82,7 @@ reportOptionalSubscript = false
 reportReturnType = false
 include = [
   "src/hextech/bootstrap/supervisor.py",
-  "src/hextech/bootstrap/refresh_promotion.py",
+  "src/hextech/infrastructure/sources/refresh_service.py",
   "src/hextech/contracts/cohort_recovery.py",
   "src/hextech/interfaces/overlay",
   "src/hextech/modules/vision/window.py",

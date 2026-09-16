@@ -26,6 +26,8 @@ KNOWN_BODY_SHARDS = {
     "魔法抗性碎片",
     "技能急速碎片",
     "迅捷碎片",
+    "法术穿透碎片",
+    "力量碎片",
 }
 
 
@@ -152,6 +154,23 @@ def test_production_evidence_keeps_negative_binding_out_of_positive_pool() -> No
     assert evidence["captured_frame_id"] == 5
     assert len(evidence["rgb_sha256"]) == 64
     assert evidence["captured_at"] == 100.0
+
+
+def test_rf8_reviewed_names_are_negative_only_and_require_two_bound_slots():
+    left = _negative_evidence("法术穿透碎片", slot=0, frame=5)
+    right = _negative_evidence("力量碎片", slot=2, frame=5)
+    for evidence in (left, right):
+        assert evidence["state"] == "rejected" and evidence["canonical_id"] == ""
+        assert evidence["scene_negative"]["state"] == "admitted"
+    state, tracker = SceneNegativeState(), _tracker(frame=5)
+    first = evaluate_scene_negative(state, _event(5, [_raw_slot(left, slot=0, frame=5)]), tracker, observed_at=100.1)
+    assert first.kind == "conflict"
+    both = evaluate_scene_negative(state, _event(5, [_raw_slot(left, slot=0, frame=5), {},
+                                                   _raw_slot(right, slot=2, frame=5)]), tracker, observed_at=100.1)
+    assert both.kind == "body_shard" and both.trusted_slots == (0, 2)
+    for name in ("法术穿透碎片", "力量碎片"):
+        assert classify_scene_negative(name, .949)["state"] == "rejected"
+        assert classify_scene_negative("x"+name, .999)["state"] == "rejected"
 
 
 def test_one_trusted_slot_conflicts_and_two_distinct_slots_latch_idempotently() -> None:

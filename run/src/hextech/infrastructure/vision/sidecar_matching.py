@@ -399,6 +399,7 @@ def _top_candidates(
             "confidence": confidence,
             "icon_digest": template.icon_digest,
             "priority": template.priority,
+            "requires_exact_ocr": template.requires_exact_ocr,
         }
         for template, confidence in list(ranked)[: max(0, int(limit))]
     ]

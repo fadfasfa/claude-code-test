@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -43,6 +43,7 @@ class FetchResult:
     attempts: int = 1
     elapsed_ms: int = 0
     backend: str = "http"
+    response_headers: dict[str, str] = field(default_factory=dict)
 
     @property
     def fetch_attempt(self) -> FetchAttempt:
@@ -75,6 +76,7 @@ class ScraplingFetchResult:
     backend: str = "http"
     fallback_used: bool = False
     fallback_from: str = ""
+    response_headers: dict[str, str] = field(default_factory=dict)
 
     def json(self) -> Any:
         return json.loads(self.text)
@@ -133,6 +135,8 @@ def _coerce_failure_kind(value: str) -> FailureKind | None:
 
 
 def classify_response(status_code: int | None, text: str = "") -> FailureKind | None:
+    if status_code == 304:
+        return None
     if status_code == 403:
         return FailureKind.HTTP_403
     if status_code == 429:
@@ -211,11 +215,25 @@ def _response_status(response: object) -> int | None:
     return None
 
 
+def _response_headers(response: object) -> dict[str, str]:
+    """Normalize response headers without retaining transport-specific objects."""
+
+    value = getattr(response, "headers", None)
+    if value is None:
+        return {}
+    try:
+        items = value.items()
+    except AttributeError:
+        return {}
+    return {str(key): str(item) for key, item in items}
+
+
 def _requests_fetch_text(
     url: str,
     *,
     timeout_ms: int,
     headers: dict[str, str] | None,
+    params: dict[str, object] | None,
     caller: str,
     max_response_bytes: int | None,
     primary: ScraplingFetchResult,
@@ -231,6 +249,7 @@ def _requests_fetch_text(
             url,
             timeout=max(0.001, timeout_ms / 1000),
             headers=headers,
+            params=params,
             stream=True,
         ) as response:
             limit = int(max_response_bytes) if max_response_bytes is not None else None
@@ -254,10 +273,12 @@ def _requests_fetch_text(
                         backend="requests_fallback",
                         fallback_used=True,
                         fallback_from=primary.error_kind,
+                        response_headers=_response_headers(response),
                     )
                 chunks.append(bytes(chunk))
             text = _decode_body(b"".join(chunks), response.encoding)
             status_code = int(response.status_code)
+            response_headers = _response_headers(response)
     except requests.RequestException as exc:
         prefix = f"{caller}: " if caller else ""
         return ScraplingFetchResult(
@@ -272,6 +293,7 @@ def _requests_fetch_text(
             backend="requests_fallback",
             fallback_used=True,
             fallback_from=primary.error_kind,
+            response_headers={},
         )
     failure = classify_response(status_code, text)
     return ScraplingFetchResult(
@@ -286,6 +308,7 @@ def _requests_fetch_text(
         backend="requests_fallback",
         fallback_used=True,
         fallback_from=primary.error_kind,
+        response_headers=response_headers,
     )
 
 
@@ -363,6 +386,7 @@ def fetch_page(
                     error_kind="" if failure is None else failure.value,
                     attempts=attempt,
                     elapsed_ms=round((time.monotonic() - started) * 1000),
+                    response_headers=_response_headers(response),
                 )
             except HostCircuitOpen as exc:
                 last_error = str(exc)
@@ -421,6 +445,7 @@ def fetch_page(
             attempts=1,
             elapsed_ms=round((time.monotonic() - started) * 1000),
             backend="browser",
+            response_headers=_response_headers(response),
         )
     except HostCircuitOpen as exc:
         return FetchResult(
@@ -455,6 +480,7 @@ def fetch_text(
     *,
     timeout_ms: int = 30_000,
     headers: dict[str, str] | None = None,
+    params: dict[str, object] | None = None,
     caller: str = "",
     max_attempts: int = 2,
     retry_backoff_seconds: float = 0.35,
@@ -489,7 +515,14 @@ def fetch_text(
             # Scrapling 0.4.9 在 retries=0 时可能提前释放会话；短文本链路也要
             # 保留一次内部 retry，否则会间歇性报 No active session available。
             with _CONCURRENCY.acquire(url):
-                response = Fetcher.get(url, timeout=timeout_ms / 1000, headers=headers, retries=1)
+                kwargs: dict[str, object] = {
+                    "timeout": timeout_ms / 1000,
+                    "headers": headers,
+                    "retries": 1,
+                }
+                if params:
+                    kwargs["params"] = params
+                response = Fetcher.get(url, **kwargs)
             text = _response_text(response)
             status_code = _response_status(response)
             if max_response_bytes is not None and len(text.encode("utf-8")) > max_response_bytes:
@@ -502,6 +535,7 @@ def fetch_text(
                     error_kind=FailureKind.INVALID_PAYLOAD.value,
                     attempts=attempt,
                     elapsed_ms=round((time.monotonic() - started) * 1000),
+                    response_headers=_response_headers(response),
                 )
             failure = classify_response(status_code, text)
             _CIRCUIT.record(url, failure)
@@ -517,6 +551,7 @@ def fetch_text(
                 error_kind="" if failure is None else failure.value,
                 attempts=attempt,
                 elapsed_ms=round((time.monotonic() - started) * 1000),
+                response_headers=_response_headers(response),
             )
         except HostCircuitOpen as exc:
             last_error = str(exc)
@@ -553,6 +588,7 @@ def fetch_text(
             url,
             timeout_ms=remaining_ms,
             headers=headers,
+            params=params,
             caller=caller,
             max_response_bytes=max_response_bytes,
             primary=primary,

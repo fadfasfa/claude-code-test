@@ -68,7 +68,9 @@ def _isolated_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[Any]:
     # pytest 的 sys.path 不会自动进入 ``python -c`` 子进程；显式追加本地 src
     # 才能同时验证子进程隔离和源码态导入，而不依赖真实 run/.venv 是否已安装。
     project_paths = [str(RUN_DIR / "src"), str(RUN_DIR)]
-    inherited_paths = [part for part in env.get("PYTHONPATH", "").split(os.pathsep) if part]
+    # Preserve explicitly isolated test dependencies when a child narrows its source path.
+    inherited_paths = [part for value in (os.environ.get("PYTHONPATH", ""), env.get("PYTHONPATH", ""))
+                       for part in value.split(os.pathsep) if part]
     env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys([*project_paths, *inherited_paths]))
     kwargs["env"] = env
     return _ORIGINAL_POPEN(*args, **kwargs)

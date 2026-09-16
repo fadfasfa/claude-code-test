@@ -12,7 +12,7 @@ from .diagnostic_capture_session import DiagnosticCaptureSession
 
 
 class ExplicitCaptureControl:
-    def __init__(self, var_dir: Path, writer, build_id: str):
+    def __init__(self, var_dir: Path, writer, build_id: str, *, selection_collector=None):
         self.var_dir, self.writer, self.build_id = Path(var_dir), writer, build_id
         from .sidecar_status import SIDECAR_INSTANCE_ID
         self.sidecar_instance_id = SIDECAR_INSTANCE_ID
@@ -27,6 +27,8 @@ class ExplicitCaptureControl:
         self._selection_seen = False
         self._full_count = self._roi_count = 0
         self._done = False
+        self.selection_collector = selection_collector
+        self._recent_save_result = {}
 
     def poll(self) -> None:
         now = time.monotonic()
@@ -35,7 +37,9 @@ class ExplicitCaptureControl:
         self._last_poll = now
         path = self.var_dir / "state" / "diagnostic_capture_request.v1.json"
         try:
-            if path.is_symlink() or (path.stat().st_file_attributes & 0x400) or path.stat().st_size > 4096:
+            from .diagnostic_capture_session import _reject_reparse_path
+            _reject_reparse_path(path)
+            if path.stat().st_size > 4096:
                 return
             payload = json.loads(path.read_text(encoding="utf-8"))
             request_id = str(UUID(payload["request_id"]))
@@ -49,6 +53,15 @@ class ExplicitCaptureControl:
             return
         self._last_request = request_id
         self._seen_requests.append(request_id)
+        if payload.get("action") == "save_recent_selection":
+            accepted = bool(self.selection_collector and self.selection_collector.save_recent())
+            self._recent_save_result = {"request_id": request_id, "accepted": accepted,
+                "reason": "queued" if accepted else "recent_selection_buffer_unavailable_or_queue_full",
+                "diagnostic_id": self.selection_collector.status().get("last_manual_id", "")
+                    if self.selection_collector else ""}
+            return
+        if payload.get("action") not in {None, "capture_next_selection"}:
+            return
         if self.session is not None and not self._done:
             return
         self.session = DiagnosticCaptureSession(self.var_dir, enabled=True)
@@ -110,4 +123,5 @@ class ExplicitCaptureControl:
             self.writer.submit_capture(self.session, draft)
 
     def status(self):
-        return self.session.status() if self.session is not None else {"enabled": False}
+        result = self.session.status() if self.session is not None else {"enabled": False}
+        return {**result, "recent_save_request": dict(self._recent_save_result)}

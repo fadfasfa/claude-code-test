@@ -73,6 +73,8 @@ def collect_cohort_seed(snapshot_root: Path) -> CohortSeed:
     runtime_root = snapshots.parent
     client = DataSnapshotClient(snapshots)
     view = client.open_view()
+    if view.manifest.schema_version == 3:
+        return _collect_v3_cohort_seed(runtime_root, view)
     status = view.status()
     source_status = status.get("source_status") if isinstance(status.get("source_status"), Mapping) else {}
     aramkit = source_status.get("aramkit") if isinstance(source_status.get("aramkit"), Mapping) else {}
@@ -202,7 +204,10 @@ def collect_cohort_seed(snapshot_root: Path) -> CohortSeed:
         int(pool.get("enabled_count") or 0) != pool_count
         or int(pool.get("full_catalog_count") or 0) != descriptors_by_role["augments"].record_count
         or descriptors_by_role.get("augment_assets") is None
-        or descriptors_by_role["augment_assets"].record_count != pool_count
+        or descriptors_by_role["augment_assets"].record_count != (
+            sum(item.get("icon_ready") is True for item in identities)
+            if pool.get("schema_version") == 2 else pool_count
+        )
     ):
         raise ValueError("production pool 数量与 Catalog generation 不一致")
     unique_files = tuple(sorted(set(path.resolve() for path in files), key=lambda path: path.as_posix()))
@@ -220,6 +225,45 @@ def collect_cohort_seed(snapshot_root: Path) -> CohortSeed:
             "file_count": len(unique_files),
         },
     )
+
+
+def _collect_v3_cohort_seed(runtime: Path, view: Any) -> CohortSeed:
+    from hextech.infrastructure.persistence.cohort_recovery import validate_generation_cohort
+
+    if (view.degraded or _read_object(runtime / "snapshots" / "current.v2.json").get("current_generation_id")
+            != view.manifest.generation_id):
+        raise ValueError("v3 cohort seed 不得使用 fallback generation")
+    candidate = validate_generation_cohort(runtime, view.manifest.generation_id)
+    files: list[Path] = []
+    for source, pointer in candidate.pointers.items():
+        path = runtime / "catalog" / "current.v2.json" if source == "catalog" else runtime / "sources" / source / "current.v2.json"
+        actual = _read_object(path)
+        if source == "catalog":
+            fields = ("catalog_generation_id", "content_sha256", "manifest_sha256")
+        else:
+            fields = ("source", "run_id", "catalog_generation_id", "catalog_sha256", "manifest_sha256", "artifact")
+        if any(actual.get(key) != pointer.get(key) for key in fields):
+            raise ValueError(f"v3 cohort {source} current 与精确 unit 不一致")
+        files.append(path)
+    catalog_id = str(candidate.pointers["catalog"]["catalog_generation_id"])
+    files.extend(_files_under(runtime / "catalog" / "generations" / catalog_id))
+    for pointer in candidate.units.values():
+        files.extend(_files_under(runtime / "sources" / str(pointer["source"]) / "runs" / str(pointer["run_id"])))
+    schedule = runtime / "state" / "data-service" / "refresh_schedule.v1.json"
+    if schedule.is_file():
+        if _read_object(schedule).get("generation_id") != candidate.generation_id:
+            raise ValueError("v3 cohort schedule 与 generation 不一致")
+        files.append(schedule)
+    pool = _production_pool(DataSnapshotClient(runtime / "snapshots"))
+    unique_files = tuple(sorted(set(path.resolve() for path in files), key=lambda path: path.as_posix()))
+    return CohortSeed(runtime, unique_files, {
+        "schema_version": 2, "snapshot_schema_version": 3,
+        "generation_id": candidate.generation_id, "catalog_generation_id": catalog_id,
+        "source_run_ids": {source: pointer["run_id"] for source, pointer in candidate.pointers.items() if source != "catalog"},
+        "units": {key: dict(value) for key, value in candidate.units.items()},
+        "production_pool_id": candidate.production_pool_id, "production_pool_count": candidate.production_pool_count,
+        "full_catalog_count": int(pool.get("full_catalog_count") or 0), "file_count": len(unique_files),
+    })
 
 
 __all__ = ["COHORT_SEED_DIR", "CohortSeed", "collect_cohort_seed"]

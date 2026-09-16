@@ -1,3 +1,4 @@
+# Frozen V2 regression baseline only; not a production runtime entry point.
 """活动 Catalog refresh 与 blocked adoption checkpoint 的分轨辅助逻辑。"""
 
 from __future__ import annotations
@@ -6,7 +7,7 @@ import json
 from dataclasses import replace
 from typing import Any, Mapping
 
-from hextech.bootstrap.source_freshness import iso_utc
+from .source_freshness import iso_utc
 from hextech.contracts import RefreshScheduleV1
 
 

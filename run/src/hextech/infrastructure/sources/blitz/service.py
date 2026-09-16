@@ -16,6 +16,7 @@ from uuid import uuid4
 from hextech.contracts import FetchAttempt, ItemOutcome, SourceHealth, SourcePointerV2, SourceRunManifestV2, utc_now_iso
 from hextech.contracts.models import FailureKind
 from hextech.infrastructure.transport.scrapling_client import fetch_text
+from hextech.infrastructure.transport.conditional_response import parse_retry_after_seconds
 from hextech.modules.data.catalog.version_catalog import load_augment_manifest_entries, load_champion_core_data
 from hextech.modules.data.catalog.versioned import (
     load_active_catalog,
@@ -23,7 +24,6 @@ from hextech.modules.data.catalog.versioned import (
     sha256_file,
 )
 from hextech.modules.data.ports.atomic import atomic_write_json
-from hextech.modules.data.freshness import source_reuse_allowed
 from hextech.modules.data.source_runs import (
     SourceRunValidationError,
     build_artifact_descriptor,
@@ -41,6 +41,12 @@ from .schema import (
     normalize_payload,
     project_normalized_rows,
     validate_artifact,
+)
+from .refresh_cache import (
+    PARSER_REVISION,
+    content_sha256,
+    failure_identity,
+    with_conditional_response,
 )
 
 
@@ -155,6 +161,10 @@ class _Response:
     backend: str = "static_http"
     fallback_used: bool = False
     fallback_from: str = ""
+    response_headers: Mapping[str, str] | None = None
+    not_modified: bool = False
+    from_cache: bool = False
+    request_key: str = ""
 
     def attempt(self) -> FetchAttempt:
         failure: FailureKind | None = None
@@ -169,7 +179,7 @@ class _Response:
                 failure = FailureKind(self.error_kind)
             except ValueError:
                 failure = FailureKind.NETWORK_ERROR
-        elif self.status_code != 200 or not self.text:
+        elif self.status_code not in {200, 304} or not self.text:
             failure = FailureKind.INVALID_PAYLOAD
         return FetchAttempt(
             url=DATA_URL,
@@ -184,12 +194,20 @@ class _Response:
         )
 
 
-def _default_fetcher(url: str, **_: object) -> object:
+def _default_fetcher(
+    url: str,
+    *,
+    headers: Mapping[str, str] | None = None,
+    params: Mapping[str, object] | None = None,
+    **_: object,
+) -> object:
+    request_headers = {"Accept": "application/json", **dict(headers or {})}
     return fetch_text(
         url,
         timeout_ms=TIMEOUT_MS,
         max_attempts=2,
-        headers={"Accept": "application/json"},
+        headers=request_headers,
+        params=dict(params or {}),
         caller="blitz-mayhem",
         fallback_backend="requests",
         max_response_bytes=MAX_RESPONSE_BYTES,
@@ -214,18 +232,41 @@ def _coerce_response(raw: object) -> _Response:
         backend=str(value("backend", "static_http") or "static_http"),
         fallback_used=bool(value("fallback_used", False)),
         fallback_from=str(value("fallback_from", "") or ""),
+        response_headers=value("response_headers", value("headers")),
+        not_modified=bool(value("not_modified", False)),
+        from_cache=bool(value("from_cache", False)),
+        request_key=str(value("request_key", "") or ""),
     )
 
 
-def _fetch_normalized(fetcher: Fetcher) -> tuple[dict[str, Any], _Response]:
+def _fetch_response(fetcher: Fetcher) -> _Response:
     response = _coerce_response(fetcher(DATA_URL))
     if response.status_code in {403, 429}:
         raise BlitzRefreshError("blocked", f"Blitz HTTP {response.status_code}", response=response)
-    if response.status_code != 200 or response.error or not response.text:
+    if response.status_code not in {200, 304} or response.error or not response.text:
         raise BlitzRefreshError("fetch_failed", response.error or f"HTTP {response.status_code}", response=response)
     if len(response.text.encode("utf-8")) > MAX_RESPONSE_BYTES:
         raise BlitzRefreshError("response_too_large", response=response)
-    return normalize_payload(decode_object(response.text)), response
+    return response
+
+
+def _fetch_normalized(fetcher: Fetcher) -> tuple[dict[str, Any], _Response]:
+    response = _fetch_response(fetcher)
+    return _normalize_response(response), response
+
+
+def _normalize_response(response: _Response) -> dict[str, Any]:
+    try:
+        return normalize_payload(decode_object(response.text))
+    except BlitzSchemaError as exc:
+        raise BlitzRefreshError(
+            "schema_changed",
+            str(exc),
+            response=response,
+            diagnostics={
+                "content_sha256": content_sha256(response.text),
+            },
+        ) from exc
 
 
 def _bind_catalog(
@@ -349,8 +390,15 @@ def _bind_catalog(
 
 
 def _current_marker(binding: CatalogBinding) -> tuple[dict[str, Any], dict[str, Any]]:
-    current = load_source_current("blitz", verify_hash=True)
+    try:
+        current = load_source_current("blitz", verify_hash=True)
+    except (OSError, SourceRunValidationError, ValueError):
+        return {}, {}
     if not current or str(current.get("catalog_generation_id") or "") != binding.generation_id:
+        return {}, {}
+    try:
+        validate_blitz_artifact(current)
+    except (OSError, SourceRunValidationError, ValueError):
         return {}, {}
     manifest = load_source_run_manifest("blitz", str(current.get("run_id") or ""))
     marker = manifest.metadata.get("marker") if manifest is not None else None
@@ -398,8 +446,11 @@ def _current_reusable(
     current_marker = manifest.metadata.get("marker")
     if not isinstance(current_marker, Mapping) or dict(current_marker) != dict(marker):
         return False
-    pointer_success_at = str(current.get("last_success_at") or "")
-    return source_reuse_allowed("blitz", pointer_success_at, now)
+    if manifest.metadata.get("parser_revision") != PARSER_REVISION:
+        return False
+    validate_blitz_artifact(current)
+    del now  # Compatibility with callers; age no longer controls content reuse.
+    return True
 
 
 def validate_blitz_artifact(pointer_payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -487,14 +538,20 @@ def _write_failure(
         "reason": reason,
         "run_id": run_id,
         "failure_stage": outcome.stage,
+        "failure_kind": outcome.failure_kind.value if outcome.failure_kind is not None else "",
         "diagnostics": bounded_diagnostics,
     }
     write_run_diagnostics(manifest, report=report)
     return report
 
 
-def probe_blitz_upstream_marker(*, fetcher: Fetcher | None = None) -> dict[str, Any]:
-    payload, _ = _fetch_normalized(fetcher or _default_fetcher)
+def probe_blitz_upstream_marker(
+    *,
+    fetcher: Fetcher | None = None,
+    conditional_cache_root: Path | None = None,
+) -> dict[str, Any]:
+    fetch = with_conditional_response(fetcher or _default_fetcher, conditional_cache_root)
+    payload, _ = _fetch_normalized(fetch)
     return dict(payload["marker"])
 
 
@@ -508,6 +565,9 @@ def refresh_blitz(
     stop_event: Any = None,
     now: datetime | None = None,
     coverage_policy: CoveragePolicy = "catalog_adoption",
+    raw_cache_root: Path | None = None,
+    conditional_cache_root: Path | None = None,
+    previous_failure_fingerprint: str = "",
 ) -> dict[str, Any]:
     if promote_current:
         raise SourceRunValidationError("正式 source current 只能由 cohort promotion 切换")
@@ -517,12 +577,62 @@ def refresh_blitz(
     run_id = f"blitz-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{uuid4().hex[:8]}"
     started_at = utc_now_iso()
     response: _Response | None = None
+    failure_fingerprint = ""
     try:
-        payload, response = _fetch_normalized(fetcher or _default_fetcher)
-        upstream_marker = dict(payload["marker"])
+        fetch = with_conditional_response(
+            fetcher or _default_fetcher,
+            conditional_cache_root or raw_cache_root,
+        )
+        response = _fetch_response(fetch)
         if stop_event is not None and stop_event.is_set():
             raise RuntimeError("blitz_refresh_cancelled")
+        failure_fingerprint = failure_identity(
+            response.text,
+            catalog_generation_id=binding.generation_id,
+            catalog_sha256=binding.content_sha256,
+        )
         current, previous_marker = _current_marker(binding)
+        if (
+            not force
+            and previous_failure_fingerprint == failure_fingerprint
+        ):
+            return {
+                "success": False,
+                "reason": "validation_unchanged",
+                "failure_stage": "validation",
+                "failure_fingerprint": failure_fingerprint,
+                "diagnostics": {
+                    "failure_fingerprint": failure_fingerprint,
+                    "deduplicated": True,
+                },
+                "check_status": "unknown",
+                "upstream_revision": content_sha256(response.text),
+                "applied_revision": str(previous_marker.get("content_sha256") or "") or None,
+                "retry_after_seconds": 21600,
+            }
+        payload = _normalize_response(response)
+        upstream_marker = dict(payload["marker"])
+        if (
+            not force
+            and current
+            and previous_marker == upstream_marker
+            and _current_reusable(
+                current,
+                upstream_marker,
+                now=now or datetime.now(timezone.utc),
+            )
+        ):
+            return {
+                "success": True,
+                "reason": "not_stale",
+                "pointer": current,
+                "marker": upstream_marker,
+                "check_status": "up_to_date",
+                "upstream_revision": str(upstream_marker.get("content_sha256") or ""),
+                "applied_revision": str(upstream_marker.get("content_sha256") or ""),
+                "upstream_marker": upstream_marker,
+                "retry_after_seconds": None,
+            }
         previous_record_count = _verified_previous_record_count(current)
         payload, coverage = _bind_catalog(
             payload,
@@ -530,22 +640,6 @@ def refresh_blitz(
             coverage_policy=coverage_policy,
             previous_record_count=previous_record_count,
         )
-        if not force:
-            if (
-                current
-                and previous_marker == upstream_marker
-                and _current_reusable(
-                    current,
-                    upstream_marker,
-                    now=now or datetime.now(timezone.utc),
-                )
-            ):
-                return {
-                    "success": True,
-                    "reason": "not_stale",
-                    "pointer": current,
-                    "marker": upstream_marker,
-                }
         artifact_dir = source_run_dir("blitz", run_id) / "augment_ranking"
         artifact_dir.mkdir(parents=True, exist_ok=False)
         artifact_path = artifact_dir / "augment-rankings.v1.json"
@@ -583,6 +677,7 @@ def refresh_blitz(
                 "data_date": payload["data_date"],
                 "marker": upstream_marker,
                 "artifact_marker": payload["marker"],
+                "parser_revision": PARSER_REVISION,
                 "coverage": coverage,
                 "compatibility_filtered_augment_ids": coverage[
                     "compatibility_filtered_augment_ids"
@@ -613,17 +708,39 @@ def refresh_blitz(
             pointer_output=pointer_output,
         )
         validate_blitz_artifact(pointer)
-        return {**report, "pointer": pointer}
+        return {
+            **report,
+            "pointer": pointer,
+            "check_status": "changed",
+            "upstream_revision": str(upstream_marker.get("content_sha256") or ""),
+            "applied_revision": str(upstream_marker.get("content_sha256") or ""),
+            "upstream_marker": upstream_marker,
+            "retry_after_seconds": None,
+        }
     except (BlitzRefreshError, BlitzSchemaError, SourceRunValidationError, OSError, ValueError) as exc:
         if isinstance(exc, BlitzRefreshError) and isinstance(exc.response, _Response):
             response = exc.response
         reason = exc.reason if isinstance(exc, BlitzRefreshError) else (
             "schema_changed" if isinstance(exc, BlitzSchemaError) else "publish_failed"
         )
+        validation_contract_failure = reason in {
+            "schema_changed",
+            "catalog_binding_failed",
+            "production_coverage_insufficient",
+            "source_record_ratio_insufficient",
+        }
         diagnostics = exc.diagnostics if isinstance(exc, BlitzRefreshError) else {
             "error_type": exc.__class__.__name__,
         }
-        return _write_failure(
+        if response is not None and validation_contract_failure and not failure_fingerprint:
+            failure_fingerprint = failure_identity(
+                response.text,
+                catalog_generation_id=binding.generation_id,
+                catalog_sha256=binding.content_sha256,
+            )
+        if failure_fingerprint and validation_contract_failure:
+            diagnostics = {**diagnostics, "failure_fingerprint": failure_fingerprint}
+        report = _write_failure(
             run_id=run_id,
             binding=binding,
             started_at=started_at,
@@ -631,6 +748,27 @@ def refresh_blitz(
             response=response,
             diagnostics=diagnostics,
         )
+        retry_after = (
+            parse_retry_after_seconds(response.response_headers)
+            if response is not None and response.attempt().failure_kind is not None
+            else None
+        )
+        return {
+            **report,
+            "check_status": "unknown",
+            "failure_fingerprint": failure_fingerprint if validation_contract_failure else "",
+            "upstream_revision": (
+                str(locals()["upstream_marker"].get("content_sha256") or "")
+                if isinstance(locals().get("upstream_marker"), Mapping)
+                else (content_sha256(response.text) if response is not None else "")
+            ),
+            "applied_revision": (
+                str(locals()["previous_marker"].get("content_sha256") or "") or None
+                if isinstance(locals().get("previous_marker"), Mapping)
+                else None
+            ),
+            "retry_after_seconds": 21600 if validation_contract_failure else retry_after,
+        }
 
 
 __all__ = [

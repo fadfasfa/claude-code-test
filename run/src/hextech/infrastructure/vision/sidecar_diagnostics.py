@@ -562,6 +562,9 @@ def _selection_timeline_entry(event_payload: Mapping[str, Any], observation_seq:
         "capture_status": str(timing.get("capture_status") or "captured"),
         **timeline_capture_fields(source),
         "event_written_at": timing.get("event_written_at"),
+        "scene_evaluated_at": timing.get("scene_evaluated_at"),
+        "scene_admitted_at": timing.get("scene_admitted_at"),
+        "identity_reduced_at": timing.get("identity_reduced_at"),
         "latency_ms": {
             "capture": duration_ms("captured_at", "capture_started_at"),
             "recognition": duration_ms("recognition_completed_at", "captured_at"),

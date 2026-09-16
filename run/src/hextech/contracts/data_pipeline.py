@@ -6,14 +6,20 @@ DTO 只描述不可变 Catalog、来源 run、generation provenance 和 promotio
 
 from __future__ import annotations
 
-import re
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from enum import Enum
-from pathlib import PurePosixPath
 from typing import Any, Literal, Mapping, Sequence
 
 from .models import FailureKind, SourceHealth
+from .data_validation import (
+    DataContractError,
+    _non_negative_int,
+    require_identifier,
+    require_relative_path,
+    require_sha256,
+    utc_now_iso,
+)
+from .source_status import SourceStatusV2
 
 
 SOURCE_RUN_SCHEMA_VERSION = 2
@@ -28,46 +34,6 @@ REFRESH_SCHEDULE_SCHEMA_VERSION = 1
 ItemState = Literal["success", "confirmed_empty", "failed"]
 SourceName = Literal["catalog", "hextech", "aramkit", "blitz", "apex", "mayhem"]
 PromotionPhase = Literal["prepared", "dependencies_promoted", "generation_promoted", "committed"]
-
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-
-
-class DataContractError(ValueError):
-    """版本化 DTO 结构或字段违反稳定契约。"""
-
-
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def require_sha256(value: object, *, field_name: str) -> str:
-    normalized = str(value or "").strip().lower()
-    if not _SHA256_RE.fullmatch(normalized):
-        raise DataContractError(f"{field_name} 必须是 64 位 SHA-256")
-    return normalized
-
-
-def require_identifier(value: object, *, field_name: str) -> str:
-    normalized = str(value or "").strip()
-    if not _ID_RE.fullmatch(normalized):
-        raise DataContractError(f"{field_name} 格式无效：{value}")
-    return normalized
-
-
-def require_relative_path(value: object, *, field_name: str) -> str:
-    normalized = str(value or "").strip().replace("\\", "/")
-    path = PurePosixPath(normalized)
-    if not normalized or path.is_absolute() or ".." in path.parts:
-        raise DataContractError(f"{field_name} 必须是受控相对路径：{value}")
-    return normalized
-
-
-def _non_negative_int(value: object, *, field_name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise DataContractError(f"{field_name} 必须是非负整数")
-    return value
-
 
 @dataclass(frozen=True)
 class FetchAttempt:
@@ -385,8 +351,11 @@ class CatalogManifestV2:
         require_identifier(self.catalog_generation_id, field_name="catalog_generation_id")
         require_sha256(self.content_sha256, field_name="catalog.content_sha256")
         roles = {item.role for item in self.files}
-        if len(roles) != len(self.files) or roles not in ({"champions", "augments", "versions"}, {"champions", "augments", "versions", "augment_assets"}):
-            raise DataContractError("Catalog 必须包含三个角色，并可兼容增加 augment_assets")
+        required = {"champions", "augments", "versions"}
+        if (len(roles) != len(self.files) or not required.issubset(roles)
+                or not roles.issubset(required | {"augment_assets", "augment_identities"})
+                or ("augment_identities" in roles and "augment_assets" not in roles)):
+            raise DataContractError("Catalog 必须包含三个角色；enabled identities 必须配套 augment_assets 清单")
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "CatalogManifestV2":
@@ -504,62 +473,6 @@ class BaselineContributionV2:
 
 
 @dataclass(frozen=True)
-class SourceStatusV2:
-    """generation 内逐来源状态；旧 generation 缺失字段时显式归一为 unknown/空值。"""
-
-    catalog_id: str = ""
-    data_at: str = ""
-    checked_at: str = ""
-    freshness: str = "unknown"
-    run_id: str = ""
-    origin_generation_id: str = ""
-    artifact_sha256: str = ""
-    manifest_sha256: str = ""
-    record_count: int = 0
-    # freshness=是否复用 last-good；data_status=数据陈旧；stale_age_seconds=过期超龄秒数（可选字段，旧构建忽略未知键，回滚安全）。
-    data_status: str = "unknown"
-    data_reason: str = ""
-    stale_age_seconds: int = 0
-    coverage: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if self.freshness not in {"fresh", "last_good", "unknown"}:
-            raise DataContractError(f"source_status freshness 无效：{self.freshness}")
-        if self.data_status not in {"fresh", "data_stale", "unknown"}:
-            raise DataContractError(f"source_status data_status 无效：{self.data_status}")
-        _non_negative_int(self.record_count, field_name="source_status.record_count")
-        _non_negative_int(self.stale_age_seconds, field_name="source_status.stale_age_seconds")
-        for field_name in ("artifact_sha256", "manifest_sha256"):
-            value = getattr(self, field_name)
-            if value:
-                require_sha256(value, field_name=f"source_status.{field_name}")
-
-    @classmethod
-    def from_mapping(cls, payload: Mapping[str, Any]) -> "SourceStatusV2":
-        try:
-            return cls(
-                catalog_id=str(payload.get("catalog_id") or ""),
-                data_at=str(payload.get("data_at") or ""),
-                checked_at=str(payload.get("checked_at") or ""),
-                freshness=str(payload.get("freshness") or "unknown"),
-                run_id=str(payload.get("run_id") or ""),
-                origin_generation_id=str(payload.get("origin_generation_id") or ""),
-                artifact_sha256=str(payload.get("artifact_sha256") or ""),
-                manifest_sha256=str(payload.get("manifest_sha256") or ""),
-                record_count=payload.get("record_count", 0),
-                data_status=str(payload.get("data_status") or "unknown"),
-                data_reason=str(payload.get("data_reason") or ""),
-                stale_age_seconds=payload.get("stale_age_seconds", 0),
-                coverage=dict(payload.get("coverage") or {}) if isinstance(payload.get("coverage"), Mapping) else {},
-            )
-        except TypeError as exc:
-            raise DataContractError(f"source_status 无效：{exc}") from exc
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
 class DataSnapshotCurrentPointerV2:
     current_generation_id: str
     schema_version: int = SNAPSHOT_POINTER_SCHEMA_VERSION
@@ -619,10 +532,12 @@ class DataSnapshotManifestV2:
     degraded_sources: tuple[str, ...] = ()
     source_status: Mapping[str, SourceStatusV2] = field(default_factory=dict)
     schema_version: int = SNAPSHOT_SCHEMA_VERSION
+    components: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.schema_version != SNAPSHOT_SCHEMA_VERSION:
+        if type(self.schema_version) is not int or self.schema_version not in {2, 3}:
             raise DataContractError(f"不支持的 generation schema：{self.schema_version}")
+        self.validate_components(self.components, schema_version=self.schema_version)
         require_identifier(self.generation_id, field_name="generation_id")
         require_sha256(self.content_fingerprint, field_name="content_fingerprint")
         for name in ("champion_count", "augment_count", "stat_record_count"):
@@ -639,9 +554,48 @@ class DataSnapshotManifestV2:
         if not set(self.source_status).issubset(valid_sources):
             raise DataContractError("generation source_status 包含未知来源")
 
+    @staticmethod
+    def validate_components(components: object, *, schema_version: int = 3) -> None:
+        if not isinstance(components, Mapping):
+            raise DataContractError("generation components 必须是对象")
+        if schema_version == 2:
+            if components:
+                raise DataContractError("v2 generation 不支持 components")
+            return
+        if set(components) != {"ranking", "champions"}:
+            raise DataContractError("generation components 必须且只能包含 ranking/champions")
+        ranking = components["ranking"]
+        champions = components["champions"]
+        if (not isinstance(ranking, Mapping) or not {"source_version", "catalog_id"}.issubset(ranking)
+                or not set(ranking).issubset({"source_version", "catalog_id", "run_id"})):
+            raise DataContractError("ranking component 结构无效")
+        if not isinstance(champions, Mapping) or not champions:
+            raise DataContractError("champions components 必须是非空对象")
+        for hero_id, component in champions.items():
+            if not isinstance(hero_id, str) or not hero_id.isdecimal() or int(hero_id) <= 0 or str(int(hero_id)) != hero_id:
+                raise DataContractError("champion component hero_id 必须是规范正整数键")
+            if (not isinstance(component, Mapping) or not {"source_version", "catalog_id", "complete"}.issubset(component)
+                    or not set(component).issubset({"source_version", "catalog_id", "complete", "run_id"})):
+                raise DataContractError("champion component 结构无效")
+            if type(component["complete"]) is not bool:
+                raise DataContractError("champion component.complete 必须是布尔值")
+        for component in (ranking, *champions.values()):
+            for key in ("source_version", "catalog_id", *( ("run_id",) if "run_id" in component else () )):
+                if not isinstance(component[key], str):
+                    raise DataContractError(f"component.{key} 必须是字符串")
+                if key == "source_version":
+                    value = component[key]
+                    if not value.strip() or len(value) > 256 or any(ord(char) < 32 or 127 <= ord(char) < 160 for char in value):
+                        raise DataContractError("component.source_version 必须是非空有界版本文本且无控制字符")
+                else:
+                    require_identifier(component[key], field_name=f"component.{key}")
+
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "DataSnapshotManifestV2":
         try:
+            statuses = payload.get("source_status", {})
+            if not isinstance(statuses, Mapping) or any(not isinstance(value, Mapping) for value in statuses.values()):
+                raise DataContractError("generation source_status 必须是对象映射")
             return cls(
                 schema_version=payload["schema_version"],
                 generation_id=str(payload["generation_id"]),
@@ -652,13 +606,13 @@ class DataSnapshotManifestV2:
                 augment_count=payload["augment_count"],
                 stat_record_count=payload["stat_record_count"],
                 files=tuple(SnapshotFileDescriptor.from_mapping(item) for item in payload["files"]),
+                components=payload.get("components", {}),
                 health=str(payload.get("health") or "healthy"),
                 refreshed_sources=tuple(str(item) for item in payload.get("refreshed_sources", ())),
                 degraded_sources=tuple(str(item) for item in payload.get("degraded_sources", ())),
                 source_status={
                     str(source): SourceStatusV2.from_mapping(status)
-                    for source, status in payload.get("source_status", {}).items()
-                    if isinstance(status, Mapping)
+                    for source, status in statuses.items()
                 },
             )
         except (KeyError, TypeError) as exc:
@@ -711,6 +665,19 @@ class RefreshSourceState:
     failure_kind: str = ""
     current_run_id: str = ""
     state: str = "due"
+    check_status: str = "never_checked"
+    upstream_revision: str = ""
+    applied_revision: str = ""
+    last_checked_at: str = ""
+    check_interval_seconds: int = 0
+    consecutive_failures: int = 0
+    failure_fingerprint: str = ""
+
+    def __post_init__(self) -> None:
+        if self.check_status not in {"never_checked", "unknown", "failed", "changed", "up_to_date"}:
+            raise DataContractError("invalid source check status")
+        _non_negative_int(self.check_interval_seconds, field_name="check_interval_seconds")
+        _non_negative_int(self.consecutive_failures, field_name="consecutive_failures")
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "RefreshSourceState":
@@ -721,6 +688,13 @@ class RefreshSourceState:
             failure_kind=str(payload.get("failure_kind") or ""),
             current_run_id=str(payload.get("current_run_id") or ""),
             state=str(payload.get("state") or "due"),
+            check_status=str(payload.get("check_status") or "never_checked"),
+            upstream_revision=str(payload.get("upstream_revision") or ""),
+            applied_revision=str(payload.get("applied_revision") or ""),
+            last_checked_at=str(payload.get("last_checked_at") or ""),
+            check_interval_seconds=payload.get("check_interval_seconds", 0),
+            consecutive_failures=payload.get("consecutive_failures", 0),
+            failure_fingerprint=str(payload.get("failure_fingerprint") or ""),
         )
 
 

@@ -156,20 +156,9 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
                 self.champions = new_champions
 
             def refresh_ui() -> None:
-                degraded = [
-                    str(item)
-                    for item in (
-                        status.get("effective_degraded_sources")
-                        or status.get("degraded_sources")
-                        or []
-                    )
-                ]
-                # generation 短号只进日志：320px 单行状态栏放不下且用户不消费。
-                logger.info("数据已更新 %s，沿用来源: %s", generation_id, ", ".join(degraded) or "无")
-                if degraded:
-                    self._set_status("数据已更新 · 部分沿用旧源", UI_COLORS["warn"])
-                else:
-                    self._set_status("数据已更新", UI_COLORS["green"])
+                # 指针变化只负责重新载入；是否真的有业务/Catalog 变化以及来源
+                # 可用性，必须由 DataService refresh_status 的权威结果解释。
+                logger.info("已载入 DataService generation %s", generation_id)
                 self.update_ui(self.current_candidate_groups)
 
             self._run_on_ui_thread(refresh_ui)

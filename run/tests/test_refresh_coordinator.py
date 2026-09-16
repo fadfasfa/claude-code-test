@@ -16,7 +16,7 @@ import psutil
 import pytest
 
 from hextech.bootstrap.data_service_runtime import DataBuildResult
-from hextech.bootstrap.refresh_coordinator import CohortRefreshCoordinator, SOURCE_INTERVALS
+from support.legacy_refresh.refresh_coordinator import CohortRefreshCoordinator, SOURCE_INTERVALS
 from hextech.contracts import CatalogManifestV2, RefreshSourceState, SourceProvenance
 from hextech.infrastructure.processes import IsolatedProcessResult, run_isolated_process
 from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher
@@ -53,9 +53,9 @@ def test_production_game_probe_is_host_independent_and_conservative(monkeypatch:
     assert probe_production_game_in_progress() is False
 
 
-def test_apex_and_mayhem_share_72_hour_refresh_interval() -> None:
-    assert SOURCE_INTERVALS["apex"].total_seconds() == 72 * 60 * 60
-    assert SOURCE_INTERVALS["mayhem"].total_seconds() == 72 * 60 * 60
+def test_apex_and_mayhem_share_four_hour_check_interval() -> None:
+    assert SOURCE_INTERVALS["apex"].total_seconds() == 4 * 60 * 60
+    assert SOURCE_INTERVALS["mayhem"].total_seconds() == 4 * 60 * 60
 
 
 def test_core_scope_forces_only_core_and_keeps_due_optional_sources(tmp_path: Path) -> None:
@@ -124,7 +124,7 @@ def test_missing_source_pointer_still_honors_failure_backoff(tmp_path: Path) -> 
     assert coordinator._due("apex", state, {}, force=True) is True
 
 
-def test_expired_blitz_pointer_overrides_a_falsely_delayed_schedule(tmp_path: Path) -> None:
+def test_blitz_age_does_not_override_a_check_schedule(tmp_path: Path) -> None:
     now = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
     coordinator = CohortRefreshCoordinator(
         publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
@@ -140,7 +140,7 @@ def test_expired_blitz_pointer_overrides_a_falsely_delayed_schedule(tmp_path: Pa
         state="ready",
     )
 
-    assert coordinator._due("blitz", state, pointer, force=False) is True
+    assert coordinator._due("blitz", state, pointer, force=False) is False
 
 
 def test_recent_successful_check_of_stale_pointer_obeys_fixed_cadence(tmp_path: Path) -> None:
@@ -841,7 +841,7 @@ def test_invalid_checkpoint_catalog_hash_is_ignored(tmp_path: Path) -> None:
 
 
 def test_semantic_noop_returns_before_opening_promotion_journal(tmp_path, monkeypatch) -> None:
-    from hextech.bootstrap import refresh_promotion
+    from support.legacy_refresh import refresh_promotion
     from hextech.infrastructure.persistence.cohort_recovery import CohortCandidate
 
     runner = FakeWorkerRunner()
@@ -896,7 +896,7 @@ def test_semantic_noop_returns_before_opening_promotion_journal(tmp_path, monkey
 
 
 def test_refresh_promotion_allows_legacy_publisher_without_semantic_matcher() -> None:
-    from hextech.bootstrap.refresh_promotion import _matching_current_manifest
+    from support.legacy_refresh.refresh_promotion import _matching_current_manifest
 
     assert (
         _matching_current_manifest(
@@ -1196,19 +1196,19 @@ def test_expired_data_at_publishes_data_stale_without_degrading_cohort(tmp_path:
     assert status["degraded_sources"] == []
     for source in ("apex", "mayhem"):
         source_status = status["source_status"][source]
-        assert source_status["freshness"] == "fresh"
-        assert source_status["data_status"] == "data_stale"
-        assert source_status["data_reason"] == "source_data_expired"
-        assert source_status["stale_age_seconds"] == 96 * 3600
+        assert source_status["freshness"] == "unknown"
+        assert source_status["data_status"] == "fresh"
+        assert source_status["data_reason"] == "upstream_check_unknown"
+        assert source_status["stale_age_seconds"] == 0
     for source in ("catalog", "aramkit"):
         source_status = status["source_status"][source]
         assert source_status["data_status"] == "fresh"
-        assert source_status["data_reason"] == ""
+        assert source_status["check_status"] == "unknown"
         assert source_status["stale_age_seconds"] == 0
 
 
-def test_data_age_within_normal_cadence_stays_fresh(tmp_path: Path) -> None:
-    """真机口径：apex 53h（< 72h×1.25=90h）属正常节奏，不得标过期。"""
+def test_legacy_data_age_does_not_certify_latest_or_force_expiry(tmp_path: Path) -> None:
+    """旧代无检查证据时保持可用但最新性未知，不按53h年龄决定过期。"""
 
     runner = FakeWorkerRunner()
     publisher = DataSnapshotPublisher(tmp_path / "snapshots")
@@ -1229,12 +1229,13 @@ def test_data_age_within_normal_cadence_stays_fresh(tmp_path: Path) -> None:
     apex_status = status["source_status"]["apex"]
     assert apex_status["data_status"] == "fresh"
     assert apex_status["stale_age_seconds"] == 0
-    # aramkit 阈值 4h×1.25=5h，53h 已过期——同一时钟下正反两个方向都被覆盖。
-    assert status["source_status"]["aramkit"]["data_status"] == "data_stale"
+    # ARAMKit 同样不再受原5小时时效淘汰，且不能伪造最新状态。
+    assert status["source_status"]["aramkit"]["data_status"] == "fresh"
+    assert status["source_status"]["aramkit"]["freshness"] == "unknown"
 
 
-def test_saved_candidate_reuse_does_not_hide_expired_age(tmp_path: Path) -> None:
-    """回归：失败被已保存候选"洗白"后 freshness 仍为 fresh，但过期必须依旧可见。"""
+def test_saved_candidate_reuse_does_not_manufacture_upstream_check(tmp_path: Path) -> None:
+    """复用旧候选不能冒充已检查最新，上游年龄仍单独保留。"""
 
     runner = FakeWorkerRunner()
     publisher = DataSnapshotPublisher(tmp_path / "snapshots")
@@ -1266,11 +1267,11 @@ def test_saved_candidate_reuse_does_not_hide_expired_age(tmp_path: Path) -> None
     assert result["state"] == "ready"
     status = DataSnapshotClient(tmp_path / "snapshots").status(now=clock["now"])
     apex_status = status["source_status"]["apex"]
-    # 洗白路径让 freshness 保持 fresh，但 data_at 停在 2026-01-01 → 120h 过期必须暴露。
-    assert apex_status["freshness"] == "fresh"
-    assert apex_status["data_status"] == "data_stale"
-    assert apex_status["data_reason"] == "source_data_expired"
-    assert apex_status["stale_age_seconds"] == 120 * 3600
+    # 旧候选缺少可绑定检查证据，读取侧应显示未知，不按120h年龄伪造变化。
+    assert apex_status["freshness"] == "unknown"
+    assert apex_status["data_status"] == "fresh"
+    assert apex_status["data_reason"] == "upstream_check_unknown"
+    assert apex_status["stale_age_seconds"] == 0
 
 
 def test_recovered_apex_promotes_saved_mayhem_candidate_as_fresh_cohort(tmp_path: Path) -> None:
@@ -1309,8 +1310,8 @@ def test_recovered_apex_promotes_saved_mayhem_candidate_as_fresh_cohort(tmp_path
     assert result["state"] == "ready"
     assert current_apex["run_id"] == "apex-run-2"
     assert current_mayhem["run_id"] == "mayhem-run-1"
-    assert status["source_status"]["apex"]["freshness"] == "fresh"
-    assert status["source_status"]["mayhem"]["freshness"] == "fresh"
+    assert status["source_status"]["apex"]["freshness"] == "unknown"
+    assert status["source_status"]["mayhem"]["freshness"] == "unknown"
 
 
 def test_rejected_aramkit_candidate_keeps_last_good_and_marks_data_stale(tmp_path: Path) -> None:

@@ -6,10 +6,12 @@ from hextech.interfaces.desktop.app_shared import (
     UI_COLORS,
     _format_game_overlay_host_reason,
     _format_supervisor_game_overlay_status,
+    data_refresh_status_signature,
     export_user_diagnostics,
     format_data_age_suffix,
     format_data_refresh_status,
     logger,
+    log_data_refresh_result,
     save_ui_feature_flags,
     scaled,
     threading,
@@ -63,7 +65,7 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
         self.diagnostics_button = tk.Button(
             self.title_frame,
             text="诊断",
-            command=self._start_user_diagnostics_export,
+            command=self._show_diagnostics_menu,
             bg=UI_COLORS["surface_alt"],
             fg=UI_COLORS["muted"],
             activebackground=UI_COLORS["surface"],
@@ -312,6 +314,11 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             self.threads.append(thread)
         thread.start()
         return thread
+
+    def _show_diagnostics_menu(self) -> None:
+        from hextech.interfaces.desktop.selection_diagnostics_view import show_selection_diagnostics_menu
+        show_selection_diagnostics_menu(self.root, self.diagnostics_button,
+            export_diagnostics=self._start_user_diagnostics_export, set_status=self._set_status)
 
     def _start_user_diagnostics_export(self) -> None:
         """后台导出用户可发送的轻量诊断包，避免 UI 线程被 zip 写入阻塞。"""
@@ -608,16 +615,7 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             return
         text, color = format_data_refresh_status(status)
         state = str(status.get("state") or "idle")
-        signature = (
-            state,
-            str(status.get("scope") or ""),
-            str(status.get("phase") or ""),
-            str(status.get("reason_code") or ""),
-            str(status.get("generation_id") or ""),
-            tuple(str(item) for item in status.get("pending_sources") or []),
-            float(status.get("started_at") or 0.0),
-            float(status.get("completed_at") or 0.0),
-        )
+        signature = data_refresh_status_signature(status)
         previous = channels.get("refresh") or {}
         if previous.get("signature") != signature:
             at = _time.monotonic()
@@ -632,6 +630,7 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
                 "at": at,
                 "signature": signature,
             }
+            log_data_refresh_result(status)
         self._render_status_line()
 
     def _set_status(self, text, color):

@@ -239,25 +239,37 @@ def _load_production_pool_entries(
     *,
     hint_cache: Mapping[str, Any] | None,
 ) -> list[TemplateEntry]:
+    from hextech.modules.acquisition.hextech.production_pool import validate_production_augment_pool
+
+    validate_production_augment_pool(pool)
+    capability_catalog = pool.get("schema_version") == 2
     if str(pool.get("state") or "") != "ready":
         raise ValueError("production_pool_unavailable")
     identities = pool.get("identities")
     if not isinstance(identities, list) or not identities:
         raise ValueError("production_pool_unavailable")
     catalog_root = _production_catalog_root(pool)
+    if capability_catalog:
+        from hextech.infrastructure.persistence.production_pool_binding import validate_production_pool_assets
+
+        validate_production_pool_assets(pool, catalog_root)
     raw_templates: dict[str, dict[str, Any]] = {}
     for raw_identity in identities:
         if not isinstance(raw_identity, Mapping):
             continue
         canonical_id = str(raw_identity.get("canonical_id") or "").strip()
         name = _clean_text(raw_identity.get("name"))
-        if not canonical_id or not canonical_id.isdecimal() or not name:
+        if not canonical_id or not canonical_id.isdecimal() or (not name and not capability_catalog):
             raise ValueError("production_pool_identity_invalid")
         variants = raw_identity.get("visual_variants")
         images: list[Image.Image] = []
         filenames: list[str] = []
         for variant in variants if isinstance(variants, list) else ():
             if not isinstance(variant, Mapping):
+                continue
+            if capability_catalog and raw_identity.get("icon_ready") is not True:
+                continue
+            if capability_catalog and not variant.get("local_path"):
                 continue
             relative = str(variant.get("local_path") or "").replace("\\", "/").lstrip("/")
             path = (catalog_root / relative).resolve()
@@ -269,7 +281,7 @@ def _load_production_pool_entries(
                 filenames.append(path.name)
             except OSError as exc:
                 raise ValueError(f"production_pool_asset_unavailable:{canonical_id}") from exc
-        if not images:
+        if not images and not capability_catalog:
             raise ValueError(f"production_pool_asset_unavailable:{canonical_id}")
         hint_result = query_overlay_hint(hint_cache or {}, canonical_id)
         hint_value = hint_result.get("hint")
@@ -282,11 +294,28 @@ def _load_production_pool_entries(
             "source_icon_filenames": filenames,
             "priority": 1 if hint_result.get("ok") else 0,
         }
+    built = build_template_index(raw_templates)
+    if capability_catalog:
+        built_by_id = {entry.augment_id: entry for entry in built}
+        built = []
+        for identity in identities:
+            canonical_id = identity["canonical_id"]
+            entry = built_by_id.get(canonical_id) or TemplateEntry(
+                augment_id=canonical_id, name=identity["name"], tier=str(identity.get("tier") or "Unknown"),
+                summary="本地目录身份；可用识别能力见诊断",
+            )
+            if not identity["name_ready"]:
+                entry = replace(entry, name="", name_fingerprint=None, name_fingerprint_alt=None)
+            entry = replace(entry, requires_exact_ocr=True)
+            built.append(entry)
     entries = _attach_observed_name_exemplars(
-        build_template_index(raw_templates),
+        built,
         Path(ASSET_DIR),
         hint_cache=hint_cache,
         extra_aliases=[
+            (str(identity.get("augment_name_id") or ""), str(identity.get("canonical_id") or ""))
+            for identity in identities if isinstance(identity, Mapping)
+        ] + [
             (
                 str(variant.get("augment_name_id") or ""),
                 str(identity.get("canonical_id") or ""),
@@ -296,8 +325,26 @@ def _load_production_pool_entries(
             for variant in (identity.get("visual_variants") if isinstance(identity.get("visual_variants"), list) else [])
             if isinstance(variant, Mapping) and variant.get("augment_name_id")
         ],
-        strict=True,
+        strict=not capability_catalog,
     )
+    if capability_catalog:
+        # Packaged exemplars were manually collected against the packaged
+        # identity directory. A reused name/alias in a new canonical ID must
+        # not silently transfer that trust to the new ID.
+        baseline = load_augment_manifest_entries(Path(INDEX_DATA_DIR))
+        trusted = {
+            (str(item.get("cdragon_id") or ""), normalize_augment_name(item.get("name")),
+             str(item.get("augment_name_id") or "").casefold())
+            for item in baseline if isinstance(item, Mapping)
+        }
+        eligible = {
+            str(item["canonical_id"]) for item in identities
+            if (str(item["canonical_id"]), normalize_augment_name(item.get("name")),
+                str(item.get("augment_name_id") or "").casefold()) in trusted
+        }
+        entries = [entry if entry.augment_id in eligible else replace(
+            entry, observed_name_fingerprints=(), observed_name_variant_count=0,
+        ) for entry in entries]
     expected = {str(item.get("canonical_id") or "") for item in identities if isinstance(item, Mapping)}
     actual = {entry.augment_id for entry in entries}
     if expected != actual or len(entries) != len(expected):

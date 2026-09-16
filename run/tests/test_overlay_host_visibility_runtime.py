@@ -6,8 +6,15 @@ from __future__ import annotations
 
 import threading
 import unittest
-from pathlib import Path
 from unittest.mock import patch
+import pytest
+from support.host_input import PreloadedInputObserver
+
+
+@pytest.fixture(autouse=True)
+def preloaded_input(monkeypatch):
+    from hextech.interfaces.overlay import host_runner
+    monkeypatch.setattr(host_runner, "HostInputObserver", PreloadedInputObserver)
 
 
 
@@ -567,6 +574,7 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
         self.assertEqual(info.call_count, 3)
 
     def test_sync_event_visibility_writes_host_visibility_state(self):
+        from types import SimpleNamespace
         from hextech.interfaces.overlay import host
         from hextech.interfaces.overlay import host_sync
         from hextech.interfaces.overlay import host_visibility
@@ -595,12 +603,15 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
             "slots": [{"slot": 0, "state": "ready", "name": "强化 0"}],
         }
         writes = []
+        visibility["report_writer"] = SimpleNamespace(
+            submit_visibility=lambda payload: writes.append(("game_overlay_visibility.v1.json", payload)) or True,
+        )
 
         with (
             patch.object(host_sync, "_is_game_window_foreground", return_value=True),
             patch.object(host_sync, "is_window_renderable", return_value=True),
             patch.object(host_sync, "_refresh_gameflow_in_progress", return_value=True),
-            patch.object(host_visibility, "atomic_write_json", side_effect=lambda path, payload: writes.append((Path(path).name, payload))),
+            patch.object(host_visibility, "atomic_write_json", side_effect=AssertionError("Tk visibility write")),
         ):
             should_show = host._sync_event_visibility(
                 object(),
@@ -691,6 +702,8 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
         )
 
     def test_host_visibility_state_write_is_change_based(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
         from hextech.interfaces.overlay import host
         from hextech.interfaces.overlay import host_visibility
 
@@ -702,6 +715,8 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
             "game_foreground": False,
         }
         snapshot = {"source": {"selection_window_active": False}, "slots": []}
+        submit = Mock(return_value=True)
+        visibility["report_writer"] = SimpleNamespace(submit_visibility=submit)
 
         with patch.object(host_visibility, "atomic_write_json") as write_json:
             host._write_host_visibility_status(
@@ -726,7 +741,9 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
                 reason="game_window_missing",
             )
 
-        self.assertEqual(write_json.call_count, 2)
+        self.assertEqual(write_json.call_count, 0)
+        self.assertEqual(submit.call_count, 2)
+        self.assertEqual(visibility["last_visibility_status_enqueued_at"], 100.6)
 
 if __name__ == "__main__":
     unittest.main()

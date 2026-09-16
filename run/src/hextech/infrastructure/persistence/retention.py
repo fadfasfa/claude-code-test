@@ -30,6 +30,40 @@ def _mtime(path: Path) -> datetime:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
 
 
+def _unit_references(payload: Mapping[str, Any]) -> tuple[set[str], set[str]]:
+    """Retain explicit v3 unit roots even when a generation manifest is unavailable."""
+    runs: set[str] = set()
+    catalogs: set[str] = set()
+    units = payload.get("units")
+    if isinstance(units, Mapping):
+        for pointer in units.values():
+            if not isinstance(pointer, Mapping):
+                continue
+            source, run_id = str(pointer.get("source") or ""), str(pointer.get("run_id") or "")
+            if source in SOURCE_NAMES and run_id:
+                runs.add(f"{source}:{run_id}")
+            catalog = str(pointer.get("catalog_generation_id") or "")
+            if catalog:
+                catalogs.add(catalog)
+    components = payload.get("components")
+    if payload.get("schema_version") == 3 and isinstance(components, Mapping):
+        champions = components.get("champions")
+        descriptors = [components.get("ranking"), *(champions.values() if isinstance(champions, Mapping) else ())]
+        provenance = payload.get("source_files", [])
+        for descriptor in descriptors:
+            if not isinstance(descriptor, Mapping):
+                continue
+            run_id = str(descriptor.get("run_id") or "")
+            matches = [item for item in provenance if isinstance(item, Mapping) and item.get("run_id") == run_id] if isinstance(provenance, list) else []
+            if run_id:
+                sources = {str(item.get("source")) for item in matches} or {"aramkit"}
+                runs.update(f"{source}:{run_id}" for source in sources if source in SOURCE_NAMES)
+            catalog = str(descriptor.get("catalog_id") or "")
+            if catalog:
+                catalogs.add(catalog)
+    return runs, catalogs
+
+
 def _generation_provenance(root: Path, generation_id: str) -> tuple[set[str], set[str], set[str]]:
     source_runs: set[str] = set()
     catalog_ids: set[str] = set()
@@ -37,6 +71,9 @@ def _generation_provenance(root: Path, generation_id: str) -> tuple[set[str], se
     if not generation_id:
         return source_runs, catalog_ids, origin_generations
     manifest = _read_object(root / "snapshots" / "generations" / generation_id / "manifest.json")
+    unit_runs, unit_catalogs = _unit_references(manifest)
+    source_runs.update(unit_runs)
+    catalog_ids.update(unit_catalogs)
     for item in manifest.get("source_files", []):
         if not isinstance(item, Mapping):
             continue
@@ -80,6 +117,11 @@ def _journal_references(root: Path) -> tuple[set[str], set[str], set[str]]:
                     source_runs.add(f"{source}:{run_id}")
         generation = section.get("generation")
         if isinstance(generation, Mapping):
+            recovery = generation.get("recovery_point")
+            if isinstance(recovery, Mapping):
+                runs, catalogs = _unit_references(recovery)
+                source_runs.update(runs)
+                catalog_ids.update(catalogs)
             for pointer in (generation.get("current"), generation.get("previous")):
                 if not isinstance(pointer, Mapping):
                     continue
@@ -97,6 +139,9 @@ def _recovery_references(root: Path) -> tuple[set[str], set[str], set[str]]:
     catalog_ids: set[str] = set()
     generations: set[str] = set()
     generation_id = str(point.get("generation_id") or "")
+    unit_runs, unit_catalogs = _unit_references(point)
+    source_runs.update(unit_runs)
+    catalog_ids.update(unit_catalogs)
     if generation_id:
         generations.add(generation_id)
     pointers = point.get("pointers")
@@ -181,6 +226,9 @@ def protected_references(root: str | Path) -> dict[str, set[str]]:
     sidecar_status = _read_object(
         runtime_root / "state" / "game_overlay_sidecar_status.json"
     )
+    active_catalog = str(sidecar_status.get("recognition_catalog_id") or sidecar_status.get("catalog_generation_id") or "")
+    if active_catalog:
+        catalog_ids.add(active_catalog)
     active_vision_generation = str(
         sidecar_status.get("vision_pool_origin_generation_id")
         or sidecar_status.get("vision_pool_generation_id")

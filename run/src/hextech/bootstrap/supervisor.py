@@ -614,10 +614,13 @@ def main(argv: list[str] | None = None) -> int:
 
     from hextech.infrastructure.vision.sidecar import load_or_build_default_template_runtime
     from hextech.infrastructure.vision.template_runtime import vision_pool_fingerprint
+    from hextech.infrastructure.vision.data_source import prepare_catalog_vision_data, recognition_switch_blocked
 
     overlay_runtime = OverlayRuntimeManager(
         load_template_runtime_func=load_or_build_default_template_runtime,
         vision_pool_fingerprint_func=vision_pool_fingerprint,
+        prepare_data_func=prepare_catalog_vision_data,
+        game_active_probe=recognition_switch_blocked,
     )
     from hextech.modules.session.runtime_role_owner import publish_role_owner, remove_role_owner
 

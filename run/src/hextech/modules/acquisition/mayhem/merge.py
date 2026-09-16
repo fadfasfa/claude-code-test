@@ -484,6 +484,21 @@ def merge_mayhem_combos(
     manifest_payload = _load_augment_manifest(augment_manifest_path)
     core_payload = _load_core_data(core_data_path)
 
+    summary = merge_mayhem_payloads(apex_payload=apex_payload, mayhem_payload=mayhem_payload,
+                                    manifest_payload=manifest_payload, core_payload=core_payload)
+    if write_output and output_target is None:
+        raise ValueError("写入合并结果必须显式提供 output_path")
+    should_write = bool(write_output and output_target is not None and summary["normalized_items"])
+    if should_write:
+        _atomic_write_json(output_target, summary["merged_payload"])
+    return {**summary, "apex_path": str(apex_target or ""), "base_mode": base_mode,
+            "mayhem_raw_path": str(mayhem_raw_path), "output_path": str(output_target or ""),
+            "written": should_write}
+
+
+def merge_mayhem_payloads(*, apex_payload: dict[str, Any], mayhem_payload: dict[str, Any],
+                         manifest_payload: list[dict[str, Any]], core_payload: dict[str, Any]) -> dict[str, Any]:
+    """Pure same-Catalog merge; Apex may be empty when only Mayhem is available."""
     raw_items = mayhem_payload.get("items") if isinstance(mayhem_payload.get("items"), list) else []
     raw_rejects = mayhem_payload.get("rejects") if isinstance(mayhem_payload.get("rejects"), list) else []
 
@@ -551,18 +566,7 @@ def merge_mayhem_combos(
         added += 1
 
     reject_count = len(raw_rejects) + len(clean_rejects)
-    if write_output and output_target is None:
-        raise ValueError("写入合并结果必须显式提供 output_path")
-    should_write = bool(write_output and output_target is not None and normalized_items)
-    if should_write:
-        _atomic_write_json(output_target, cleaned)
-
     return {
-        "apex_path": str(apex_target or ""),
-        "base_mode": base_mode,
-        "mayhem_raw_path": str(mayhem_raw_path),
-        "output_path": str(output_target or ""),
-        "written": should_write,
         "removed_archived_apex_items": removed_archived_apex_items,
         "removed_existing_mayhem_items": removed_existing_mayhem_items,
         "apex_heroes": len(apex_payload),

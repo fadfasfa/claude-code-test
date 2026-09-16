@@ -40,9 +40,10 @@ def publish_runtime_fields(stats: Mapping[str, Any]) -> None:
     keys = ("vision_pool_generation_id", "vision_pool_origin_generation_id",
             "vision_pool_fingerprint", "observed_data_generation_id",
             "stats_generation_id", "data_generation_id",
-            "generation_roles", "catalog_generation_id", "production_pool_id",
+            "generation_roles", "catalog_generation_id", "recognition_catalog_id", "production_pool_id",
             "production_pool_state", "production_pool_count", "full_catalog_count",
-            "rank_identity_count", "matrix_rows", "excluded_reason_counts")
+            "rank_identity_count", "matrix_rows", "excluded_reason_counts",
+            "production_pool_schema_version", "identity_capabilities")
     runtime_fields.clear()
     runtime_fields.update({key: stats.get(key) for key in keys if key in stats})
 

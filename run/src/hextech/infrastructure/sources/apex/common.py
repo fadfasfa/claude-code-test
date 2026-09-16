@@ -214,6 +214,11 @@ class FetchedResource:
     source: str
     status_code: int = 200
     error: Optional[str] = None
+    not_modified: bool = False
+    from_cache: bool = False
+    body_sha256: str = ""
+    request_key: str = ""
+    response_headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

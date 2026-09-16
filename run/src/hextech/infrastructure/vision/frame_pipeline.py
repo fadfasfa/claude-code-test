@@ -10,10 +10,11 @@ from .runner_helpers import captured_frame_source, attach_completed_ocr_evidence
 def process_captured_frame(frame, templates, *, sidecar, tracker, ocr, binding, frame_id: int,
                           capture_started_at: float, captured_at: float, preset: str, min_confidence: float,
                           held_scene, mouse_observer, left_mouse_was_down: bool, minimum_captured_at: float,
-                          publish_scene) -> tuple[dict, dict, bool]:
+                          publish_scene, capture_suspected=None) -> tuple[dict, dict, bool]:
     metadata = captured_frame_source(frame, binding, frame_id, binding.dpi_scale)
     ticket = None
     scene_called = False
+    phase_timing: dict[str, float] = {}
     transition: dict[str, Any] | None = None
     left_down = sidecar.is_left_mouse_button_down()
 
@@ -37,25 +38,31 @@ def process_captured_frame(frame, templates, *, sidecar, tracker, ocr, binding, 
         raw["source"] = source
         raw["timing"] = {"observation_kind": "recognition", "capture_status": "captured",
             "capture_started_at": capture_started_at, "captured_at": captured_at,
-            "recognition_completed_at": time.time()}
+            "recognition_completed_at": time.time(), **phase_timing}
         raw["_negative_minimum_captured_at"] = minimum_captured_at
 
     def on_scene(light):
         nonlocal ticket, scene_called
         scene_called = True
+        phase_timing["scene_evaluated_at"] = time.time()
         attach(light)
+        if capture_suspected is not None:
+            capture_suspected(frame, light)
         ticket = tracker.begin_frame(light)
         if ticket is not None and ticket.event.get("source", {}).get("selection_window_active"):
+            phase_timing["scene_admitted_at"] = time.time()
             # 轻量反馈不进入完整识别统计分母，也不等待任何磁盘诊断。
             feedback = dict(ticket.event)
             feedback["source"] = {**metadata, **dict(ticket.event.get("source") or {})}
-            feedback["timing"] = {**light["timing"], "observation_kind": "scene_feedback"}
+            feedback["timing"] = {**light["timing"], **phase_timing, "observation_kind": "scene_feedback"}
             publish_scene(feedback)
 
     raw = sidecar.detect_overlay_choices(frame, templates, preset_name=preset, min_confidence=min_confidence,
         stable_fingerprints=stable_slot_fingerprints(tracker), ocr_shadow=ocr, held_scene=held_scene,
         capture_binding=binding, on_scene=on_scene)
     attach(raw)
+    if not scene_called and capture_suspected is not None:
+        capture_suspected(frame, raw)
     if raw["source"].get("reason") == "capture_roi_invalid":
         raw["timing"].update(observation_kind="capture_failure", capture_status="invalid_roi")
     outcomes = attach_completed_ocr_evidence(raw, ocr, tracker, session_id=binding.game_instance_id,
@@ -69,5 +76,8 @@ def process_captured_frame(frame, templates, *, sidecar, tracker, ocr, binding, 
         result = tracker.pause("duplicate_scene_frame")
     else:
         result = tracker.update(raw)
+    # Measuring the reducer does not change the captured-observation time used
+    # by temporal voting; identity completion is a separate diagnostic stage.
+    result.setdefault("timing", {}).update(phase_timing, identity_reduced_at=time.time())
     ocr.record_completed_outcomes(outcomes)
     return raw, result, left_down

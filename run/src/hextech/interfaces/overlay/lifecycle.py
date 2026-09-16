@@ -175,6 +175,7 @@ def _wait_for_sidecar_ready(
     bootstrap_path: Path | None = None,
     expected_token: str,
     expected_generation_id: str = "",
+    expected_catalog_id: str = "",
     expected_vision_pool_fingerprint: str = "",
     timeout_seconds: float = OVERLAY_SIDECAR_READY_TIMEOUT_SECONDS,
     cancel_event: threading.Event | None = None,
@@ -236,6 +237,9 @@ def _wait_for_sidecar_ready(
             or ""
         )
         ready_fingerprint = str(startup_profile.get("vision_pool_fingerprint") or "")
+        ready_catalog_id = str(startup_profile.get("recognition_catalog_id") or startup_profile.get("catalog_generation_id") or "")
+        if expected_catalog_id and ready_catalog_id != expected_catalog_id:
+            raise RuntimeError("Vision sidecar ready Catalog 与预热目标不一致")
         if expected_generation_id and ready_generation_id != expected_generation_id:
             raise RuntimeError("Vision sidecar readiness generation 不匹配")
         if expected_vision_pool_fingerprint and ready_fingerprint != expected_vision_pool_fingerprint:
@@ -243,6 +247,7 @@ def _wait_for_sidecar_ready(
         setattr(process, "_hextech_overlay_sidecar_generation", str(payload.get("generation") or ""))
         setattr(process, "_hextech_vision_origin_generation_id", ready_generation_id)
         setattr(process, "_hextech_vision_pool_fingerprint", ready_fingerprint)
+        setattr(process, "_hextech_recognition_catalog_id", ready_catalog_id)
         return
     if cancel_event is not None and cancel_event.is_set():
         raise SidecarStartCancelled("Vision sidecar 启动已取消")
@@ -339,6 +344,7 @@ def start_sidecar_process(
     readiness_timeout_seconds: float | None = None,
     cancel_event: threading.Event | None = None,
     target_generation_id: str = "",
+    target_catalog_id: str = "",
     expected_vision_pool_fingerprint: str = "",
 ) -> subprocess.Popen:
     command = [sys.executable]
@@ -367,6 +373,12 @@ def start_sidecar_process(
     env[OVERLAY_GENERATION_ENV] = generation
     if str(target_generation_id or ""):
         env[VISION_TARGET_GENERATION_ENV] = str(target_generation_id)
+    else:
+        env.pop(VISION_TARGET_GENERATION_ENV, None)
+    if target_catalog_id:
+        env["HEXTECH_VISION_TARGET_CATALOG_ID"] = target_catalog_id
+    else:
+        env.pop("HEXTECH_VISION_TARGET_CATALOG_ID", None)
     env[OVERLAY_EXIT_FILE_ENV] = str(exit_path)
     process = subprocess.Popen(
         command,
@@ -392,6 +404,7 @@ def start_sidecar_process(
                 bootstrap_path=bootstrap_path,
                 expected_token=ready_token,
                 expected_generation_id=str(target_generation_id or ""),
+                expected_catalog_id=target_catalog_id,
                 expected_vision_pool_fingerprint=str(expected_vision_pool_fingerprint or ""),
                 timeout_seconds=(
                     OVERLAY_SIDECAR_READY_TIMEOUT_SECONDS

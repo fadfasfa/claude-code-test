@@ -68,6 +68,9 @@ def prepared(monkeypatch):
 
     def create(source):
         worker = module.OverlayDataPreparation(source)
+        # 真 Host 启动先做 verified warmup；这些测试显式提供已知的首代，
+        # 不把首次选择后才打开的 current 当作截止前证据。
+        worker._bootstrap_view = View()
         worker._scope.resolve = lambda *_a, **_k: SimpleNamespace(
             to_status=lambda: {"status": "ready"}, semantic_key=lambda: ("stage", 1),
         )
@@ -236,6 +239,49 @@ def test_bootstrap_warmup_is_background_and_does_not_pin_a_game(prepared):
         threading.Event().wait(.005)
     assert worker.status()["bootstrap_generation_id"] == "generation-a"
     assert worker.status()["generation"] == {}
+
+
+def test_slow_preselection_upgrade_cannot_cross_candidate_cutoff_even_if_coalesced(prepared):
+    source = Source()
+    latest = [View()]
+    original = source.open_view
+    def open_current():
+        original()
+        return latest[0]
+    source.open_view = open_current
+    worker = prepared(source)
+    worker._scope.cache.load = lambda *_a: None
+    inactive = event()
+    inactive.update(active=False, visible=False)
+    inactive["source"].update(selection_window_active=False, scene_state="absent")
+    request(worker, inactive)
+    deadline = time.monotonic() + 2
+    while worker.status()["state"] != "prewarmed" and time.monotonic() < deadline:
+        threading.Event().wait(.005)
+    assert worker.status()["generation"]["generation_id"] == "generation-a"
+    newer = View()
+    newer.status = lambda: {"generation_id": "generation-b"}
+    latest[0] = newer
+    source.release.clear()
+    source.opened.clear()
+    worker._generation._last_latest_probe_at -= 2
+    inactive["source"]["selection_revision"] = 2
+    request(worker, inactive)
+    assert source.opened.wait(1)
+    candidate = event(revision=3)
+    candidate["source"].update(scene_state="candidate", scene_present=True, selection_window_active=False)
+    candidate["slots"] = [{"state": "detecting"}] * 3
+    request(worker, candidate)
+    # 单待处理队列可以跳过 candidate；请求入口的整局截止位不能被下一次 absent 清掉。
+    inactive["source"]["selection_revision"] = 4
+    request(worker, inactive)
+    source.release.set()
+    deadline = time.monotonic() + 2
+    while worker.status()["state"] != "prewarmed" and time.monotonic() < deadline:
+        threading.Event().wait(.005)
+    status = worker.status()["generation"]
+    assert status["generation_id"] == "generation-a"
+    assert status["stats_frozen"] is True
 
 
 def test_inactive_prewarm_is_complete_without_visible_result(prepared):

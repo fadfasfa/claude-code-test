@@ -495,3 +495,64 @@ def test_expected_runtime_identity_must_be_explicit_and_pid_must_match(tmp_path:
     assert wrong_pid["qualified"] is False
     assert "expected_sidecar_pid_truth_mismatch" in wrong_pid["qualification_errors"]
     assert wrong_pid["passed"] is False
+
+
+@pytest.mark.parametrize("scene", ["candidate", "body_shard"])
+def test_human_span_keeps_self_rejected_first_frame_in_latency(tmp_path: Path, scene: str) -> None:
+    early = _timeline_row(1, captured_at=10.0)
+    early.update(scene_state=scene, selection_window_active=False)
+    for slot in early["slots"]:
+        slot["state"] = "detecting"
+    timeline = _write_timeline(tmp_path / "timeline.jsonl", [early, _timeline_row(2, captured_at=12.0)])
+    payload = _truth(tmp_path, [("one", 1, 10.0, "one.png"), ("two", 2, 12.0, "two.png")])
+    report = _report(timeline, _write_json(tmp_path / "truth.json", payload))
+    assert report["qualified"] is True
+    assert report["eligible_timeline_frame_count"] == 2
+    assert report["qualified_frame_count"] == 2
+    assert report["all_three_correct"]["samples_ms"] == [2080.0]
+    assert report["passed"] is False
+
+
+@pytest.mark.parametrize("omission", ["image", "timeline", "not_captured", "end_image", "middle_image"])
+def test_labelled_span_missing_coverage_cannot_pass(tmp_path: Path, omission: str) -> None:
+    rows = [_timeline_row(seq, captured_at=10.0 + seq / 10) for seq in (1, 2, 3)]
+    rows[0].update(scene_state="candidate", selection_window_active=False)
+    payload = _truth(tmp_path, [(str(seq), seq, 10.0 + seq / 10, f"{seq}.png") for seq in (1, 2, 3)])
+    if omission == "timeline":
+        rows.pop(0)
+    elif omission == "not_captured":
+        rows[0]["capture_status"] = "missed"
+    else:
+        payload["frames"].pop({"image": 0, "end_image": 2, "middle_image": 1}[omission])
+    report = _report(_write_timeline(tmp_path / "timeline.jsonl", rows), _write_json(tmp_path / "truth.json", payload))
+    assert report["passed"] is False
+    assert report["all_three_correct"]["passed"] is False
+
+
+def test_candidate_only_span_is_unconfirmed_not_excluded(tmp_path: Path) -> None:
+    row = _timeline_row(1, captured_at=10.0)
+    row.update(scene_state="candidate", selection_window_active=False)
+    for slot in row["slots"]:
+        slot["state"] = "detecting"
+    payload = _truth(tmp_path, [("one", 1, 10.0, "one.png")])
+    report = _report(_write_timeline(tmp_path / "timeline.jsonl", [row]), _write_json(tmp_path / "truth.json", payload))
+    assert report["qualified_frame_count"] == 1
+    assert report["all_three_correct"]["expected_state_count"] == 1
+    assert report["unconfirmed_timeouts"]["count"] == 3
+    assert report["passed"] is False
+
+
+@pytest.mark.parametrize("human_type", ["hextech", "body_shard", "non_hextech"])
+def test_wrong_ready_in_self_rejected_scene_still_counts(tmp_path: Path, human_type: str) -> None:
+    row = _timeline_row(1, captured_at=10.0, ids=("wrong", "b", "c"))
+    row.update(selection_type="body_shard", scene_state="body_shard", selection_window_active=False)
+    payload = _truth(tmp_path, [("one", 1, 10.0, "one.png")])
+    for span in payload["truth_spans"]:
+        span["selection_type"] = human_type
+        if human_type != "hextech":
+            span.pop("augment_id")
+            span.pop("name")
+    report = _report(_write_timeline(tmp_path / "timeline.jsonl", [row]), _write_json(tmp_path / "truth.json", payload))
+    assert report["qualified"] is True
+    assert report["false_ready"]["count"] == (1 if human_type == "hextech" else 3)
+    assert report["passed"] is False
