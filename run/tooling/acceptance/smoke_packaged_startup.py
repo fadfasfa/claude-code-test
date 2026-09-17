@@ -987,6 +987,12 @@ def _sidecar_pool_smoke(
     cohort = bundle_manifest.get("cohort_seed")
     if not isinstance(cohort, dict) or not cohort:
         return {"state": "not_applicable"}
+    from tooling.build.recognition_contract import recognition_pool_contract
+
+    try:
+        recognition = recognition_pool_contract(runtime_root, cohort)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise SmokeFailure(f"Sidecar recognition Catalog 无效：{type(exc).__name__}: {exc}") from exc
     status_path = runtime_root / "state" / "game_overlay_sidecar_status.json"
     status_path.unlink(missing_ok=True)
     env = dict(child_env)
@@ -1014,7 +1020,7 @@ def _sidecar_pool_smoke(
         raise SmokeFailure(f"Sidecar pool smoke 状态不可读：{type(exc).__name__}") from exc
     if not isinstance(status, dict):
         raise SmokeFailure("Sidecar pool smoke 状态必须是对象")
-    expected_pool_count = int(cohort.get("production_pool_count") or 0)
+    expected_pool_count = int(recognition["production_pool_count"])
     from hextech.modules.acquisition.hextech.production_pool import production_capability_status_valid
 
     matrix_rows = status.get("matrix_rows")
@@ -1031,18 +1037,14 @@ def _sidecar_pool_smoke(
         "generation_roles": str(status.get("stats_generation_id") or "") == ""
         and isinstance(status.get("generation_roles"), dict),
         "catalog_generation": str(status.get("catalog_generation_id") or "")
-        == str(cohort.get("catalog_generation_id") or ""),
+        == recognition["catalog_generation_id"],
         "recognition_catalog": str(status.get("recognition_catalog_id") or "")
-        == str(
-            cohort.get("recognition_catalog_generation_id")
-            or cohort.get("catalog_generation_id")
-            or ""
-        ),
-        "pool_id": str(status.get("production_pool_id") or "") == str(cohort.get("production_pool_id") or ""),
+        == recognition["recognition_catalog_id"],
+        "pool_id": str(status.get("production_pool_id") or "") == recognition["production_pool_id"],
         "pool_state": status.get("production_pool_state") == "ready",
         "pool_count": int(status.get("production_pool_count") or 0) == expected_pool_count,
         "full_catalog_count": int(status.get("full_catalog_count") or 0)
-        == int(cohort.get("full_catalog_count") or 0),
+        == recognition["full_catalog_count"],
         "rank_identity_count": int(status.get("rank_identity_count") or 0) == expected_pool_count,
         "matrix_rows": production_capability_status_valid(status, expected_pool_count)
         if status.get("production_pool_schema_version") == 2 else isinstance(matrix_rows, dict)

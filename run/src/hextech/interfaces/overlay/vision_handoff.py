@@ -133,7 +133,9 @@ class VisionHandoffMixin:
             "vision_pool_origin_generation_id": str(self.active_vision_origin_generation_id or ""),
             "recognition_catalog_id": str(self.active_recognition_catalog_id or ""),
         }
-        if not all(identity.values()):
+        # Catalog-only recognition is valid without a statistics snapshot.
+        # Recovery must pin the active Catalog and matrix, not require Stats provenance.
+        if not identity["recognition_catalog_id"] or not identity["vision_pool_fingerprint"]:
             self.last_start_failure_kind = "sidecar_recovery_identity_missing"
             self._mark(
                 status="error",

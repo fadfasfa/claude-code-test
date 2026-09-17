@@ -969,7 +969,14 @@ def _runtime_build_errors(
                 f"expected={expected_debug_dump_enabled} actual={sidecar.get('debug_dump_enabled')}"
             )
         if effective_cohort is not None:
-            expected_pool_count = int(effective_cohort.get("production_pool_count") or 0)
+            from tooling.build.recognition_contract import recognition_pool_contract
+
+            try:
+                recognition = recognition_pool_contract(root, effective_cohort)
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                errors.append(f"Sidecar recognition Catalog 无效：{type(exc).__name__}: {exc}")
+                recognition = {}
+            expected_pool_count = int(recognition.get("production_pool_count") or 0)
             accepted_generation_ids = {
                 str(effective_cohort.get("generation_id") or ""),
                 str((expected_cohort or {}).get("generation_id") or ""),
@@ -985,18 +992,8 @@ def _runtime_build_errors(
                         f"actual={actual_generation}"
                     )
             expected_fields = {
-                "catalog_generation_id": str(
-                    effective_cohort.get("catalog_generation_id") or ""
-                ),
-                "recognition_catalog_id": str(
-                    effective_cohort.get("recognition_catalog_generation_id")
-                    or effective_cohort.get("catalog_generation_id")
-                    or ""
-                ),
-                "production_pool_id": str(effective_cohort.get("production_pool_id") or ""),
+                **recognition,
                 "production_pool_state": "ready",
-                "production_pool_count": expected_pool_count,
-                "full_catalog_count": int(effective_cohort.get("full_catalog_count") or 0),
                 "rank_identity_count": expected_pool_count,
             }
             for field, expected in expected_fields.items():

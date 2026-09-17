@@ -121,7 +121,7 @@ def test_pending_catalog_does_not_block_old_sidecar_recovery_during_game():
 
 
 @pytest.mark.parametrize("missing_field", [
-    "active_vision_pool_fingerprint", "active_recognition_catalog_id", "active_vision_origin_generation_id",
+    "active_vision_pool_fingerprint", "active_recognition_catalog_id",
 ])
 def test_pending_catalog_recovery_without_old_identity_fails_closed(missing_field):
     from support.process_fakes import FakeProcess
@@ -151,6 +151,104 @@ def test_pending_catalog_recovery_without_old_identity_fails_closed(missing_fiel
     assert result["last_start_failure_kind"] == "sidecar_recovery_identity_missing"
     assert result["pending_recognition_catalog_id"] == "new-catalog"
     assert not old.stopped
+
+
+@pytest.mark.parametrize("missing_field", [
+    "", "active_vision_pool_fingerprint", "active_recognition_catalog_id",
+])
+def test_catalog_only_runtime_recovers_pinned_catalog_during_game(monkeypatch, tmp_path, missing_field):
+    from hextech.infrastructure.vision import template_build
+    from hextech.infrastructure.vision.template_runtime import (
+        load_or_build_default_template_runtime, template_runtime_resource_signature, vision_pool_fingerprint,
+    )
+    from hextech.modules.data.ports import paths
+    from support.process_fakes import FakeProcess
+    from test_cohort_seed import _write_catalog
+    from test_cohort_v3 import _publish_independent_recognition_catalog
+
+    runtime_root = tmp_path / "runtime"
+    _, pointer_a, _ = _write_catalog(runtime_root)
+    monkeypatch.setattr(paths, "RUNTIME_DATA_DIR", runtime_root)
+    monkeypatch.setattr(template_build, "ASSET_DIR", tmp_path / "assets")
+    assert not (runtime_root / "snapshots").exists()
+    signature = template_runtime_resource_signature(tmp_path / "resources")
+
+    def build(**kwargs):
+        return load_or_build_default_template_runtime(
+            cache_file=tmp_path / "templates.npz", resource_signature=signature, **kwargs,
+        )
+
+    starts = []
+    playing = [False]
+
+    def start_sidecar(**kwargs):
+        starts.append(dict(kwargs))
+        # Exercise the pinned Catalog reader and actual matrix build on restart too.
+        hint_cache = vision_source.CatalogVisionDataSource(
+            catalog_id=kwargs["target_catalog_id"], generation_id=kwargs["target_generation_id"],
+        ).read_hint_cache()
+        built = build(hint_cache=hint_cache, require_production_pool=True)
+        assert built.stats["vision_pool_fingerprint"] == kwargs["expected_vision_pool_fingerprint"]
+        process = FakeProcess(2234 + len(starts))
+        process._hextech_recognition_catalog_id = built.stats["recognition_catalog_id"]
+        process._hextech_vision_pool_fingerprint = built.stats["vision_pool_fingerprint"]
+        process._hextech_vision_origin_generation_id = built.stats["vision_pool_origin_generation_id"]
+        return process
+
+    runtime = OverlayRuntimeManager(
+        prepare_data_func=vision_source.prepare_catalog_vision_data,
+        load_template_runtime_func=build,
+        vision_pool_fingerprint_func=lambda hint: vision_pool_fingerprint(hint, resource_signature=signature),
+        game_active_probe=lambda: playing[0], start_context_poller_func=None,
+        write_inactive_func=lambda: None, start_sidecar_func=start_sidecar,
+    )
+    runtime.host_process = FakeProcess(1235)
+    runtime._prewarm_templates()
+    assert runtime.cache_status == "ready", runtime.last_error
+    assert runtime.cache_stats["production_pool_state"] == "ready"
+    assert runtime.cache_stats["rank_identity_count"] > 0
+    assert runtime.cache_stats["vision_pool_origin_generation_id"] == ""
+    assert runtime.set_enabled(True)["status"] == "running"
+    catalog_a = pointer_a["catalog_generation_id"]
+    fingerprint_a = runtime.active_vision_pool_fingerprint
+    hints_a = runtime._active_vision_hint_cache
+    assert runtime.active_recognition_catalog_id == catalog_a
+    assert runtime.active_vision_origin_generation_id == ""
+    assert fingerprint_a
+
+    playing[0] = True
+    pointer_b = _publish_independent_recognition_catalog(runtime_root)
+    assert runtime.observe_data_generation()["state"] == "deferred_game_active"
+    catalog_b = pointer_b["catalog_generation_id"]
+    assert runtime.pending_recognition_catalog_id == catalog_b != catalog_a
+    # A newer prewarm must not replace the identity recorded from the active process.
+    runtime._prewarm_templates()
+    assert runtime.cache_stats["recognition_catalog_id"] == catalog_b
+    assert runtime.cache_stats["vision_pool_fingerprint"] != fingerprint_a
+    old = runtime.sidecar_process
+    runtime.status, runtime.phase = "starting", "sidecar_restart"
+    if missing_field:
+        setattr(runtime, missing_field, "")
+    monkeypatch.setattr(runtime, "_prepare_data_func", lambda: pytest.fail("recovery read current Catalog"))
+    result = runtime.set_enabled(True)
+    assert result["pending_recognition_catalog_id"] == catalog_b
+    assert runtime._active_vision_hint_cache == hints_a
+    assert not (runtime_root / "snapshots").exists()
+    if missing_field:
+        assert result["last_start_failure_kind"] == "sidecar_recovery_identity_missing"
+        assert result["phase"] == "sidecar_recovery_blocked"
+        assert len(starts) == 1
+        assert not old.stopped
+    else:
+        assert result["status"] == "running"
+        assert result["active_recognition_catalog_id"] == catalog_a
+        assert result["active_vision_pool_fingerprint"] == fingerprint_a
+        assert result["active_vision_origin_generation_id"] == ""
+        assert len(starts) == 2
+        assert starts[-1]["target_catalog_id"] == catalog_a
+        assert starts[-1]["target_generation_id"] == ""
+        assert starts[-1]["expected_vision_pool_fingerprint"] == fingerprint_a
+        assert old.stopped
 
 
 @pytest.mark.parametrize("old_catalog", ["old-catalog", ""])

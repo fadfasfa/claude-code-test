@@ -3,7 +3,9 @@
 ## 四项审查修复
 
 - 局中 pending Catalog 仅禁止采用新识别矩阵，不阻止旧 Sidecar 恢复。恢复要求旧 Catalog、
-  fingerprint、origin generation 三字段齐全；缺失明确失败，Supervisor 不再把失败标成恢复成功。
+  fingerprint 齐全；统计来源 origin generation 可合法为空（Catalog-only 路径）。
+  `802d126`曾错误要求三字段齐全，复审后纠正；缺Catalog/fingerprint仍明确失败。
+  Supervisor 不再把失败标成恢复成功。
 - 新 ranking 使用投影器同一验证路径生成英雄集合，锁内排除已移出的旧英雄贡献，发布失败恢复旧集合。
 - 成功 commit 后登记保留治理 pending，Core/Optional/worker 均空闲才执行。current、previous、
   journal、recovery、Host冻结代、Sidecar识别引用和在途候选闭包均保护；坏引用、reparse/junction、
@@ -19,6 +21,33 @@
 的Panel实际位于普通blocker之前第328个窗口。透明自有窗口复现证明Panel为topmost且位于上方。
 现改为按当前顶层句柄快照给出有限预算，再逐个GW_HWNDPREV验证顺序；循环、句柄缺失、快照增长
 超预算仍报错。未修改生产前台租约、置顶策略或隐藏门；补402窗口正负用例及原生异常回归。
+
+## 802d126 复审：两个 P2 的生产链路回归
+
+此前Sidecar身份解释有误：独立识别采用Catalog B后，生产`CatalogVisionDataSource`给模板构建的
+production pool也绑定B，所以状态中的`catalog_generation_id`和`recognition_catalog_id`都是B。
+统计snapshot的Catalog A、pool ID/count只用于其完整闭包验证，不能再约束Sidecar矩阵。
+
+本次smoke/deploy共用识别验收函数：先校验当前B的pointer、manifest与Catalog文件，再用生产
+`_catalog_production_pool`计算预期pool ID/count/full_catalog_count，并以B的数量校验矩阵能力。
+旧单Catalog seed缺独立识别字段时沿用旧合同；统计闭包的完整校验不放宽。
+Catalog正文损坏转换为明确验收失败，不能穿透错误收集，更不能启动不可信Sidecar。
+
+新增fixture实际创建统计A与识别B（pool ID及身份数量均不同），调用生产Catalog读取、模板矩阵构建和
+状态生成函数后送入smoke/deploy。只替代子进程外壳与启动session凭据，不手填Catalog/pool身份。
+同一fixture在内存中换回`802d126`的原smoke/deploy函数，两项均失败；新函数通过。
+错误Catalog、旧pool ID、旧数量、矩阵缺失、pointer及正文漂移分别拒绝。
+
+Catalog-only测试从不存在统计snapshot的runtime开始，真实Catalog读取与模板构建，经首次启动记录A，
+随后发布B并真实预热B，再验证局中仍用固定A及旧fingerprint重建，origin保持空。
+缺Catalog或fingerprint仍fail closed；未修改OCR阈值、统计口径或布局。
+
+本次复审修复最终验证：`python -m pytest -q --junitxml=.artifacts/refactor/pr98-review/pytest-p2-final.xml`
+为 **2485 passed，19 subtests passed**；Ruff通过，Pyright 0错误/1个既有`__all__`警告，diff-check通过。
+测试覆盖进程替身下的真实Catalog读取/模板构建，不替代重新打包、部署或游戏内呈现验收。
+修改8个文件：`vision_handoff.py`、`tooling/build/deploy.py`、新`tooling/build/recognition_contract.py`、
+`tooling/acceptance/smoke_packaged_startup.py`；`tests/test_package_deployment.py`、
+`tests/test_recognition_catalog_handoff.py`、新`tests/test_sidecar_recognition_acceptance.py`，以及本文档。
 
 ## 统计文字碰框（2026-09-16 样本）
 
@@ -72,11 +101,9 @@ rf10日志中20:40:04.290进入detecting，04.614已有两槽READY，12.200三�
 性能验收仍需捕获+识别P95≤180ms、首个完整三槽呈现P95≤900ms，以及至少20个独立事件
 event→present P95≤100ms。缺帧、失败和截断不得排除后宣称通过；本次自动回归不替代真机门。
 
-## 发布范围
+## 802d126 自动验证结果（历史）
 
-## 本轮自动验证结果
-
-2026-09-17 最终源码回归（未运行真实网络刷新或重新打包）：
+2026-09-17 `802d126`源码回归（不覆盖后续P2补充；未运行真实网络刷新或重新打包）：
 
 - `python -m pytest -q --junitxml=.artifacts/refactor/pr98-review/pytest-final.xml`：
   **2475 passed，19 subtests passed**；JUnit合计2494项，0失败、0错误、0跳过。
