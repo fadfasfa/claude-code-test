@@ -31,8 +31,11 @@ BUTTON_MIN_BLUE_PIXELS = 80
 BUTTON_MIN_BLUE_RATIO = 0.15
 BUTTON_MIN_SOLIDITY = 0.42
 BUTTON_SCAN_DOWNSAMPLE = 4
-CARD_MIN_BORDER_GOLD_RATIO = 0.025
 CARD_PANEL_SCORE_DOWNSAMPLE = 2
+CARD_BORDER_MIN_CONTRAST = 24.0
+CARD_BORDER_MIN_LUMINANCE = 75.0
+CARD_BORDER_SIDE_COVERAGE = 0.65
+CARD_BORDER_END_COVERAGE = 0.50
 
 CARD_PANELS_16_10 = (
     (0.198, 0.175, 0.384, 0.655),
@@ -294,6 +297,16 @@ def _button_transform(
     )
 
 
+def _continuous_coverage(values: np.ndarray) -> float:
+    """Longest supported edge run; scattered highlights are not a card border."""
+    if not values.size:
+        return 0.0
+    padded = np.concatenate(([False], values, [False])).astype(np.int8)
+    changes = np.diff(padded)
+    starts, ends = np.flatnonzero(changes == 1), np.flatnonzero(changes == -1)
+    return float(np.max(ends - starts) / values.size) if starts.size else 0.0
+
+
 def _panel_score(image: Image.Image, box: tuple[int, int, int, int]) -> float:
     crop = image.crop(box).convert("RGB")
     if min(crop.size) >= CARD_PANEL_SCORE_DOWNSAMPLE * 16:
@@ -315,28 +328,47 @@ def _panel_score(image: Image.Image, box: tuple[int, int, int, int]) -> float:
     high = interior.max(axis=2)
     dark_ratio = float(np.mean(high < 95)) if high.size else 0.0
 
-    edge = max(2, int(min(width, height) * 0.045))
-    border_mask = np.zeros((height, width), dtype=bool)
-    border_mask[:edge, :] = True
-    border_mask[-edge:, :] = True
-    border_mask[:, :edge] = True
-    border_mask[:, -edge:] = True
-    red = panel[:, :, 0].astype(np.int16)
-    green = panel[:, :, 1].astype(np.int16)
-    blue = panel[:, :, 2].astype(np.int16)
-    gold = (
-        (red >= 85)
-        & (green >= 65)
-        & (red >= blue + 12)
-        & (green >= blue - 10)
-    )
-    border_gold_ratio = float(np.mean(gold[border_mask])) if np.any(border_mask) else 0.0
-    # 纯暗背景在旧评分中仅凭 dark_ratio 就能达到通过线；卡面必须同时有可见边框。
-    if border_gold_ratio < CARD_MIN_BORDER_GOLD_RATIO:
+    # Silver/prismatic borders are legitimate. Require spatially continuous,
+    # contrasting side edges and an end edge, never a particular border hue.
+    channels = panel.astype(np.int16)
+    luminance = (channels[:, :, 0] + 2 * channels[:, :, 1] + channels[:, :, 2]) / 4.0
+    inner_luminance = luminance[inset_y:height-inset_y, inset_x:width-inset_x]
+    if not inner_luminance.size or dark_ratio < 0.45:
+        return 0.0
+    threshold = max(CARD_BORDER_MIN_LUMINANCE, float(np.median(inner_luminance)) + CARD_BORDER_MIN_CONTRAST)
+    bright = luminance >= threshold
+    edge_x, edge_y = max(2, int(width * 0.10)), max(2, int(height * 0.08))
+    left = _continuous_coverage(np.any(bright[inset_y:height-inset_y, :edge_x], axis=1))
+    right = _continuous_coverage(np.any(bright[inset_y:height-inset_y, -edge_x:], axis=1))
+    top = _continuous_coverage(np.any(bright[:edge_y, inset_x:width-inset_x], axis=0))
+    bottom = _continuous_coverage(np.any(bright[-edge_y:, inset_x:width-inset_x], axis=0))
+    if min(left, right) < CARD_BORDER_SIDE_COVERAGE or max(top, bottom) < CARD_BORDER_END_COVERAGE:
         return 0.0
     dark_score = min(1.0, dark_ratio / 0.62)
-    border_score = min(1.0, border_gold_ratio / 0.22)
+    border_score = min(left, right, max(top, bottom))
     return 0.62 * dark_score + 0.38 * border_score
+
+
+def _aligned_panel_score(image: Image.Image, definition: Sequence[float], transform: LayoutTransform) -> float:
+    """Bounded in-slot alignment, not a new global layout or OCR transform.
+
+    Button fill width can contract the estimated frame while the card centres
+    shift inward. Probe only three positions, retaining the original fast path.
+    A sparse capture must never use its black padding as structural evidence.
+    """
+    box = apply_transform(definition, image.size, transform)
+    offset = round((box[2] - box[0]) * 0.12)
+    x, y = image.info.get("hextech_roi_origin", (0, 0))
+    w, h = image.info.get("hextech_roi_size", image.size)
+    best = 0.0
+    for shift in (0, offset, -offset):
+        candidate = (box[0]+shift, box[1], box[2]+shift, box[3])
+        if not (x <= candidate[0] < candidate[2] <= x+w and y <= candidate[1] < candidate[3] <= y+h):
+            continue
+        best = max(best, _panel_score(image, candidate))
+        if best >= 0.58:
+            break
+    return best
 
 
 def detect_selection_scene(image: Image.Image, *, layout_id: str) -> SceneObservation:
@@ -346,7 +378,7 @@ def detect_selection_scene(image: Image.Image, *, layout_id: str) -> SceneObserv
     panel_defs = pick_card_panels(image.size)
     if button_box is None:
         transform = LayoutTransform()
-        panel_scores = tuple(_panel_score(image, apply_transform(box, image.size, transform)) for box in panel_defs)
+        panel_scores = tuple(_aligned_panel_score(image, box, transform) for box in panel_defs)
         return SceneObservation(
             present=False,
             scene_state="absent",
@@ -361,7 +393,7 @@ def detect_selection_scene(image: Image.Image, *, layout_id: str) -> SceneObserv
         )
 
     transform = _button_transform(button_box, image.size)
-    panel_scores = tuple(_panel_score(image, apply_transform(box, image.size, transform)) for box in panel_defs)
+    panel_scores = tuple(_aligned_panel_score(image, box, transform) for box in panel_defs)
     passed_panels = sum(score >= 0.58 for score in panel_scores)
     panel_mean = sum(panel_scores) / 3.0
     score = min(1.0, 0.42 * min(1.0, blue_ratio / 0.45) + 0.58 * panel_mean)

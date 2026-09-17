@@ -25,6 +25,7 @@ from PIL import Image
 from hextech.infrastructure.vision.capture_geometry import capture_regions_valid
 from hextech.infrastructure.vision.sidecar_common import LayoutTransform, SLOT_COUNT, apply_transform
 from hextech.infrastructure.vision.sidecar_scene_geometry import resolve_roi_preset
+from hextech.modules.session.selection_diagnostics import _reject_reparse_path as _reject_reparse_path
 
 
 DIAGNOSTIC_CAPTURE_SCHEMA_VERSION = 1
@@ -35,14 +36,6 @@ MAX_SESSION_BYTES = 64 * 1024 * 1024
 _MANIFEST_RESERVE_MAX = 64 * 1024
 
 
-def _reject_reparse_path(path: Path) -> None:
-    for component in (path, *path.parents):
-        try:
-            attributes = component.lstat()
-        except FileNotFoundError:
-            continue
-        if component.is_symlink() or getattr(attributes, "st_file_attributes", 0) & 0x400:
-            raise ValueError("diagnostic_reparse_path_rejected")
 _FULL_CLIENT_MODES = frozenset({"client_full", "client_full_recovery"})
 _TERMINAL_REASONS = frozenset(
     {

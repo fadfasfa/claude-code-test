@@ -334,7 +334,7 @@ def test_aoc_and_boe_use_same_card_relative_typography_despite_dpi() -> None:
     }
 
 
-def test_aoc_and_boe_keep_panel_geometry_within_one_percent_of_card_frame() -> None:
+def test_measured_and_legacy_profiles_keep_stats_inside_their_own_card_frame() -> None:
     layouts = [
         resolve_overlay_layout((2560, 1440), synergy_heights=[135] * 3),
         resolve_overlay_layout((2560, 1600), synergy_heights=[135] * 3),
@@ -356,7 +356,9 @@ def test_aoc_and_boe_keep_panel_geometry_within_one_percent_of_card_frame() -> N
             )
         )
 
-    assert all(abs(left - right) <= 0.01 for left, right in zip(*normalized, strict=True))
+    # Different aspect ratios cannot inherit a calibration from a single 1440p screenshot.
+    for left, top, height, gap in normalized:
+        assert 0 < left < .5 and 0 < top < top + height < 1 and gap > 0
 
 
 def test_recognition_transform_never_moves_display_geometry() -> None:
@@ -457,7 +459,8 @@ def test_fixed_layout_matrix_ignores_dpi_text_and_recognition_noise(viewport, ex
         assert layout == baseline
         assert fonts == sizes
         for call, box in zip([c for c in canvas.text_calls if str(c.get("text", "")).startswith("胜率")], layout["stat_boxes"]):
-            assert canvas_text_metrics(canvas).width(call["text"], abs(call["font"][1]), True) <= box[2] - box[0] - 8
+            assert max(canvas_text_metrics(canvas).width(line, abs(call["font"][1]), True)
+                       for line in call["text"].splitlines()) <= box[2] - box[0] - 8
 
 
 @pytest.mark.parametrize("viewport", [(1920, 1080), (1920, 1200), (2560, 1440), (2560, 1600)])
@@ -508,6 +511,42 @@ def test_production_tk_stats_restore_reference_width_without_content_driven_font
         assert all(abs(font.measure(text) - ink_width) <= 4 for text, ink_width in zip(reference_texts, (357, 338, 338)))
         assert font.measure("胜率100.0%·出场100.0%") + 2 <= min(b[2] - b[0] for b in layout["stat_boxes"]) - 12
         assert all(abs((b[1] + b[3]) / 2 - 952) <= 1 for b in layout["stat_boxes"])
+    finally:
+        root.destroy()
+
+
+def test_native_tk_1440_stats_clear_measured_frame_without_shrinking(request) -> None:
+    from native_tk_runner import run_native_tk_case
+    if run_native_tk_case(request.node.nodeid):
+        return
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        canvas = tk.Canvas(root)
+        for dpi in (1.0, 1.25, 1.5, 1.75, 2.0):
+            root.tk.call("tk", "scaling", dpi * 96 / 72)
+            for texts in (("胜率 48.5% · 出场 1.2%", "胜率 49.0% · 出场 2.0%", "胜率 48.9% · 出场 1.1%"),
+                          ("胜率 100.0% · 出场 100.0%", "胜率 100.0% · 出场数 99", "胜率 0.0% · 出场 0.0%")):
+                model = _model()
+                model["synergies"] = []
+                for row, text in zip(model["stats"], texts):
+                    row["stats_text"] = text
+                perf = {}
+                draw_overlay_frame(canvas, model, viewport_size=(2560, 1440), dpi_scale=dpi, perf_sink=perf)
+                assert perf["typography"]["stats_pixel_size"] == 30
+                items = [item for item in canvas.find_all() if canvas.type(item) == "text"]
+                assert len(items) == 3
+                for item, (left, right) in zip(items, ((625, 970), (1115, 1460), (1605, 1950))):
+                    x0, y0, x1, y1 = canvas.bbox(item)
+                    assert left + 6 <= x0 < x1 <= right - 6
+                    assert 780 <= y0 < y1 <= 876
+                    assert abs((x0 + x1) / 2 - (left + right) / 2) <= 2
+                    assert "-30" in canvas.itemcget(item, "font")
+                if texts[0].startswith("胜率 48"):
+                    assert all(entry["line_count"] == 1 for entry in perf["display_layout"]["stats_text"])
+                else:
+                    assert perf["display_layout"]["stats_text"][0]["line_count"] == 2
+                canvas.delete("all")
     finally:
         root.destroy()
 

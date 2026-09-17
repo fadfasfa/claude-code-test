@@ -52,6 +52,7 @@ def test_visual_variant_enrichment_is_a_real_preparation_change():
 def test_background_rechecks_identity_without_repreparing_unchanged(monkeypatch):
     view = SimpleNamespace(status=lambda: {"generation_id": "g", "stale": False})
     worker = module.OverlayDataPreparation(SimpleNamespace(open_view=lambda: view))
+    worker._bootstrap_view = view
     prepared = threading.Event()
     calls = []
     def prepare(*request):

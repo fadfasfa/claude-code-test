@@ -1,3 +1,4 @@
+# Frozen V2 regression baseline only; not a production runtime entry point.
 """串行运行来源 worker，并以同一 Catalog 原子晋升 DataService generation。"""
 
 from __future__ import annotations
@@ -34,16 +35,16 @@ from hextech.modules.data.freshness import SOURCE_INTERVALS, source_reuse_allowe
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import get_var_dir
 from hextech.bootstrap.game_refresh_gate import GameRefreshDeferred, GameRefreshGate, RefreshStopRequested
-from hextech.bootstrap.refresh_cycle import RefreshCycleMixin
-from hextech.bootstrap.refresh_adoption import (
+from .refresh_cycle import RefreshCycleMixin
+from .refresh_adoption import (
     blocked_catalog_adoption,
     migrate_foreign_catalog_checkpoint,
     normalize_pending_sources,
     reconcile_active_catalog_schedule,
 )
-from hextech.bootstrap.refresh_promotion import promote_targets
-from hextech.bootstrap.source_freshness import is_blocked_failure, iso_utc, parse_refresh_time, pointer_success_at
-from hextech.bootstrap.source_worker_failure import SourceWorkerFailure, refresh_failure_kind
+from .refresh_promotion import promote_targets
+from .source_freshness import is_blocked_failure, iso_utc, parse_refresh_time, pointer_success_at
+from .source_worker_failure import SourceWorkerFailure, refresh_failure_kind
 SOURCE_TIMEOUTS = {"catalog": 5 * 60, "aramkit": 10 * 60, "blitz": 2 * 60, "apex": 60 * 60, "mayhem": 10 * 60}
 ContributionMap = Mapping[str, Mapping[str, Any]]
 SnapshotBuilder = Callable[[ContributionMap], Any]

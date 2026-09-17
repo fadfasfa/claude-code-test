@@ -11,7 +11,7 @@ from typing import Any, Callable, Mapping
 from hextech.infrastructure.vision.sidecar_matching import VisionComputeMemoryError
 from hextech.infrastructure.vision.state import SelectionTracker
 from hextech.infrastructure.vision.template_runtime import load_or_build_default_template_runtime
-from hextech.modules.data.overlay_source import SharedOverlayDataSource
+from hextech.infrastructure.vision.data_source import CatalogVisionDataSource, VISION_TARGET_CATALOG_ENV
 from hextech.modules.vision.events import build_overlay_event, write_overlay_event
 
 
@@ -37,8 +37,9 @@ def run_once_impl(
     started_at = time.perf_counter()
     vision_sidecar._set_dpi_awareness()
     write_status("starting", phase="hint_cache_load")
-    data_source = SharedOverlayDataSource(
-        generation_id=str(os.environ.get(VISION_TARGET_GENERATION_ENV) or "")
+    data_source = CatalogVisionDataSource(
+        generation_id=str(os.environ.get(VISION_TARGET_GENERATION_ENV) or ""),
+        catalog_id=str(os.environ.get(VISION_TARGET_CATALOG_ENV) or ""),
     )
     hint_cache = data_source.read_hint_cache()
     runtime = load_or_build_default_template_runtime(

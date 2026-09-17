@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+import pytest
 
 from hextech.contracts import SourceProvenance
 from hextech.modules.data.generation import DataSnapshotManifest, DataSnapshotView
@@ -36,6 +39,7 @@ def _build_fixture(
     *,
     champions: tuple[str, ...] = ("1",),
     corrupt_relative: str = "",
+    metadata: dict[str, Any] | None = None,
 ) -> tuple[DataSnapshotView, Path]:
     run_id = "aramkit-test-run"
     run_dir = tmp_path / "runs" / run_id
@@ -102,7 +106,7 @@ def _build_fixture(
             "size": index_size,
         },
         "outcomes": [],
-        "metadata": {},
+        "metadata": metadata or {},
     }
     manifest_sha, _ = _write_json(run_dir / "manifest.json", source_manifest)
     provenance = SourceProvenance(
@@ -145,6 +149,61 @@ def test_scoped_view_loads_only_selected_champion_and_falls_back_to_all(tmp_path
     assert fallback.stats_scope == "all"
     assert fallback.fallback_reason == "stage_stat_missing_fallback_all"
     assert fallback.to_stats_dict()["sample_count"] == 1200
+    assert result.view.data_at == "2026-08-15T00:00:01+00:00"
+    assert result.view.status()["data_at"] == result.view.data_at
+
+
+@pytest.mark.parametrize("marker", [None, "invalid", False, -1, "inf", 1e30])
+def test_scoped_data_time_invalid_marker_uses_verified_run_completion(tmp_path, marker):
+    snapshot, run_dir = _build_fixture(tmp_path, metadata={"version": {"buildTimeUnixMs": marker}})
+    result = _cache(run_dir).load(snapshot, "1")
+    assert result.available
+    assert result.view.data_at == "2026-08-15T00:00:01+00:00"
+
+
+def test_v3_old_hero_revision_keeps_values_but_never_borrows_fresh_ranking_status(tmp_path):
+    from hextech.contracts import SourceStatusV2
+    from hextech.interfaces.overlay.renderer import build_render_model_from_session
+    from hextech.modules.recommendation.stage_projection import apply_scoped_stage_stats
+    from test_overlay_stage_projection import _state, _context
+
+    now = datetime.now(timezone.utc)
+    old_at = now - timedelta(days=7)
+    marker = int(old_at.timestamp() * 1000)
+    expected_time = datetime.fromtimestamp(marker / 1000, tz=timezone.utc).isoformat()
+    snapshot, run_dir = _build_fixture(tmp_path, metadata={"version": {"buildTimeUnixMs": marker}})
+    hero_run = snapshot.manifest.source_files[0].run_id
+    manifest = replace(snapshot.manifest, schema_version=3, components={
+        "ranking": {"run_id": "ranking-fresh", "source_version": "ranking-new", "catalog_id": "catalog-test"},
+        "champions": {"1": {"run_id": hero_run, "source_version": "hero-old", "catalog_id": "catalog-test", "complete": True}},
+    }, source_status={"aramkit": SourceStatusV2(
+        freshness="fresh", data_status="fresh", run_id="ranking-fresh", data_at=now.isoformat(),
+    )})
+    snapshot = DataSnapshotView(manifest, {})
+    loaded = _cache(run_dir).load(snapshot, "1")
+    assert loaded.available
+    assert loaded.view.data_at == expected_time
+    assert loaded.view.run_id == hero_run
+    assert snapshot.status()["source_status"]["aramkit"]["run_id"] == "ranking-fresh"
+    snapshot_status = snapshot.status()
+    snapshot_status["source_status"]["aramkit"].update({
+        "freshness": "fresh", "data_status": "fresh", "data_reason": "",
+        "check_status": "up_to_date", "check_evidence_bound": True,
+        "upstream_revision": "ranking-new", "applied_revision": "ranking-new",
+    })
+    projected = apply_scoped_stage_stats(_state(), stage_context=_context(1), scoped_view=loaded.view,
+        scope_status="ready", scope_reason="", snapshot_status=snapshot_status, now=now)
+    row = projected.recommendation.augment_slots[0]
+    assert row["source_run_id"] == row["stats"]["source_run_id"] == hero_run
+    assert row["source_data_at"] == row["stats"]["source_data_at"] == expected_time
+    assert row["source_freshness"] == "last_good"
+    assert row["data_status"] == "stale"
+    assert row["data_reason"] == "component_revision_outdated"
+    assert row["status_code"] == "GENERATION_DEGRADED"
+    rendered = build_render_model_from_session(projected)
+    assert "60.0%" in rendered["stats"][0]["stats_text"]
+    assert rendered["stats"][0]["status_text"] == ""
+    assert not rendered.get("data_notice")
 
 
 def test_scoped_view_reports_missing_champion_for_ashe_style_gap(tmp_path: Path) -> None:

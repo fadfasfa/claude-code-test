@@ -43,8 +43,15 @@ def test_overlay_runtime_document_matches_code_contracts() -> None:
         "Overlay session report | v2",
         "P95 ≤ 900 ms",
         "Host event→present P95 ≤ 100 ms",
-        "默认模式：不生成 PNG",
-        "对局结束后等待 30 秒",
+        "Host session-evidence 默认不生成 PNG",
+        "recognition/selection-cache-v2",
+        "IncrementalRefreshService",
+        "首次选择开始",
+        "每 revision 2 GiB",
+        "年龄仅进入诊断",
+        "BackgroundLoadGuard",
+        "至少 5 个大于 180ms",
+        "最近 10 个全部不超过 150ms",
         "compute_profile=float32_batched",
         "`strong` 在最近 3 个原始观察中同身份命中 2 次",
         "`medium` 在最近 5 个原始观察中命中 3 次",
@@ -72,11 +79,11 @@ def test_overlay_runtime_document_matches_code_contracts() -> None:
         "confidence >= 0.95",
         "ocr_exact_fallback",
         "runtime_restored",
-        "统计数据暂非最新",
+        "snapshot v3 使用 receipt schema 2",
         "普通模板候选或感知指纹漂移没有换卡授权",
         "Vision timeline | v2",
-        "catalog_adoption_checkpoint.v1.json",
-        "optional_source_stale",
+        "overlay-refresh-v2-history.md",
+        "overlay-case-baseline.md",
         "约每 10 ms 捕获左键物理 down-edge",
         "populated-runtime",
         "build-aware v2",
@@ -120,3 +127,20 @@ def test_current_desktop_contract_and_capture_repair_are_not_contradictory():
     assert "不接受独立手动位置，不跳邻屏" in handbook
     for contract in ("mss==10.2.0", "capture_regions_valid", "HeldSceneEvidence", "mss_capture_exclusion_v1"):
         assert contract in repair
+
+
+def test_rf8_repair_keeps_evidence_and_acceptance_boundaries():
+    handbook = (RUN_ROOT / "docs" / "overlay-runtime.md").read_text(encoding="utf-8")
+    for phrase in ("raw_scene_evidence", "final_classification", "full_ready_elapsed_ms", "--scene-only",
+                   "低级新任务不能淘汰高级组", "checked/content_changed/catalog_changed/source_outcomes",
+                   "缺少同图修复后复验", "Context 完成不续期事件"):
+        assert phrase in handbook
+
+
+def test_version_checks_are_not_data_expiry_or_full_download():
+    handbook = (RUN_ROOT / "docs" / "overlay-runtime.md").read_text(encoding="utf-8")
+    assert "version-driven-refresh.md" in handbook
+    contract = (RUN_ROOT / "docs" / "version-driven-refresh.md").read_text(encoding="utf-8")
+    for phrase in ("4小时", "not_due不更新成功检查时间", "Retry-After", "历史 manifest 不改写",
+                   "不同英雄unit不能借ranking状态冒充最新", "坏immutable unit不覆盖"):
+        assert phrase in contract

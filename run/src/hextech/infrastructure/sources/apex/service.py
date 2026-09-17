@@ -1,14 +1,19 @@
 """Apex 全量验证、单英雄探测与 CLI 编排。"""
 from __future__ import annotations
 
+from threading import Event
+from typing import Callable
+from hextech.infrastructure.persistence.raw_responses import RawResponseCache
+from hextech.infrastructure.transport.conditional_response import (
+    ConditionalResponseCache,
+)
+from hextech.modules.acquisition.champion_downloads import DownloadContext
 from hextech.infrastructure.sources.apex.common import (
     ApexPageState,
     ChampionInfo,
     FetchedResource,
     Optional,
     Path,
-    RUNTIME_DATA_DIR,
-    RedactingTextFormatter,
     SourceHealth,
     SourceRunManifest,
     SYNERGY_REFRESH_META_VERSION,
@@ -22,12 +27,9 @@ from hextech.infrastructure.sources.apex.common import (
     build_champion_lookup,
     build_champion_slug_map,
     build_core_info,
-    champion_detail_url,
     classify_apex_page,
-    csv,
     datetime,
     get_latest_csv,
-    item_outcome,
     load_active_catalog,
     load_apexlol_slug_map,
     load_augment_manifest_entries,
@@ -52,7 +54,31 @@ from hextech.infrastructure.sources.apex.extractor import SynergyExtractor
 from hextech.infrastructure.sources.apex.writer import SynergyWriter
 from hextech.contracts import FailureKind
 from hextech.modules.acquisition.apex.parser import ApexPageOutcome
-
+from hextech.infrastructure.sources.apex.validation import (
+    _entry_to_report_item,
+    _default_single_champion_report_dir,
+    _default_full_validate_report_dir,
+    _write_html_report_sample,
+    _new_redacting_report_file_handler,
+    _build_single_champion_core_info,
+    _champion_detail_url,
+    _source_check_record,
+    _write_per_champion_csv,
+)
+from hextech.infrastructure.sources.apex.incremental import (
+    APEX_PROJECTION_REVISION,
+    canonical_sha256,
+    collect_resources,
+    current_manifest,
+    failure_fingerprint,
+    project_resources,
+    repeated_failure_result,
+    resources_complete,
+    retry_after_for_resources,
+    source_result_fields,
+    up_to_date_result,
+    upstream_revision,
+)
 # 该模块是旧调用方的稳定 facade；拆分后仍显式保留这两个公开名称。
 __all__ = ["SYNERGY_REFRESH_META_VERSION", "write_synergy_refresh_meta"]
 
@@ -101,70 +127,6 @@ def build_augment_name_map_from_static(catalog_root: Path | None = None) -> dict
     return name_map
 
 
-def _entry_to_report_item(entry: SynergyEntry) -> dict:
-    return {
-        "champion_slug": entry.champion_slug,
-        "augment_names": entry.augment_names,
-        "tier": entry.tier,
-        "rating": entry.rating,
-        "tag": entry.tag,
-        "author": entry.author,
-        "is_original": entry.is_original,
-        "content": entry.content,
-        "upvotes": entry.upvotes,
-        "downvotes": entry.downvotes,
-    }
-
-
-def _default_single_champion_report_dir() -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return Path(RUNTIME_DATA_DIR) / "reports" / "synergy_single_probe" / timestamp
-
-
-def _default_full_validate_report_dir() -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return Path(RUNTIME_DATA_DIR) / "reports" / "synergy_full_validate" / timestamp
-
-
-def _write_html_report_sample(output_path: Path, html: str, limit_bytes: int = 200 * 1024) -> None:
-    encoded = (html or "").encode("utf-8")[:limit_bytes]
-    output_path.write_bytes(encoded.decode("utf-8", errors="ignore").encode("utf-8"))
-
-
-def _new_redacting_report_file_handler(path: Path) -> logging.FileHandler:
-    """为临时 Apex 报表日志创建统一脱敏 handler，避免绕过运行态日志边界。"""
-
-    file_handler = logging.FileHandler(path, encoding="utf-8")
-    file_handler.setFormatter(RedactingTextFormatter("%(asctime)s - %(levelname)s - %(message)s"))
-    return file_handler
-
-
-def _build_single_champion_core_info(champion_slug: str) -> dict[str, ChampionInfo]:
-    try:
-        return build_core_info(_load_json_file("Champion_Core_Data.json", "core_data"))
-    except FileNotFoundError:
-        # 单英雄 smoke 不能为了补静态资料触发稳定资源同步；缺文件时只补当前英雄的解析锚点。
-        slug = str(champion_slug or "").strip()
-        return {
-            slug: ChampionInfo(
-                id=slug,
-                name=slug,
-                title=slug,
-                en_name=slug,
-                aliases=[slug],
-                slug=normalize_slug(slug),
-            )
-        }
-
-
-def _champion_detail_url(source: ApexSource, champion: ChampionInfo) -> str:
-    slug = champion.en_name or champion.slug or champion.name or champion.id
-    detail_url = source.build_allowed_url(f"/zh/champions/{slug}")
-    if not detail_url:
-        raise ValueError(f"英雄 URL 不在 Apex 白名单内：{slug}")
-    return detail_url
-
-
 def _find_entries_for_champion(champion: ChampionInfo, synergy_map: dict[str, list[SynergyEntry]]) -> list[SynergyEntry]:
     keys = [champion.id, champion.slug, champion.en_name, champion.name, champion.title, *champion.aliases]
     for key in keys:
@@ -172,45 +134,6 @@ def _find_entries_for_champion(champion: ChampionInfo, synergy_map: dict[str, li
             if candidate and candidate in synergy_map:
                 return synergy_map[candidate]
     return []
-
-
-def _source_check_record(champion: ChampionInfo, entry: SynergyEntry, html: str) -> dict:
-    content_prefix = entry.content[: min(16, len(entry.content))]
-    first_augment = entry.augment_names[0] if entry.augment_names else ""
-    return {
-        "champion_id": champion.id,
-        "champion_slug": champion.slug,
-        "champion_name": champion.name,
-        "url_slug": champion.en_name,
-        "augment": first_augment,
-        "rating": entry.rating,
-        "tag": entry.tag,
-        "author": entry.author,
-        "content_prefix": content_prefix,
-        "augment_in_html": bool(first_augment and first_augment in html),
-        "author_in_html": bool(entry.author and entry.author in html),
-        "content_prefix_in_html": bool(content_prefix and content_prefix in html),
-    }
-
-
-def _write_per_champion_csv(output_path: Path, rows: list[dict]) -> None:
-    fieldnames = [
-        "champion_id",
-        "champion_slug",
-        "champion_name",
-        "url",
-        "backend",
-        "status_code",
-        "entry_count",
-        "status",
-        "cf_blocked",
-        "error",
-    ]
-    with output_path.open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({key: row.get(key, "") for key in fieldnames})
 
 
 def _extract_champion_entries(
@@ -587,6 +510,13 @@ def main(
     output_path: Optional[str] = None,
     promote_current: bool = False,
     pointer_output: str | os.PathLike[str] | None = None,
+    stop_event: Event | None = None,
+    raw_cache: RawResponseCache | None = None,
+    conditional_cache_root: str | os.PathLike[str] | None = None,
+    context: Callable[[], DownloadContext] | None = None,
+    on_progress: Callable[[int, int, str], None] | None = None,
+    parser_revision: str = APEX_PROJECTION_REVISION,
+    previous_failure_fingerprint: str = "",
 ):
     started_monotonic = time.time()
     started_at = utc_now_iso()
@@ -594,100 +524,142 @@ def main(
     dry_run = (os.getenv("APEX_DRY_RUN", "0").strip() == "1") if dry_run is None else bool(dry_run)
     source: ApexSource | None = None
     outcomes = []
+    stop = stop_event or Event()
+    current_context = context or DownloadContext
+    if stop.is_set():
+        return {"run_id": run_id, "dry_run": dry_run, "published": False, "cancelled": True}
     logger.info("ApexLoL 逐英雄直达抓取开始：run_id=%s dry_run=%s", run_id, dry_run)
 
     try:
         catalog = load_active_catalog()
+        current_pointer, current_metadata = current_manifest()
+        current_applied = str(current_metadata.get("applied_revision") or "")
+        projection_identity = f"{catalog.generation_id}:{catalog.content_sha256}:{parser_revision}"
+        projection_matches = (
+            bool(current_pointer)
+            and str(current_pointer.get("catalog_generation_id") or "") == catalog.generation_id
+            and str(current_pointer.get("catalog_sha256") or "") == catalog.content_sha256
+            and str(current_metadata.get("parser_revision") or "") == parser_revision
+        )
         core_data = load_champion_core_data(catalog.root)
         core_info = build_core_info(core_data)
         slug_map = build_champion_slug_map(core_data)
-        source = ApexSource()
+        source_options = {}
+        if raw_cache is not None:
+            source_options["raw_cache"] = raw_cache
+        if conditional_cache_root is not None:
+            source_options["conditional_cache"] = ConditionalResponseCache(
+                Path(conditional_cache_root), source="apex"
+            )
+        if context is not None or stop_event is not None:
+            def browser_allowed():
+                latest = current_context()
+                return not (stop.is_set() or latest.in_game or latest.pause_background)
+            source_options["allow_browser"] = browser_allowed
+        source = ApexSource(**source_options)
         extractor = SynergyExtractor(
             champion_lookup=build_champion_lookup(core_info),
             augment_name_map=build_augment_name_map_from_static(catalog.root),
         )
-        combined: dict[str, list[SynergyEntry]] = {}
         delay = max(0.0, float(os.getenv("APEX_ONLINE_FETCH_DELAY_SECONDS", "0") or "0"))
         ordered_ids = sorted(slug_map, key=lambda value: int(value) if value.isdigit() else value)
+        resources_by_id = collect_resources(
+            ordered_ids,
+            source=source,
+            slug_map=slug_map,
+            stop=stop,
+            current_context=current_context,
+            on_progress=on_progress,
+            delay=delay,
+        )
 
-        def fetch_champion(champion_id: str):
-            champion = core_info[champion_id]
-            url = champion_detail_url(source.base_url, slug_map[champion_id])
-            resource = source.fetch(url, allow_browser=True)
-            entries: list[SynergyEntry] = []
-            extracted: dict[str, list[SynergyEntry]] = {}
-            page: ApexPageOutcome | None = None
-            if resource and resource.text and not resource.error:
-                entries, extracted, page = _extract_and_classify_champion(
-                    extractor,
-                    champion,
-                    resource,
-                    expected_slug=slug_map[champion_id],
-                )
-            if page is None:
-                page = classify_apex_page(
-                    resource.text if resource else "",
-                    expected_slug=slug_map[champion_id],
-                    entry_count=len(entries),
-                    status_code=resource.status_code if resource else None,
-                )
-            outcome = item_outcome(
-                champion_id,
-                page,
-                record_count=len(entries),
-                backend=resource.source if resource else "none",
-                status_code=resource.status_code if resource else None,
-                url=url,
+        if stop.is_set():
+            return {"run_id": run_id, "dry_run": dry_run, "published": False,
+                    "publishable": False, "cancelled": True,
+                    "outcomes": [outcome.to_dict() for outcome in outcomes]}
+        upstream_revision_value = upstream_revision(resources_by_id)
+        if (
+            resources_complete(ordered_ids, resources_by_id)
+            and projection_matches
+            and upstream_revision_value == str(current_metadata.get("upstream_revision") or "")
+        ):
+            return up_to_date_result(
+                current_pointer=current_pointer,
+                dry_run=dry_run,
+                upstream_revision_value=upstream_revision_value,
+                applied_revision=current_applied,
             )
-            return outcome, extracted, page
-
-        outcomes_by_id = {}
-        for index, champion_id in enumerate(ordered_ids):
-            outcome, extracted, page = fetch_champion(champion_id)
-            outcomes_by_id[champion_id] = outcome
-            if page.state is ApexPageState.HAS_SYNERGY:
-                for key, values in extracted.items():
-                    combined.setdefault(key, []).extend(values)
-            if delay and index + 1 < len(ordered_ids):
-                time.sleep(delay)
-
-        failed_ids = [champion_id for champion_id in ordered_ids if outcomes_by_id[champion_id].state == "failed"]
-        if failed_ids:
-            logger.warning("Apex 首轮失败英雄进入低频尾部重试：count=%s", len(failed_ids))
-            retry_delay = max(0.5, delay)
-            for index, champion_id in enumerate(failed_ids):
-                outcome, extracted, page = fetch_champion(champion_id)
-                outcomes_by_id[champion_id] = outcome
-                if page.state is ApexPageState.HAS_SYNERGY:
-                    for key, values in extracted.items():
-                        combined.setdefault(key, []).extend(values)
-                if index + 1 < len(failed_ids):
-                    time.sleep(retry_delay)
-
-        outcomes = [outcomes_by_id[champion_id] for champion_id in ordered_ids]
-
+        failed_fingerprint = failure_fingerprint(
+            upstream_revision_value,
+            parser_revision,
+            catalog.generation_id,
+            catalog.content_sha256,
+        )
+        if failed_fingerprint and failed_fingerprint == previous_failure_fingerprint:
+            return repeated_failure_result(
+                run_id=run_id,
+                dry_run=dry_run,
+                upstream_revision_value=upstream_revision_value,
+                applied_revision=current_applied,
+                fingerprint=failed_fingerprint,
+                projection_identity=projection_identity,
+                retry_after_seconds=retry_after_for_resources(resources_by_id, default=6 * 60 * 60),
+            )
+        outcomes, combined = project_resources(
+            ordered_ids,
+            resources=resources_by_id,
+            core_info=core_info,
+            slug_map=slug_map,
+            source_base_url=source.base_url,
+            extractor=extractor,
+            extract=_extract_and_classify_champion,
+        )
         combined = SynergyExtractor._dedupe_entries(combined)
+        if on_progress is not None:
+            on_progress(len(outcomes), len(ordered_ids), "candidate")
         payload = SynergyWriter(core_info).build_payload(combined)
+        applied_revision = canonical_sha256(payload)
         stats = summarize_synergy_payload(payload)
         failed = [outcome for outcome in outcomes if outcome.state == "failed"]
         min_non_empty = max(1, int(os.getenv("APEX_MIN_NON_EMPTY_HEROES", "1") or "1"))
         publishable = not failed and stats["non_empty_heroes"] >= min_non_empty and stats["synergy_entries"] > 0
         target_path = Path(output_path) if output_path else None
+        if (
+            publishable
+            and not dry_run
+            and output_path is None
+            and projection_matches
+            and current_applied
+            and applied_revision == current_applied
+        ):
+            return up_to_date_result(
+                current_pointer=current_pointer,
+                dry_run=False,
+                upstream_revision_value=upstream_revision_value,
+                applied_revision=applied_revision,
+                stats=stats,
+                outcomes=[outcome.to_dict() for outcome in outcomes],
+            )
 
         if output_path:
             SynergyWriter(core_info).write(target_path, payload)
         elif not dry_run and publishable:
+            source_data_at = str(current_metadata.get("data_at") or "") if upstream_revision_value == str(current_metadata.get("upstream_revision") or "") else ""
+            source_data_at = source_data_at or (raw_cache.data_at() if raw_cache is not None else started_at)
             published_path, _ = publish_apex_run(
                 payload,
                 run_id=run_id,
                 outcomes=tuple(outcomes),
                 record_count=stats["synergy_entries"],
                 started_at=started_at,
+                data_at=source_data_at,
+                upstream_revision=upstream_revision_value,
+                applied_revision=applied_revision,
+                parser_revision=parser_revision,
                 promote_current=promote_current,
                 pointer_output=pointer_output,
             )
             target_path = Path(published_path)
-
         if not publishable:
             manifest = SourceRunManifest(
                 source="apex",
@@ -722,6 +694,7 @@ def main(
             ),
         )
         return {
+            "success": publishable or dry_run,
             "run_id": run_id,
             "synergy_data": payload,
             "dry_run": dry_run,
@@ -734,10 +707,37 @@ def main(
             "archived_filter_samples": extractor.archived_filter_samples,
             "noise_filtered_count": extractor.noise_filtered_count,
             "noise_filter_samples": extractor.noise_filter_samples,
+            "reason_code": "" if publishable or dry_run else "source_validation_failed",
+            "failure_fingerprint": "" if publishable else failure_fingerprint(
+                upstream_revision_value,
+                parser_revision,
+                catalog.generation_id,
+                catalog.content_sha256,
+            ),
+            "failure_projection": "" if publishable else projection_identity,
+            **source_result_fields(
+                check_status="changed" if publishable else "unknown",
+                upstream_revision=upstream_revision_value,
+                applied_revision=applied_revision if publishable else current_applied,
+                retry_after_seconds=0 if publishable else retry_after_for_resources(resources_by_id, default=5 * 60),
+            ),
         }
     except Exception as exc:
         logger.warning("ApexLoL 来源 run 失败，current 保持不变：%s", exc)
-        return {"run_id": run_id, "dry_run": dry_run, "published": False, "error": str(exc)}
+        return {
+            "success": False,
+            "run_id": run_id,
+            "dry_run": dry_run,
+            "published": False,
+            "error": str(exc),
+            "reason_code": "source_exception",
+            **source_result_fields(
+                check_status="unknown",
+                upstream_revision=locals().get("upstream_revision_value", ""),
+                applied_revision=locals().get("current_applied", ""),
+                retry_after_seconds=retry_after_for_resources(locals().get("resources_by_id", {}), default=5 * 60),
+            ),
+        }
     finally:
         if source is not None:
             source.close()

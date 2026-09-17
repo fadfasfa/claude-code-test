@@ -18,7 +18,13 @@ from hextech.modules.data.ports.paths import get_var_dir
 
 OVERLAY_DIAGNOSTIC_SETTINGS_FILENAME = "overlay_diagnostic_settings.v1.json"
 ROI_DUMP_ENV = "HEXTECH_OVERLAY_SIDECAR_DEBUG_DUMP"
+SELECTION_CAPTURE_ENV = "HEXTECH_SELECTION_CAPTURE_ENABLED"
 RoiDumpMode = Literal["preserve", "on", "off"]
+
+
+def selection_capture_enabled() -> bool:
+    """默认开启；仅显式关闭值禁用自动缓存，供同条件性能对照。"""
+    return os.getenv(SELECTION_CAPTURE_ENV, "1").strip().lower() not in {"0", "false", "off", "no"}
 
 
 def overlay_diagnostic_settings_path(root: Path | None = None) -> Path:

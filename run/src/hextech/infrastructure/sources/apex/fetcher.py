@@ -1,6 +1,16 @@
 """Apex 抓取职责拆分模块。"""
 from __future__ import annotations
 
+import hashlib
+from typing import Callable
+
+from hextech.infrastructure.persistence.raw_responses import RawResponseCache
+from hextech.infrastructure.transport.conditional_response import (
+    ConditionalFetchResult,
+    ConditionalResponseCache,
+    fetch_conditional,
+)
+
 from hextech.infrastructure.sources.apex.common import (
     APEX_ACCESS_DENIED_MARKER,
     APEX_NEXT_ERROR_MARKERS,
@@ -12,12 +22,10 @@ from hextech.infrastructure.sources.apex.common import (
     DEFAULT_APEX_SNAPSHOT_DIR,
     FetchedResource,
     Iterable,
-    MAX_FETCH_RETRIES,
     MAX_JSON_RESOURCE_SIZE,
     Optional,
     Path,
     REQUEST_TIMEOUT_SECONDS,
-    RETRY_BACKOFF_FACTOR,
     SCRIPT_SRC_PATTERN,
     ScraplingFetchResult,
     _safe_exception_label,
@@ -39,7 +47,12 @@ from hextech.infrastructure.sources.apex.common import (
 class ApexSource:
     """同源页面/资源获取层。"""
 
-    def __init__(self):
+    def __init__(self, *, raw_cache: RawResponseCache | None = None,
+                 conditional_cache: ConditionalResponseCache | None = None,
+                 allow_browser: Callable[[], bool] | None = None):
+        self.raw_cache = raw_cache
+        self.conditional_cache = conditional_cache
+        self.allow_browser = allow_browser or (lambda: True)
         self.base_url = os.environ.get("APEX_BASE_URL", "https://apexlol.info/zh").rstrip("/")
         parsed_base = urlparse(self.base_url)
         if parsed_base.scheme != "https" or not parsed_base.netloc:
@@ -91,7 +104,7 @@ class ApexSource:
 
     def _scrapling_result_to_resource(
         self,
-        result: ScraplingFetchResult,
+        result: ScraplingFetchResult | ConditionalFetchResult,
         *,
         source: str,
     ) -> FetchedResource:
@@ -107,9 +120,15 @@ class ApexSource:
         return FetchedResource(
             url=result.url or self.base_url,
             text=result.text or "",
-            source=source,
+            source=getattr(result, "backend", "") or source,
             status_code=result.status_code or 0,
             error=error,
+            not_modified=bool(getattr(result, "not_modified", False)),
+            from_cache=bool(getattr(result, "from_cache", False)),
+            body_sha256=hashlib.sha256((result.text or "").encode("utf-8")).hexdigest()
+            if result.text else "",
+            request_key=str(getattr(result, "request_key", "") or ""),
+            response_headers=dict(getattr(result, "response_headers", {}) or {}),
         )
 
     def fetch_plain(self, url: str) -> Optional[FetchedResource]:
@@ -119,51 +138,46 @@ class ApexSource:
             logger.warning("拒绝非白名单请求：%s", _sanitize_url_for_log(url))
             return None
 
-        retryable_status_codes = {429, 500, 502, 503, 504}
-        for attempt in range(MAX_FETCH_RETRIES + 1):
+        cached = self._cached(url)
+        if cached is not None:
+            return cached
+        # Transport owns retry/backoff/circuit policy; never multiply it here.
+        if self.conditional_cache is not None:
+            result = fetch_conditional(
+                fetch_text,
+                url,
+                cache=self.conditional_cache,
+                headers={"User-Agent": get_request_user_agent()},
+                fetch_kwargs={"timeout_ms": REQUEST_TIMEOUT_SECONDS * 1000},
+            )
+        else:
             result = fetch_text(
                 url,
                 timeout_ms=REQUEST_TIMEOUT_SECONDS * 1000,
                 headers={"User-Agent": get_request_user_agent()},
             )
-            resource = self._scrapling_result_to_resource(result, source="scrapling-get")
-            if resource.status_code == 200 and resource.text and not resource.error:
-                return resource
-            if resource.error in {"cloudflare_block", "http_401", "http_403", "http_429"}:
-                logger.warning(
-                    "Apex Scrapling 普通请求被拒绝：url=%s status=%s reason=%s",
-                    _sanitize_url_for_log(url),
-                    resource.status_code,
-                    resource.error,
-                )
-                return resource
-            error_text = str(resource.error or "").casefold()
-            retryable_transport_error = any(
-                marker in error_text
-                for marker in (
-                    "timed out",
-                    "timeout",
-                    "tls",
-                    "ssl",
-                    "curl: (28)",
-                    "curl: (35)",
-                    "network",
-                    "connection",
-                )
-            )
-            if (
-                resource.status_code in retryable_status_codes or retryable_transport_error
-            ) and attempt < MAX_FETCH_RETRIES:
-                time.sleep(RETRY_BACKOFF_FACTOR * (2 ** attempt))
-                continue
-            logger.error(
-                "Apex Scrapling 普通请求失败：url=%s status=%s error=%s",
-                _sanitize_url_for_log(url),
-                resource.status_code,
-                resource.error or "unexpected_status",
-            )
-            return resource
+        resource = self._scrapling_result_to_resource(result, source="scrapling-get")
+        if getattr(result, "error_kind", "") in {"circuit_open", "access_denied", "rate_limited"}:
+            self.blocked = True
+        self._save(url, resource)
+        return resource
+
+    def _cached(self, url: str) -> Optional[FetchedResource]:
+        if self.raw_cache is not None and self.conditional_cache is None:
+            # Backend is part of the local key so replay preserves provenance
+            # without modifying the cached raw UTF-8 HTML body.
+            for backend in ("http", "requests_fallback", "browser"):
+                body = self.raw_cache.get(f"{url}#apex-backend={backend}")
+                if body is not None:
+                    return FetchedResource(url=url, text=body.decode("utf-8"),
+                                           source=backend, status_code=200)
         return None
+
+    def _save(self, url: str, resource: FetchedResource) -> None:
+        if (self.raw_cache is not None and self.conditional_cache is None
+                and resource.status_code == 200
+                and self._resource_is_origin_success(resource, is_detail="/champions/" in urlparse(url).path)):
+            self.raw_cache.put(f"{url}#apex-backend={resource.source}", resource.text.encode("utf-8"))
 
     def fetch(
         self,
@@ -175,7 +189,10 @@ class ApexSource:
         plain_resource = self.fetch_plain(url)
         if self._resource_is_origin_success(plain_resource, is_detail=is_detail):
             return plain_resource
-        if not allow_browser or plain_resource is None or not plain_resource.text:
+        if (not allow_browser or not self.allow_browser() or self.blocked
+                or plain_resource is None or not plain_resource.text
+                or plain_resource.status_code in {401, 403, 429}
+                or "circuit" in str(plain_resource.error or "").lower()):
             return plain_resource
 
         rendered = fetch_browser_page(
@@ -187,11 +204,17 @@ class ApexSource:
         browser_resource = FetchedResource(
             url=url,
             text=rendered.html or "",
-            source="scrapling-browser",
+            source=getattr(rendered, "backend", "browser") or "browser",
             status_code=rendered.status_code or 0,
             error=rendered.error,
+            body_sha256=hashlib.sha256((rendered.html or "").encode("utf-8")).hexdigest()
+            if rendered.html else "",
+            response_headers=dict(getattr(rendered, "response_headers", {}) or {}),
         )
-        return browser_resource if self._resource_is_origin_success(browser_resource, is_detail=is_detail) else plain_resource
+        if self._resource_is_origin_success(browser_resource, is_detail=is_detail):
+            self._save(url, browser_resource)
+            return browser_resource
+        return plain_resource
 
     def fetch_configured_json_resource(self) -> Optional[FetchedResource]:
         raw_url = os.getenv("APEX_SYNERGY_JSON_URL", "").strip()

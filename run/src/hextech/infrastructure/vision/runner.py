@@ -8,8 +8,8 @@ from typing import Any, Mapping
 
 from hextech.modules.data.ports.paths import get_var_dir
 from hextech.modules.vision.events import write_overlay_event
+from hextech.infrastructure.vision.data_source import CatalogVisionDataSource, VISION_TARGET_CATALOG_ENV
 from hextech.modules.vision import instance_lock as _instance_lock
-from hextech.modules.data.overlay_source import SharedOverlayDataSource
 from hextech.infrastructure.vision.state import SelectionTracker
 from hextech.infrastructure.vision.failure_evidence import FailureEvidenceCollector, FailureEvidenceWriter
 from hextech.infrastructure.vision.diagnostic_writer import VisionDiagnosticWriter
@@ -229,8 +229,9 @@ def _run_loop_impl(
     started_at = time.perf_counter()
     vision_sidecar._set_dpi_awareness()
     _write_sidecar_status("starting", phase="hint_cache_load")
-    data_source = SharedOverlayDataSource(
-        generation_id=str(os.environ.get(VISION_TARGET_GENERATION_ENV) or "")
+    data_source = CatalogVisionDataSource(
+        generation_id=str(os.environ.get(VISION_TARGET_GENERATION_ENV) or ""),
+        catalog_id=str(os.environ.get(VISION_TARGET_CATALOG_ENV) or ""),
     )
     hint_cache = data_source.read_hint_cache()
     runtime = load_or_build_default_template_runtime(
@@ -301,7 +302,8 @@ def _run_loop_impl(
     held_scene: HeldSceneEvidence | None = None
     scene_recovery: SceneRecoveryReference | None = None
     ocr_evidence_not_before = 0.0
-    explicit_capture = ExplicitCaptureControl(get_var_dir(), roi_diagnostic_writer, current_build_id())
+    explicit_capture = ExplicitCaptureControl(get_var_dir(), roi_diagnostic_writer, current_build_id(),
+                                              selection_collector=failure_collector)
     def commit_event(event_payload: dict[str, Any], *, poll_mode: str, scene_only: bool = False) -> None:
         nonlocal last_signature, last_write_at, last_status_heartbeat_at, held_scene, scene_recovery
         source = _mutable_string_key_mapping(event_payload.get("source"))
@@ -347,6 +349,8 @@ def _run_loop_impl(
             last_write_at = now
         if scene_only:
             return
+        if failure_collector is not None:
+            failure_collector.observe_result(event_payload)
         explicit_capture.observe(None, event_payload, event_payload)
         if diagnostic_writer is not None:
             diagnostic_writer.submit(event_payload, trace_path, write_trace=write_event)
@@ -377,6 +381,7 @@ def _run_loop_impl(
                 else {},
                 ocr_shadow=ocr_shadow.status(),
                 explicit_capture=explicit_capture.status(),
+                selection_capture=failure_collector.status() if failure_collector is not None else {},
                 mouse_transition=mouse_observer.status() if mouse_observer is not None else {},
                 diagnostic_writer=diagnostic_status,
                 current_timeline_path_hash=str(
@@ -475,6 +480,8 @@ def _run_loop_impl(
 
     while True:
         if _sidecar_exit_requested():
+            if failure_collector is not None:
+                failure_collector.selection_buffer.finish({"source": {"reason": "sidecar_stopped"}})
             logger.info("Vision sidecar 收到 graceful exit 信号，准备退出。")
             return None
         frame_started_at = time.perf_counter()
@@ -695,7 +702,8 @@ def _run_loop_impl(
                 captured_at=captured_at, preset=preset, min_confidence=min_confidence, held_scene=hold_request,
                 mouse_observer=mouse_observer, left_mouse_was_down=left_mouse_was_down,
                 minimum_captured_at=ocr_evidence_not_before,
-                publish_scene=lambda feedback: commit_event(feedback, poll_mode="fast", scene_only=True))
+                publish_scene=lambda feedback: commit_event(feedback, poll_mode="fast", scene_only=True),
+                capture_suspected=failure_collector.capture_suspected if failure_collector is not None else None)
             recognition_completed_at = float(raw_event["timing"]["recognition_completed_at"])
             scene_recovery, allow_held, cutoff = advance_recovery_event(
                 scene_recovery, hold_request, raw_event, event, tracker, capture_binding,
@@ -717,13 +725,7 @@ def _run_loop_impl(
                         and event_scene_state in {"candidate", "active"}
                     ),
                 )
-            if failure_collector is not None:
-                failure_collector.observe(
-                    frame,
-                    raw_event,
-                    event,
-                    slot_generations=[track.slot_generation for track in tracker.slots],
-                )
+            # V2 diagnostics keep suspected selections (including READY/no epoch), not only starved slots.
             maybe_dump(frame, event)
 
         timing = event.get("timing") if isinstance(event.get("timing"), Mapping) else {}

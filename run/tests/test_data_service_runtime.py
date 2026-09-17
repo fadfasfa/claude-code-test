@@ -135,7 +135,8 @@ def test_synergy_projection_rejects_empty_or_unresolvable_input() -> None:
 def test_runtime_builder_preserves_aramkit_ids_stats_and_synergy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
-    from hextech.bootstrap import data_service_runtime, production_pool_binding
+    from hextech.bootstrap import data_service_runtime
+    from hextech.infrastructure.persistence import production_pool_binding
     from hextech.modules.acquisition.mayhem import merge as mayhem_merge
     from hextech.modules.data.catalog import runtime_store, version_catalog
     from hextech.modules.data.catalog import versioned as catalog_versioned
@@ -354,7 +355,7 @@ def test_service_manager_owns_data_service_lifecycle() -> None:
     assert manager.get_status_snapshot()["data_service"]["status"] == "stopped"
 
 
-def test_refresh_once_injects_aramkit_metadata_marker_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_refresh_once_uses_incremental_service_and_live_priority(monkeypatch: pytest.MonkeyPatch) -> None:
     from hextech.bootstrap import refresh_once
 
     captured: dict[str, object] = {}
@@ -368,15 +369,19 @@ def test_refresh_once_injects_aramkit_metadata_marker_probe(monkeypatch: pytest.
             return {"state": "ready", "force": force, "scope": scope}
 
         @staticmethod
-        def poll_deferred_refresh():
+        def poll_context():
             return None
 
-    monkeypatch.setattr(refresh_once, "CohortRefreshCoordinator", Coordinator)
+        @staticmethod
+        def wait_optional():
+            return None
+
+    monkeypatch.setattr(refresh_once, "IncrementalRefreshService", Coordinator)
 
     result = refresh_once.refresh_runtime_once(force=False)
 
     assert result == {"state": "ready", "force": False, "scope": "due"}
-    assert captured["upstream_marker_probe"] is refresh_once.probe_aramkit_upstream_marker
+    assert callable(captured["champion_probe"])
     assert captured["game_state_probe"] is refresh_once.probe_production_game_in_progress
 
 
@@ -399,11 +404,15 @@ def test_refresh_once_monitors_for_game_started_during_worker(
             return {"state": "ready"}
 
         @staticmethod
-        def poll_deferred_refresh():
+        def poll_context():
             monitor_called.set()
             return None
 
-    monkeypatch.setattr(refresh_once, "CohortRefreshCoordinator", Coordinator)
+        @staticmethod
+        def wait_optional():
+            return None
+
+    monkeypatch.setattr(refresh_once, "IncrementalRefreshService", Coordinator)
     monkeypatch.setattr(refresh_once, "REFRESH_ONCE_GAME_POLL_SECONDS", 0.001)
 
     assert refresh_once.refresh_runtime_once(force=True) == {"state": "ready"}

@@ -6,6 +6,7 @@ import time
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 import pytest
@@ -117,6 +118,16 @@ class FixtureFetcher:
         return response
 
 
+class ConditionalFixtureFetcher(FixtureFetcher):
+    def __init__(self, responses: Mapping[str, object]) -> None:
+        super().__init__(responses)
+        self.kwargs: list[dict[str, object]] = []
+
+    def __call__(self, url: str, **kwargs: object) -> object:
+        self.kwargs.append(dict(kwargs))
+        return super().__call__(url, **kwargs)
+
+
 @pytest.fixture
 def isolated_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(source_runs, "var_path", lambda *parts: tmp_path.joinpath(*parts))
@@ -160,6 +171,35 @@ def test_version_schema_no_longer_requires_removed_data_window_fields() -> None:
         "allMatches": 999,
         "buildTimeUnixMs": 1234,
     }
+
+
+def test_429_retry_after_is_preserved_in_source_result(isolated_sources: Path) -> None:
+    response = SimpleNamespace(
+        text="",
+        status_code=429,
+        error="http_429",
+        error_kind="http_429",
+        response_headers={"Retry-After": "120"},
+    )
+
+    result = service.refresh_aramkit(
+        fetcher=lambda *_args, **_kwargs: response,
+        catalog_binding=_binding(["1"]),
+    )
+
+    assert result["success"] is False
+    assert result["failure_kind"] == "http_429"
+    assert result["failure_stage"] == "fetch"
+    assert result["retry_after_seconds"] == 120
+
+
+def test_default_fetcher_applies_transport_response_limit(monkeypatch) -> None:
+    captured = {}
+    monkeypatch.setattr(service, "fetch_text", lambda _url, **kwargs: captured.update(kwargs))
+
+    service._default_fetcher(service.VERSIONS_URL)
+
+    assert captured["max_response_bytes"] == service.MAX_RESPONSE_BYTES
 
 
 def test_schema_rejects_duplicate_invalid_rate_and_empty_stage() -> None:
@@ -241,18 +281,81 @@ def test_same_marker_reuses_verified_current_without_fetching_rankings(isolated_
     assert marker_only.calls == [service.VERSIONS_URL]
 
 
-@pytest.mark.parametrize(
-    ("age", "should_reuse"),
-    [
-        (timedelta(hours=4, minutes=59, seconds=59), True),
-        (timedelta(hours=5), True),
-        (timedelta(hours=5, seconds=1), False),
-    ],
-)
-def test_same_marker_reuse_obeys_shared_five_hour_budget(
+def test_versions_304_reuses_verified_response_without_redownloading_dataset(
+    isolated_sources: Path,
+) -> None:
+    happy = _happy_fetcher(["1"])
+    responses = dict(happy.responses)
+    responses[service.VERSIONS_URL] = [
+        {
+            "status_code": 200,
+            "text": json.dumps(_version()),
+            "response_headers": {"ETag": '"versions-v1"'},
+        },
+        {"status_code": 304, "text": "", "response_headers": {}},
+        {"status_code": 304, "text": "", "response_headers": {}},
+    ]
+    fetcher = ConditionalFixtureFetcher(responses)
+    raw_root = isolated_sources / "raw-responses"
+    first = service.refresh_aramkit(
+        fetcher=fetcher,
+        catalog_binding=_binding(["1"]),
+        raw_cache_root=raw_root,
+    )
+    atomic_write_json(source_runs.source_current_path("aramkit"), first["pointer"])
+
+    second = service.refresh_aramkit(
+        fetcher=fetcher,
+        catalog_binding=_binding(["1"]),
+        raw_cache_root=raw_root,
+    )
+
+    assert second["reason"] == "not_stale"
+    assert fetcher.counts[service.VERSIONS_URL] == 3
+    assert fetcher.counts[_urls(["1"])[1]] == 1
+    version_calls = [
+        kwargs for url, kwargs in zip(fetcher.calls, fetcher.kwargs, strict=True)
+        if url == service.VERSIONS_URL
+    ]
+    assert version_calls[1]["headers"]["If-None-Match"] == '"versions-v1"'
+    assert version_calls[2]["headers"]["If-None-Match"] == '"versions-v1"'
+
+
+def test_damaged_current_is_rebuilt_from_verified_raw_cache(
+    isolated_sources: Path,
+) -> None:
+    raw_root = isolated_sources / "raw-responses"
+    first = service.refresh_aramkit(
+        fetcher=_happy_fetcher(["1"]),
+        catalog_binding=_binding(["1"]),
+        raw_cache_root=raw_root,
+    )
+    atomic_write_json(source_runs.source_current_path("aramkit"), first["pointer"])
+    index_path = source_runs.source_run_artifact_path(
+        "aramkit",
+        first["run_id"],
+        first["pointer"]["artifact"]["relative_path"],
+    )
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    child = index_path.parent / index["files"][0]["relative_path"]
+    child.write_text("damaged", encoding="utf-8")
+    fetcher = FixtureFetcher({service.VERSIONS_URL: _version()})
+
+    second = service.refresh_aramkit(
+        fetcher=fetcher,
+        catalog_binding=_binding(["1"]),
+        raw_cache_root=raw_root,
+    )
+
+    assert second["success"] is True and second["reason"] == "ready"
+    assert second["run_id"] != first["run_id"]
+    assert fetcher.calls == [service.VERSIONS_URL, service.VERSIONS_URL]
+
+
+@pytest.mark.parametrize("age", [timedelta(hours=5), timedelta(days=7)])
+def test_same_marker_reuse_is_version_driven_not_age_driven(
     isolated_sources: Path,
     age: timedelta,
-    should_reuse: bool,
 ) -> None:
     first = service.refresh_aramkit(
         fetcher=_happy_fetcher(["1"]),
@@ -261,21 +364,19 @@ def test_same_marker_reuse_obeys_shared_five_hour_budget(
     current = dict(first["pointer"])
     atomic_write_json(source_runs.source_current_path("aramkit"), current)
     completed = datetime.fromisoformat(str(current["last_success_at"]).replace("Z", "+00:00"))
-    fetcher = FixtureFetcher({service.VERSIONS_URL: _version()}) if should_reuse else _happy_fetcher(["1"])
+    fetcher = FixtureFetcher({service.VERSIONS_URL: _version()})
 
-    result = service.refresh_aramkit(
-        fetcher=fetcher,
-        catalog_binding=_binding(["1"]),
-        now=completed + age,
-    )
-
-    assert result["success"] is True
-    assert result["reason"] == ("not_stale" if should_reuse else "ready")
-    if should_reuse:
-        assert fetcher.calls == [service.VERSIONS_URL]
-    else:
-        assert len(fetcher.calls) >= 3
-        assert result["run_id"] != first["run_id"]
+    checks = 42 if age == timedelta(days=7) else 1
+    for step in range(1, checks + 1):
+        result = service.refresh_aramkit(
+            fetcher=fetcher,
+            catalog_binding=_binding(["1"]),
+            now=completed + age * step / checks,
+        )
+        assert result["success"] is True
+        assert result["reason"] == "not_stale"
+        assert result["pointer"]["run_id"] == first["run_id"]
+    assert fetcher.calls == [service.VERSIONS_URL] * checks
 
 
 def test_missing_pointer_success_time_falls_back_to_manifest_completion(isolated_sources: Path) -> None:
@@ -300,14 +401,14 @@ def test_missing_pointer_success_time_falls_back_to_manifest_completion(isolated
     assert marker_only.calls == [service.VERSIONS_URL]
 
 
-def test_invalid_pointer_success_time_forces_full_refresh(isolated_sources: Path) -> None:
+def test_invalid_pointer_success_time_does_not_override_verified_marker(isolated_sources: Path) -> None:
     first = service.refresh_aramkit(
         fetcher=_happy_fetcher(["1"]),
         catalog_binding=_binding(["1"]),
     )
     current = {**first["pointer"], "last_success_at": "not-a-time"}
     atomic_write_json(source_runs.source_current_path("aramkit"), current)
-    fetcher = _happy_fetcher(["1"])
+    fetcher = FixtureFetcher({service.VERSIONS_URL: _version()})
 
     result = service.refresh_aramkit(
         fetcher=fetcher,
@@ -316,11 +417,11 @@ def test_invalid_pointer_success_time_forces_full_refresh(isolated_sources: Path
     )
 
     assert result["success"] is True
-    assert result["reason"] == "ready"
-    assert len(fetcher.calls) >= 3
+    assert result["reason"] == "not_stale"
+    assert fetcher.calls == [service.VERSIONS_URL]
 
 
-def test_expired_same_marker_failure_preserves_verified_current(isolated_sources: Path) -> None:
+def test_old_same_marker_skips_invalid_full_payload_and_preserves_current(isolated_sources: Path) -> None:
     first = service.refresh_aramkit(
         fetcher=_happy_fetcher(["1"]),
         catalog_binding=_binding(["1"]),
@@ -343,9 +444,40 @@ def test_expired_same_marker_failure_preserves_verified_current(isolated_sources
         now=completed + timedelta(hours=5, seconds=1),
     )
 
-    assert result["success"] is False
-    assert result["reason"] == "schema_changed"
+    assert result["success"] is True
+    assert result["reason"] == "not_stale"
+    assert invalid_rankings.calls == [service.VERSIONS_URL]
     assert current_path.read_bytes() == before
+
+
+def test_same_validation_input_is_suppressed_before_dataset_download(
+    isolated_sources: Path,
+) -> None:
+    _versions_url, rankings_url, _detail_urls = _urls(["1"])
+    first = service.refresh_aramkit(
+        force=True,
+        fetcher=FixtureFetcher(
+            {
+                service.VERSIONS_URL: _version(),
+                rankings_url: {"rows": []},
+            }
+        ),
+        catalog_binding=_binding(["1"]),
+    )
+    marker_only = FixtureFetcher({service.VERSIONS_URL: _version()})
+
+    second = service.refresh_aramkit(
+        force=True,
+        fetcher=marker_only,
+        catalog_binding=_binding(["1"]),
+        previous_failure_fingerprint=first["failure_fingerprint"],
+    )
+
+    assert first["reason"] == "schema_changed"
+    assert first["failure_fingerprint"]
+    assert second["reason"] == "validation_unchanged"
+    assert second["failure_fingerprint"] == first["failure_fingerprint"]
+    assert marker_only.calls == [service.VERSIONS_URL]
 
 
 def test_unknown_champion_or_augment_rejects_candidate_and_preserves_current(isolated_sources: Path) -> None:
@@ -508,7 +640,7 @@ def test_marker_drift_and_response_budget_fail_closed(isolated_sources: Path, mo
 
 
 def test_concurrency_hard_limit_and_child_tamper_detection(isolated_sources: Path) -> None:
-    with pytest.raises(ValueError, match="1..8"):
+    with pytest.raises(ValueError, match="1..4"):
         service.refresh_aramkit(
             fetcher=_happy_fetcher(["1"]),
             catalog_binding=_binding(["1"]),
@@ -565,7 +697,7 @@ def test_tail_retry_executor_never_exceeds_two_workers(isolated_sources: Path) -
     assert max_retry_active == service.RETRY_CONCURRENCY
 
 
-def test_default_detail_executor_uses_six_workers(isolated_sources: Path) -> None:
+def test_default_detail_executor_uses_four_workers(isolated_sources: Path) -> None:
     champion_ids = [str(index) for index in range(1, 9)]
     rankings = [_ranking(item) for item in champion_ids]
     versions_url, rankings_url, _detail_urls = _urls(champion_ids)

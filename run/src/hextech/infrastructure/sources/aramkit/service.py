@@ -10,16 +10,20 @@ import hashlib
 import json
 import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
-from hextech.contracts import FetchAttempt, ItemOutcome, SourceHealth, SourceRunManifestV2, utc_now_iso
+from hextech.contracts import ItemOutcome, SourceHealth, SourceRunManifestV2, utc_now_iso
 from hextech.contracts.models import FailureKind
 from hextech.infrastructure.transport.scrapling_client import fetch_text
+from hextech.infrastructure.persistence.raw_responses import (
+    RawResponseCache,
+    RawResponseIntegrityError,
+)
+from hextech.modules.acquisition.champion_downloads import ChampionDownloads, DownloadContext
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.source_runs import (
     SourceRunValidationError,
@@ -39,6 +43,10 @@ from .schema import (
     version_marker,
 )
 from .reuse import load_reusable_current
+from .http_response import _Response, _coerce_response
+from .failure import duplicate_validation_result, failure_fields, validation_input_fingerprint
+from .download_budget import ByteBudget as _ByteBudget
+from .conditional import with_conditional_versions
 from .catalog_binding import (
     AramkitRefreshError,
     CatalogBinding,
@@ -49,95 +57,14 @@ from .catalog_binding import (
 DATA_BASE_URL = "https://data.aramkit.com"
 VERSIONS_URL = f"{DATA_BASE_URL}/data/versions.json"
 DATASET = "all"
-DEFAULT_CONCURRENCY = 6
-MAX_CONCURRENCY = 8
+DEFAULT_CONCURRENCY = 4
+MAX_CONCURRENCY = 4
 RETRY_CONCURRENCY = 2
 TIMEOUT_MS = 15_000
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 
 Fetcher = Callable[..., object]
-
-@dataclass(frozen=True)
-class _Response:
-    url: str
-    body: bytes
-    status_code: int | None
-    error_kind: str
-    error: str
-    elapsed_ms: int
-    attempts: int
-    fetched_at: str
-
-    @property
-    def blocking(self) -> bool:
-        return self.status_code in {403, 429} or self.error_kind in {
-            FailureKind.HTTP_403.value,
-            FailureKind.HTTP_429.value,
-        }
-
-    @property
-    def retryable(self) -> bool:
-        return self.failure_kind in {
-            FailureKind.TIMEOUT,
-            FailureKind.TLS_ERROR,
-            FailureKind.NETWORK_ERROR,
-            FailureKind.HTTP_5XX,
-        }
-
-    @property
-    def failure_kind(self) -> FailureKind | None:
-        if self.status_code == 403:
-            return FailureKind.HTTP_403
-        if self.status_code == 429:
-            return FailureKind.HTTP_429
-        if self.status_code is not None and 500 <= self.status_code <= 599:
-            return FailureKind.HTTP_5XX
-        if self.error_kind:
-            try:
-                return FailureKind(self.error_kind)
-            except ValueError:
-                return FailureKind.NETWORK_ERROR
-        if self.status_code != 200 or not self.body:
-            return FailureKind.INVALID_PAYLOAD
-        return None
-
-    def attempt(self) -> FetchAttempt:
-        failure = self.failure_kind
-        return FetchAttempt(
-            url=self.url,
-            backend="static_http",
-            status_code=self.status_code,
-            elapsed_ms=max(0, self.elapsed_ms),
-            attempts=max(1, self.attempts),
-            failure_kind=failure,
-            retryable=self.retryable,
-            fetched_at=self.fetched_at,
-            error=self.error,
-        )
-
-
-class _ByteBudget:
-    def __init__(self, *, per_response: int, total: int) -> None:
-        self.per_response = per_response
-        self.total = total
-        self.used = 0
-        self._lock = threading.Lock()
-
-    def reserve(self, size: int) -> None:
-        if size > self.per_response:
-            raise AramkitRefreshError(
-                "response_too_large",
-                f"ARAMKit 单响应超过 {self.per_response} bytes：{size}",
-            )
-        with self._lock:
-            if self.used + size > self.total:
-                raise AramkitRefreshError(
-                    "download_budget_exceeded",
-                    f"ARAMKit 整轮响应超过 {self.total} bytes",
-                )
-            self.used += size
-
 
 @dataclass(frozen=True)
 class _DetailResult:
@@ -155,46 +82,22 @@ class _DetailResult:
         return self.response is not None and self.response.retryable
 
 
-def _default_fetcher(url: str, **_: object) -> object:
+def _default_fetcher(
+    url: str,
+    *,
+    headers: Mapping[str, str] | None = None,
+    params: Mapping[str, object] | None = None,
+    **_: object,
+) -> object:
+    request_headers = {"Accept": "application/json", **dict(headers or {})}
     return fetch_text(
         url,
         timeout_ms=TIMEOUT_MS,
         max_attempts=1,
-        headers={"Accept": "application/json"},
+        headers=request_headers,
+        params=dict(params or {}),
         caller="aramkit",
-    )
-
-
-def _body_bytes(value: object) -> bytes:
-    if isinstance(value, bytes):
-        return value
-    if isinstance(value, str):
-        return value.encode("utf-8")
-    if isinstance(value, Mapping):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    return b""
-
-
-def _coerce_response(url: str, raw: object) -> _Response:
-    now = utc_now_iso()
-    if isinstance(raw, tuple) and len(raw) >= 2:
-        status = raw[0] if isinstance(raw[0], int) or raw[0] is None else None
-        error_kind = str(raw[2]) if len(raw) >= 3 else ""
-        return _Response(url, _body_bytes(raw[1]), status, error_kind, error_kind, 0, 1, now)
-    if isinstance(raw, (bytes, str, Mapping)):
-        return _Response(url, _body_bytes(raw), 200, "", "", 0, 1, now)
-    text = getattr(raw, "text", "")
-    body = _body_bytes(text)
-    status = getattr(raw, "status_code", None)
-    return _Response(
-        url=url,
-        body=body,
-        status_code=status if isinstance(status, int) else None,
-        error_kind=str(getattr(raw, "error_kind", "") or ""),
-        error=str(getattr(raw, "error", "") or ""),
-        elapsed_ms=int(getattr(raw, "elapsed_ms", 0) or 0),
-        attempts=int(getattr(raw, "attempts", 1) or 1),
-        fetched_at=str(getattr(raw, "fetched_at", "") or now),
+        max_response_bytes=MAX_RESPONSE_BYTES,
     )
 
 
@@ -207,7 +110,7 @@ def _fetch(fetcher: Fetcher, url: str, budget: _ByteBudget) -> _Response:
         caller="aramkit",
     )
     response = _coerce_response(url, raw)
-    budget.reserve(len(response.body))
+    budget.reserve(0 if response.from_cache else len(response.body))
     return response
 
 
@@ -222,22 +125,32 @@ def _require_json_response(fetcher: Fetcher, url: str, budget: _ByteBudget, *, c
         raise AramkitRefreshError(
             response.failure_kind.value,
             f"{context} 请求失败：status={response.status_code} kind={response.failure_kind.value}",
+            response=response,
         )
     try:
         return decode_object(response.body, context=context)
     except SchemaValidationError as exc:
-        raise AramkitRefreshError("schema_changed", str(exc)) from exc
+        raise AramkitRefreshError("schema_changed", str(exc), response=response) from exc
 
 
 def _version_payload(fetcher: Fetcher, budget: _ByteBudget) -> dict[str, Any]:
     return resolve_version(_require_json_response(fetcher, VERSIONS_URL, budget, context="versions"))
 
 
-def probe_aramkit_upstream_marker(*, fetcher: Fetcher | None = None) -> dict[str, Any]:
+def probe_aramkit_upstream_marker(
+    *,
+    fetcher: Fetcher | None = None,
+    conditional_cache_root: Path | None = None,
+) -> dict[str, Any]:
     """轻量读取公开 versions marker，不创建 source run。"""
 
     budget = _ByteBudget(per_response=MAX_RESPONSE_BYTES, total=MAX_TOTAL_BYTES)
-    return version_marker(_version_payload(fetcher or _default_fetcher, budget))
+    fetch = with_conditional_versions(
+        fetcher or _default_fetcher,
+        conditional_cache_root,
+        versions_url=VERSIONS_URL,
+    )
+    return version_marker(_version_payload(fetch, budget))
 
 
 def _detail_url(version: Mapping[str, Any], champion_id: str) -> str:
@@ -282,27 +195,19 @@ def _detail_pass(
     *,
     concurrency: int,
     stop_event: threading.Event,
+    context: Callable[[], DownloadContext] | None = None,
+    on_detail: Callable[[str, _DetailResult], None] | None = None,
 ) -> list[_DetailResult]:
     if concurrency <= 0 or concurrency > MAX_CONCURRENCY:
         raise ValueError(f"ARAMKit concurrency 必须在 1..{MAX_CONCURRENCY}")
-    results: list[_DetailResult] = []
-    with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="aramkit") as executor:
-        futures: dict[Future[_DetailResult], str] = {
-            executor.submit(_fetch_detail, fetcher, budget, version, ranking, stop_event): str(ranking["id"])
-            for ranking in rankings
-        }
-        for future in as_completed(futures):
-            champion_id = futures[future]
-            try:
-                result = future.result()
-            except Exception as exc:  # pragma: no cover - worker 最后防线
-                result = _DetailResult(champion_id, None, reason=f"worker_error:{exc}")
-            results.append(result)
-            if result.response is not None and result.response.blocking:
-                stop_event.set()
-                for pending in futures:
-                    pending.cancel()
-    return results
+    by_id = {str(row["id"]): row for row in rankings}
+
+    def fetch_one(champion_id: str) -> _DetailResult:
+        return _fetch_detail(fetcher, budget, version, by_id[champion_id], stop_event)
+
+    return list(ChampionDownloads[_DetailResult](context or DownloadContext, concurrency=concurrency).run(
+        list(by_id), fetch_one, stop=stop_event, completed=on_detail,
+    ).values())
 
 
 def _all_augment_ids(detail: Mapping[str, Any]) -> set[int]:
@@ -483,6 +388,8 @@ def _write_failure(
     reason: str,
     marker: Mapping[str, Any] | None,
     bytes_used: int,
+    response: _Response | None = None,
+    failure_fingerprint: str = "",
 ) -> dict[str, Any]:
     outcomes: list[ItemOutcome] = []
     if rankings:
@@ -512,6 +419,9 @@ def _write_failure(
             )
         )
     successful = sum(item.state == "success" for item in outcomes)
+    responses = [item.response for item in results.values() if item and item.response]
+    if response is not None:
+        responses.append(response)
     manifest = SourceRunManifestV2(
         source="aramkit",
         run_id=run_id,
@@ -536,6 +446,11 @@ def _write_failure(
         "successful_champions": successful,
         "failed_champions": len(outcomes) - successful,
         "downloaded_bytes": bytes_used,
+        "check_status": "unknown",
+        "upstream_revision": str((marker or {}).get("dataPath") or ""),
+        "upstream_marker": dict(marker or {}),
+        "applied_revision": None,
+        **failure_fields(reason, responses, failure_fingerprint=failure_fingerprint),
     }
     write_run_diagnostics(manifest, report=report)
     return report
@@ -551,14 +466,27 @@ def refresh_aramkit(
     concurrency: int = DEFAULT_CONCURRENCY,
     stop_event: threading.Event | None = None,
     now: datetime | None = None,
+    raw_cache_root: Path | None = None,
+    conditional_cache_root: Path | None = None,
+    previous_failure_fingerprint: str = "",
+    context: Callable[[], DownloadContext] | None = None,
+    on_rankings: Callable[[Mapping[str, Any], list[dict[str, Any]]], None] | None = None,
+    on_detail: Callable[[Mapping[str, Any], str, Mapping[str, Any]], None] | None = None,
+    incremental_only: bool = False,
 ) -> dict[str, Any]:
     """抓取完整同版本 ARAMKit 候选，并只返回/写出 candidate pointer。"""
 
     if promote_current:
         raise SourceRunValidationError("正式 source current 只能由 cohort promotion 切换")
+    if incremental_only and (on_rankings is None or on_detail is None):
+        raise ValueError("incremental download requires ranking and champion unit consumers")
     if concurrency <= 0 or concurrency > MAX_CONCURRENCY:
         raise ValueError(f"ARAMKit concurrency 必须在 1..{MAX_CONCURRENCY}")
-    fetch = fetcher or _default_fetcher
+    fetch = with_conditional_versions(
+        fetcher or _default_fetcher,
+        conditional_cache_root or raw_cache_root,
+        versions_url=VERSIONS_URL,
+    )
     binding = catalog_binding or CatalogBinding.active()
     budget = _ByteBudget(per_response=MAX_RESPONSE_BYTES, total=MAX_TOTAL_BYTES)
     run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}-{uuid4().hex[:8]}-all"
@@ -566,6 +494,7 @@ def refresh_aramkit(
     rankings: list[dict[str, Any]] = []
     results: dict[str, _DetailResult] = {}
     marker: dict[str, Any] = {}
+    validation_fingerprint = ""
     try:
         version = _version_payload(fetch, budget)
         marker = version_marker(version)
@@ -574,9 +503,62 @@ def refresh_aramkit(
                 marker,
                 now=now or datetime.now(timezone.utc),
                 validator=validate_scoped_stats_artifact,
+                catalog_generation_id=binding.generation_id,
+                catalog_sha256=binding.content_sha256,
             )
             if reusable:
-                return {"success": True, "reason": "not_stale", "pointer": current, "marker": marker}
+                return {
+                    "success": True,
+                    "reason": "not_stale",
+                    "pointer": current,
+                    "marker": marker,
+                    "check_status": "up_to_date",
+                    "upstream_revision": str(marker.get("dataPath") or ""),
+                    "applied_revision": str(marker.get("dataPath") or ""),
+                    "upstream_marker": marker,
+                    "retry_after_seconds": None,
+                }
+        validation_fingerprint = validation_input_fingerprint(
+            marker,
+            catalog_generation_id=binding.generation_id,
+            catalog_sha256=binding.content_sha256,
+        )
+        if previous_failure_fingerprint == validation_fingerprint:
+            return duplicate_validation_result(marker, validation_fingerprint)
+        if raw_cache_root is not None:
+            cache = RawResponseCache(raw_cache_root, source="aramkit",
+                                     revision=json.dumps(marker, sort_keys=True))
+            network_fetch = fetch
+
+            def cached_fetch(url: str, **kwargs: object) -> object:
+                # versions is mutable discovery; only fixed dataPath resources are immutable.
+                if url == VERSIONS_URL:
+                    return network_fetch(url, **kwargs)
+                try:
+                    body = cache.get(url)
+                except RawResponseIntegrityError:
+                    body = None
+                if body is not None:
+                    return _Response(
+                        url,
+                        body,
+                        200,
+                        "",
+                        "",
+                        0,
+                        1,
+                        utc_now_iso(),
+                        from_cache=True,
+                    )
+                response = _coerce_response(url, network_fetch(url, **kwargs))
+                if response.failure_kind is None and len(response.body) <= MAX_RESPONSE_BYTES:
+                    try:
+                        cache.put(url, response.body)
+                    except RawResponseIntegrityError:
+                        pass
+                return response
+
+            fetch = cached_fetch
         rankings_url = f"{DATA_BASE_URL}/{version['dataPath']}/stats/{DATASET}/champion-rankings.json"
         rankings = normalize_rankings(
             _require_json_response(fetch, rankings_url, budget, context="champion-rankings")
@@ -588,6 +570,21 @@ def refresh_aramkit(
                 "catalog_binding_failed",
                 f"ARAMKit 包含 Catalog 未知英雄：{unknown_champions[:20]}",
             )
+        if on_rankings is not None:
+            on_rankings(version, rankings)
+
+        def publish_detail(champion_id: str, result: _DetailResult) -> None:
+            if not result.success or result.normalized is None or on_detail is None:
+                return
+            unknown = _all_augment_ids(result.normalized) - binding.augment_ids
+            if unknown - binding.compatible_extra_augment_ids:
+                return  # full result retains failure; never publish unbound partial data.
+            normalized_detail = _filter_detail_to_catalog(result.normalized, binding.augment_ids)
+            if not normalized_detail["augments"]["all"] or any(
+                not rows for rows in normalized_detail["augments"]["stages"].values()
+            ):
+                return
+            on_detail(version, champion_id, normalized_detail)
         stop_event = stop_event or threading.Event()
         if stop_event.is_set():
             raise AramkitRefreshError("cancelled", "ARAMKit worker 已取消")
@@ -598,6 +595,8 @@ def refresh_aramkit(
             rankings,
             concurrency=concurrency,
             stop_event=stop_event,
+            context=context,
+            on_detail=publish_detail,
         )
         results.update((item.champion_id, item) for item in initial)
         retry_rankings = [
@@ -613,6 +612,8 @@ def refresh_aramkit(
                 retry_rankings,
                 concurrency=min(RETRY_CONCURRENCY, len(retry_rankings)),
                 stop_event=stop_event,
+                context=context,
+                on_detail=publish_detail,
             )
             results.update((item.champion_id, item) for item in retried)
         failures = {
@@ -644,6 +645,7 @@ def refresh_aramkit(
                 reason=reason,
                 marker=marker,
                 bytes_used=budget.used,
+                failure_fingerprint=(validation_fingerprint if reason == "schema_changed" else ""),
             )
         unknown_augments = {
             augment_id
@@ -665,6 +667,21 @@ def refresh_aramkit(
         final_marker = version_marker(_version_payload(fetch, budget))
         if final_marker != marker:
             raise AramkitRefreshError("marker_drift", "ARAMKit 抓取期间版本 marker 发生变化")
+        if incremental_only:
+            # The worker has already emitted independently validated immutable units.
+            # Do not duplicate every champion into a fresh full-run tree on each recheck.
+            return {
+                "success": True,
+                "reason": "units_complete",
+                "marker": marker,
+                "expected_champions": len(rankings),
+                "successful_champions": len(results),
+                "check_status": "changed",
+                "upstream_revision": str(marker.get("dataPath") or ""),
+                "applied_revision": str(marker.get("dataPath") or ""),
+                "upstream_marker": marker,
+                "retry_after_seconds": None,
+            }
         normalized = {
             champion_id: _filter_detail_to_catalog(item.normalized, binding.augment_ids)
             for champion_id, item in results.items()
@@ -729,11 +746,31 @@ def refresh_aramkit(
             pointer_output=pointer_output,
         )
         validate_scoped_stats_artifact(pointer)
-        return {**report, "pointer": pointer}
+        return {
+            **report,
+            "pointer": pointer,
+            "check_status": "changed",
+            "upstream_revision": str(marker.get("dataPath") or ""),
+            "applied_revision": str(marker.get("dataPath") or ""),
+            "upstream_marker": marker,
+            "retry_after_seconds": None,
+        }
     except (AramkitRefreshError, SchemaValidationError, SourceRunValidationError, OSError, ValueError) as exc:
         reason = exc.reason if isinstance(exc, AramkitRefreshError) else (
             "schema_changed" if isinstance(exc, SchemaValidationError) else "publish_failed"
         )
+        validation_failure = reason in {"schema_changed", "catalog_binding_failed", "marker_drift"}
+        response = (exc.response if isinstance(exc, AramkitRefreshError)
+                    and isinstance(exc.response, _Response) else None)
+        if validation_failure and not validation_fingerprint:
+            validation_fingerprint = validation_input_fingerprint(
+                marker,
+                catalog_generation_id=binding.generation_id,
+                catalog_sha256=binding.content_sha256,
+                response_body=response.body if response is not None else b"",
+            )
+        if validation_failure and previous_failure_fingerprint == validation_fingerprint:
+            return duplicate_validation_result(marker, validation_fingerprint)
         return _write_failure(
             run_id=run_id,
             binding=binding,
@@ -743,6 +780,8 @@ def refresh_aramkit(
             reason=reason,
             marker=marker,
             bytes_used=budget.used,
+            response=response,
+            failure_fingerprint=validation_fingerprint if validation_failure else "",
         )
 
 

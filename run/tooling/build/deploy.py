@@ -21,10 +21,14 @@ from pathlib import Path
 import psutil
 from filelock import FileLock, Timeout
 
+from hextech.contracts import CatalogManifestV2
+from hextech.contracts.data_pipeline import require_identifier
 from hextech.infrastructure.persistence.cohort_recovery import (
     CohortCandidate,
+    parse_utc,
     validate_generation_cohort,
 )
+from hextech.modules.data.catalog.versioned import sha256_file, validate_catalog_files
 from hextech.modules.data.generation.validation import SnapshotValidationError
 from hextech.modules.vision.diagnostic_settings import (
     RoiDumpMode,
@@ -548,6 +552,103 @@ def _validated_runtime_candidate(
     return candidate
 
 
+def _validated_catalog_generation_manifest(
+    root: Path,
+    catalog_id: str,
+) -> CatalogManifestV2:
+    catalog_id = require_identifier(
+        catalog_id,
+        field_name="catalog_generation_id",
+    )
+    catalog_root = root / "catalog" / "generations" / catalog_id
+    manifest_path = catalog_root / "manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("manifest must be an object")
+        manifest = CatalogManifestV2.from_mapping(payload)
+        if manifest.catalog_generation_id != catalog_id:
+            raise ValueError("catalog manifest identity mismatch")
+        validate_catalog_files(catalog_root, manifest)
+        return manifest
+    except (OSError, json.JSONDecodeError, TypeError, ValueError, KeyError) as exc:
+        raise ValueError("runtime recognition Catalog pointer/manifest 无效") from exc
+
+
+def _validated_runtime_catalog_manifest(
+    root: Path,
+    pointer: dict[str, object],
+) -> CatalogManifestV2:
+    catalog_id = str(pointer.get("catalog_generation_id") or "")
+    manifest = _validated_catalog_generation_manifest(root, catalog_id)
+    manifest_path = root / "catalog" / "generations" / catalog_id / "manifest.json"
+    if (
+        pointer.get("schema_version") != 2
+        or pointer.get("content_sha256") != manifest.content_sha256
+        or pointer.get("manifest_sha256") != sha256_file(manifest_path)
+    ):
+        raise ValueError("runtime recognition Catalog pointer/manifest 无效")
+    return manifest
+
+
+def _resolve_runtime_recognition_expected(
+    root: Path,
+    expected: dict[str, object],
+) -> tuple[dict[str, object], list[str]]:
+    """允许安装器保留比 bundle 更新且完整的独立识别 Catalog。"""
+
+    expected_id = str(
+        expected.get("recognition_catalog_generation_id")
+        or expected.get("catalog_generation_id")
+        or ""
+    )
+    try:
+        payload = json.loads(
+            (root / "catalog" / "current.v2.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        return dict(expected), [
+            "recognition Catalog current 不可读 "
+            f"path=catalog/current.v2.json error={type(exc).__name__}"
+        ]
+    if not isinstance(payload, dict):
+        return dict(expected), ["recognition Catalog current 不是对象"]
+    actual_id = str(payload.get("catalog_generation_id") or "")
+    if actual_id == expected_id:
+        if str(expected.get("recognition_catalog_generation_id") or ""):
+            try:
+                _validated_runtime_catalog_manifest(root, payload)
+            except ValueError as exc:
+                return dict(expected), [
+                    "runtime recognition Catalog 未通过完整验证："
+                    f"catalog={actual_id} error={type(exc).__name__}"
+                ]
+        return dict(expected), []
+    # Old one-Catalog packages did not authorize independent Catalog adoption.
+    if not str(expected.get("recognition_catalog_generation_id") or ""):
+        return dict(expected), []
+    try:
+        actual_manifest = _validated_runtime_catalog_manifest(root, payload)
+        expected_manifest = _validated_catalog_generation_manifest(
+            root,
+            expected_id,
+        )
+        if parse_utc(actual_manifest.created_at) < parse_utc(expected_manifest.created_at):
+            return dict(expected), [
+                "runtime recognition Catalog 早于 bundle seed："
+                f"expected={expected_id} actual={actual_id}"
+            ]
+    except (OSError, json.JSONDecodeError, TypeError, ValueError, KeyError) as exc:
+        return dict(expected), [
+            "runtime recognition Catalog 未通过完整验证："
+            f"catalog={actual_id} error={type(exc).__name__}"
+        ]
+    return {
+        **expected,
+        "recognition_catalog_generation_id": actual_id,
+    }, []
+
+
 def _resolve_runtime_cohort_expected(
     root: Path,
     expected: dict[str, object],
@@ -555,6 +656,11 @@ def _resolve_runtime_cohort_expected(
     validation_cache: dict[tuple[str, str], CohortCandidate] | None = None,
 ) -> tuple[dict[str, object], list[str]]:
     """允许启动刷新晋升同 Catalog/production pool 的更新完整 generation。"""
+
+    effective, recognition_errors = _resolve_runtime_recognition_expected(root, expected)
+    if recognition_errors:
+        return effective, recognition_errors
+    expected = effective
 
     pointer_path = root / "snapshots" / "current.v2.json"
     try:
@@ -624,13 +730,16 @@ def _resolve_runtime_cohort_expected(
         for source in ("aramkit", "blitz", "apex", "mayhem")
         if source in actual.pointers
     }
-    if len(source_run_ids) != 4 or any(not value for value in source_run_ids.values()):
+    is_v3 = getattr(actual, "snapshot_schema_version", 2) == 3
+    if (not source_run_ids.get("aramkit") or any(not value for value in source_run_ids.values())
+            or (not is_v3 and len(source_run_ids) != 4)):
         return dict(expected), ["启动刷新后的完整 cohort 缺少来源 run identity"]
     return {
         **expected,
         "generation_id": actual.generation_id,
         "catalog_generation_id": actual_catalog_id,
         "source_run_ids": source_run_ids,
+        **({"schema_version": 2, "snapshot_schema_version": 3, "units": dict(actual.units)} if is_v3 else {}),
     }, []
 
 
@@ -639,16 +748,42 @@ def _runtime_cohort_errors(root: Path, expected: dict[str, object]) -> list[str]
 
     errors: list[str] = []
     generation_id = str(expected.get("generation_id") or "")
+    # v3 statistics remain bound to the Catalog that produced their immutable
+    # units, while recognition may independently adopt a newer Catalog.  Old
+    # bundles omit the explicit recognition identity and retain one-Catalog
+    # behavior through this fallback.
     catalog_id = str(expected.get("catalog_generation_id") or "")
+    recognition_catalog_id = str(
+        expected.get("recognition_catalog_generation_id") or catalog_id
+    )
     source_run_ids = expected.get("source_run_ids")
     if not isinstance(source_run_ids, dict):
         return ["bundle cohort seed 缺少 source_run_ids"]
+    is_v3 = expected.get("schema_version") == 2 and expected.get("snapshot_schema_version") == 3
+    source_roles = {"aramkit", "blitz", "apex", "mayhem"}
+    if (not set(source_run_ids).issubset(source_roles) or any(not isinstance(value, str) or not value for value in source_run_ids.values())
+            or (is_v3 and "aramkit" not in source_run_ids)
+            or (not is_v3 and set(source_run_ids) != source_roles)):
+        return ["bundle cohort seed 来源 run identity 不完整或无效"]
+    candidate = None
+    if is_v3:
+        try:
+            candidate = validate_generation_cohort(root, generation_id)
+            if (candidate.snapshot_schema_version != 3 or dict(candidate.units) != expected.get("units")
+                    or {source: pointer.get("run_id") for source, pointer in candidate.pointers.items() if source != "catalog"}
+                    != source_run_ids):
+                return ["v3 runtime cohort unit closure 与部署候选不一致"]
+        except (OSError, TypeError, ValueError, SnapshotValidationError) as exc:
+            return [f"v3 runtime cohort unit closure 无效 error={type(exc).__name__}"]
     expected_fields = {
-        Path("catalog/current.v2.json"): ("catalog_generation_id", catalog_id),
+        Path("catalog/current.v2.json"): (
+            "catalog_generation_id",
+            recognition_catalog_id,
+        ),
         Path("snapshots/current.v2.json"): ("current_generation_id", generation_id),
         **{
             Path(f"sources/{source}/current.v2.json"): ("run_id", str(source_run_ids.get(source) or ""))
-            for source in ("aramkit", "blitz", "apex", "mayhem")
+            for source in (source_run_ids if is_v3 else ("aramkit", "blitz", "apex", "mayhem"))
         },
     }
     for relative, (field, value) in expected_fields.items():
@@ -661,6 +796,11 @@ def _runtime_cohort_errors(root: Path, expected: dict[str, object]) -> list[str]
         if actual != value:
             errors.append(f"cohort current 不一致 path={relative.as_posix()} expected={value} actual={actual}")
         if relative.parts[0] == "sources" and isinstance(payload, dict):
+            if candidate is not None:
+                source_name = relative.parts[1]
+                binding = candidate.pointers[source_name]
+                if any(payload.get(key) != binding.get(key) for key in ("source", "manifest_sha256", "artifact")):
+                    errors.append(f"v3 cohort source pointer 绑定不一致 source={source_name}")
             actual_catalog = str(payload.get("catalog_generation_id") or "")
             if actual_catalog != catalog_id:
                 errors.append(
@@ -679,7 +819,10 @@ def _runtime_cohort_errors(root: Path, expected: dict[str, object]) -> list[str]
     if not isinstance(states, dict):
         errors.append("cohort schedule 缺少 sources")
         return errors
-    expected_runs = {"catalog": catalog_id, **{key: str(value) for key, value in source_run_ids.items()}}
+    expected_runs = {
+        "catalog": recognition_catalog_id,
+        **{key: str(value) for key, value in source_run_ids.items()},
+    }
     for source, run_id in expected_runs.items():
         state = states.get(source)
         if not isinstance(state, dict):
@@ -708,7 +851,11 @@ def _runtime_cohort_errors(root: Path, expected: dict[str, object]) -> list[str]
                 f"expected={generation_id} actual={actual}"
             )
     checkpoint_path = root / "state" / "data-service" / "refresh_checkpoint.v1.json"
-    if checkpoint_path.exists():
+    # v3 incremental refresh proves the active state through the validated
+    # generation/unit closure and refresh_schedule above.  The retired v1
+    # checkpoint is historical evidence only; legacy cohorts still require
+    # its original consistency checks.
+    if not is_v3 and checkpoint_path.exists():
         try:
             checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -822,7 +969,14 @@ def _runtime_build_errors(
                 f"expected={expected_debug_dump_enabled} actual={sidecar.get('debug_dump_enabled')}"
             )
         if effective_cohort is not None:
-            expected_pool_count = int(effective_cohort.get("production_pool_count") or 0)
+            from tooling.build.recognition_contract import recognition_pool_contract
+
+            try:
+                recognition = recognition_pool_contract(root, effective_cohort)
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                errors.append(f"Sidecar recognition Catalog 无效：{type(exc).__name__}: {exc}")
+                recognition = {}
+            expected_pool_count = int(recognition.get("production_pool_count") or 0)
             accepted_generation_ids = {
                 str(effective_cohort.get("generation_id") or ""),
                 str((expected_cohort or {}).get("generation_id") or ""),
@@ -838,11 +992,8 @@ def _runtime_build_errors(
                         f"actual={actual_generation}"
                     )
             expected_fields = {
-                "catalog_generation_id": str(effective_cohort.get("catalog_generation_id") or ""),
-                "production_pool_id": str(effective_cohort.get("production_pool_id") or ""),
+                **recognition,
                 "production_pool_state": "ready",
-                "production_pool_count": expected_pool_count,
-                "full_catalog_count": int(effective_cohort.get("full_catalog_count") or 0),
                 "rank_identity_count": expected_pool_count,
             }
             for field, expected in expected_fields.items():
@@ -850,10 +1001,14 @@ def _runtime_build_errors(
                 if actual != expected:
                     errors.append(f"Sidecar cohort 不一致 field={field} expected={expected} actual={actual}")
             matrix_rows = sidecar.get("matrix_rows")
-            if not isinstance(matrix_rows, dict) or any(
+            from hextech.modules.acquisition.hextech.production_pool import production_capability_status_valid
+
+            invalid_matrices = (not production_capability_status_valid(sidecar, expected_pool_count)
+                if sidecar.get("production_pool_schema_version") == 2 else not isinstance(matrix_rows, dict) or any(
                 int(matrix_rows.get(channel) or 0) < expected_pool_count
                 for channel in ("icon", "name", "alt_name")
-            ):
+            ))
+            if invalid_matrices:
                 errors.append(f"Sidecar 生产矩阵行数不足：{matrix_rows}")
             excluded = sidecar.get("excluded_reason_counts")
             if not isinstance(excluded, dict) or any(

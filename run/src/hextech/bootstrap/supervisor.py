@@ -237,10 +237,11 @@ class RuntimeSupervisor:
             action_context = dict(self._actions.get(action_id) or {})
         try:
             result_payload = self._result_payload(self._overlay_runtime.set_enabled(enabled))
-            status = "completed"
+            status = "failed" if result_payload.get("status") == "error" else "completed"
             self.append_event(
                 {
-                    "event": "game_overlay.completed",
+                    "event": f"game_overlay.{status}",
+                    "level": "ERROR" if status == "failed" else "INFO",
                     "component": "game_overlay",
                     "correlation_id": action_id,
                     "duration_seconds": int(max(0.0, time.time() - started_at)),
@@ -271,7 +272,7 @@ class RuntimeSupervisor:
             )
             result_payload["runtime"] = failure_snapshot
         old_sidecar_pid = int(action_context.get("old_sidecar_pid") or 0)
-        if status == "completed" and old_sidecar_pid:
+        if status == "completed" and old_sidecar_pid and result_payload.get("status") == "running":
             new_sidecar_pid = int(result_payload.get("sidecar_pid") or 0)
             self.append_event(
                 {
@@ -614,10 +615,13 @@ def main(argv: list[str] | None = None) -> int:
 
     from hextech.infrastructure.vision.sidecar import load_or_build_default_template_runtime
     from hextech.infrastructure.vision.template_runtime import vision_pool_fingerprint
+    from hextech.infrastructure.vision.data_source import prepare_catalog_vision_data, recognition_switch_blocked
 
     overlay_runtime = OverlayRuntimeManager(
         load_template_runtime_func=load_or_build_default_template_runtime,
         vision_pool_fingerprint_func=vision_pool_fingerprint,
+        prepare_data_func=prepare_catalog_vision_data,
+        game_active_probe=recognition_switch_blocked,
     )
     from hextech.modules.session.runtime_role_owner import publish_role_owner, remove_role_owner
 

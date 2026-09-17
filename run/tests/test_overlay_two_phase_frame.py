@@ -68,6 +68,8 @@ def test_production_frame_pipeline_publishes_scene_before_identity_work():
     assert tracker.scene_frames == 1
     assert all(s.raw_observation_count == 1 for s in tracker.slots)
     assert result["source"]["frame_phase"] == "identity"
+    timing = result["timing"]
+    assert timing["scene_evaluated_at"] <= timing["scene_admitted_at"] <= timing["identity_reduced_at"]
 
 
 def test_reroll_scene_feedback_removes_known_stale_identity_once():

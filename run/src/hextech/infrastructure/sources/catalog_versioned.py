@@ -1,8 +1,8 @@
 """Catalog v2 candidate 构建与 runtime generation 发布。
 
-远端只更新英雄闭集和版本；海克斯目录沿用当前 Catalog 的已验证稳定目录，避免
-第三方元数据缺失时把完整描述降级。候选先写 immutable generation，DataService
-的 promotion journal 负责在三来源刷新成功后决定保留或回滚 pointer。
+远端 marker 检查与内容构建分离。模式 enabled metadata 决定生产身份，CDragon
+资源目录只贡献可用图标；缺单项不删除身份。候选写 immutable generation，正式
+pointer 由 DataService 独立发布，本模块不切 current，也不重建 Vision 矩阵。
 """
 
 from __future__ import annotations
@@ -13,15 +13,16 @@ import shutil
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import quote
 
 import requests
 
+from hextech.modules.acquisition.champion_downloads import ChampionDownloads, DownloadContext
 from hextech.modules.data.catalog.versioned import (
     CATALOG_FILES,
+    CATALOG_OPTIONAL_FILES,
     build_catalog_manifest,
     catalog_root,
     load_active_catalog,
@@ -34,6 +35,9 @@ from hextech.infrastructure.transport.scrapling_client import fetch_text
 from hextech.modules.acquisition.common.contracts import utc_now_iso
 from hextech.modules.acquisition.common.icons import normalize_safe_augment_icon_filename
 from hextech.modules.vision.image_validation import is_valid_png_bytes
+from hextech.modules.acquisition.hextech.production_pool import (
+    build_production_augment_pool, validate_production_augment_pool,
+)
 
 
 DDRAGON_VERSIONS_URL = "https://ddragon.leagueoflegends.com/api/versions.json"
@@ -238,13 +242,9 @@ def _build_cdragon_catalog(raw_items: list[Mapping[str, Any]], previous_root: Pa
 
 
 def _enabled_metadata_ids(payload: Mapping[str, Any]) -> set[str]:
-    return {
-        str(raw_id).strip()
-        for raw_id, raw in payload.items()
-        if isinstance(raw, Mapping)
-        and bool(raw.get("enabled", True))
-        and _clean_text(raw.get("displayName") or raw.get("name"))
-    }
+    pool = build_production_augment_pool(payload, [], schema_version=2)
+    validate_production_augment_pool(pool)
+    return set(pool["canonical_ids"])
 
 
 def _read_active_icon(entry: Mapping[str, Any], active_root: Path) -> bytes | None:
@@ -346,6 +346,7 @@ def _freeze_enabled_assets(
     active_root: Path,
     *,
     stop_event: threading.Event | None = None,
+    context: Callable[[], DownloadContext] = DownloadContext,
 ) -> dict[str, Any]:
     entries = catalog_payload.get("entries") if isinstance(catalog_payload.get("entries"), list) else []
     selected = [entry for entry in entries if isinstance(entry, dict) and str(entry.get("cdragon_id") or "") in enabled_ids]
@@ -355,28 +356,40 @@ def _freeze_enabled_assets(
         for source_id in resolved
         if sum(str(entry.get("cdragon_id") or "") == source_id for entry in selected) != 1
     )
-    if resolved != enabled_ids or duplicate_ids:
+    if duplicate_ids:
         missing = sorted(enabled_ids.difference(resolved))[:SOURCE_FILTER_SAMPLE_LIMIT]
         raise CatalogRefreshError(
             f"CDragon 启用身份映射不完整：missing={missing} "
             f"duplicates={duplicate_ids[:SOURCE_FILTER_SAMPLE_LIMIT]}"
         )
 
-    downloaded: dict[str, bytes] = {}
-    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="catalog-icons") as executor:
-        futures = {
-            executor.submit(_fetch_icon, entry, active_root, stop_event=stop_event): entry
-            for entry in selected
-        }
-        for future in as_completed(futures):
-            entry = futures[future]
-            downloaded[str(entry.get("cdragon_id") or "")] = future.result()
+    selected_by_id = {str(entry.get("cdragon_id") or ""): entry for entry in selected}
+    stop = stop_event or threading.Event()
 
+    def fetch(source_id: str) -> bytes | None:
+        entry = selected_by_id[source_id]
+        try:
+            return _fetch_icon(entry, active_root, stop_event=stop)
+        except CatalogRefreshError as exc:
+            if stop.is_set():
+                raise
+            entry["icon_unavailable_reason"] = str(exc)
+            return None
+
+    def resource_context() -> DownloadContext:
+        latest = context()
+        return DownloadContext(in_game=latest.in_game, pause_background=latest.pause_background)
+
+    downloaded = ChampionDownloads(resource_context).run(list(selected_by_id), fetch, stop=stop)
+    if stop.is_set():
+        raise CatalogRefreshError("catalog_refresh_cancelled")
     asset_entries: list[dict[str, Any]] = []
     name_to_icon: dict[str, str] = {}
     for entry in selected:
         source_id = str(entry.get("cdragon_id") or "")
-        content = downloaded[source_id]
+        content = downloaded.get(source_id)
+        if content is None:
+            continue
         digest = hashlib.sha256(content).hexdigest()
         relative = f"assets/augments/{digest}.png"
         target = staging / relative
@@ -408,6 +421,8 @@ def _write_candidate(
     *,
     allow_remote: bool,
     stop_event: threading.Event | None = None,
+    context: Callable[[], DownloadContext] = DownloadContext,
+    remote_probe: tuple[str, list[Mapping[str, Any]], Mapping[str, Any], str] | None = None,
 ) -> tuple[Path, bool, dict[str, Any]]:
     active = load_active_catalog()
     source_filter: dict[str, Any] = {}
@@ -416,11 +431,14 @@ def _write_candidate(
     try:
         for _role, filename, _list_key in CATALOG_FILES:
             shutil.copy2(active.root / filename, staging / filename)
+        if not allow_remote:
+            for _role, filename, _list_key in CATALOG_OPTIONAL_FILES:
+                if (active.root / filename).is_file():
+                    shutil.copy2(active.root / filename, staging / filename)
+            if (active.root / "assets").is_dir():
+                shutil.copytree(active.root / "assets", staging / "assets")
         if allow_remote:
-            versions = _load_json_result(DDRAGON_VERSIONS_URL, timeout_ms=10_000)
-            if not isinstance(versions, list) or not versions or not str(versions[0]).strip():
-                raise CatalogRefreshError("Data Dragon versions 为空")
-            version = str(versions[0]).strip()
+            version, cdragon, metadata, source_marker = remote_probe or _probe_sources()
             champions = _load_json_result(
                 f"https://ddragon.leagueoflegends.com/cdn/{version}/data/zh_CN/champion.json",
                 timeout_ms=15_000,
@@ -436,12 +454,8 @@ def _write_candidate(
                 indent=2,
             )
             (staging / "hero_version.txt").write_text(version, encoding="utf-8")
-            cdragon = _load_json_result(CDRAGON_AUGMENTS_URL, timeout_ms=20_000)
-            metadata = _load_json_result(HEXTECH_METADATA_URL, timeout_ms=10_000)
-            if not isinstance(cdragon, list) or not isinstance(metadata, Mapping):
-                raise CatalogRefreshError("CDragon/Hextech metadata schema 无效")
             catalog_payload = _build_cdragon_catalog(
-                [item for item in cdragon if isinstance(item, Mapping)],
+                cdragon,
                 active.root,
             )
             enabled_ids = _enabled_metadata_ids(metadata)
@@ -451,9 +465,18 @@ def _write_candidate(
                 enabled_ids,
                 active.root,
                 stop_event=stop_event,
+                context=context,
             )
             atomic_write_json(staging / "海克斯资源目录.v1.json", catalog_payload, ensure_ascii=False, indent=2)
             atomic_write_json(staging / "augment_assets.v1.json", asset_payload, ensure_ascii=False, indent=2)
+            pool = build_production_augment_pool(
+                metadata, catalog_payload["entries"], schema_version=2,
+                upstream_marker_sha256=source_marker,
+            )
+            validate_production_augment_pool(pool)
+            pool["source_marker_sha256"] = source_marker
+            pool["mode"] = "aram-mayhem"
+            atomic_write_json(staging / "augment_identities.v2.json", pool, ensure_ascii=False, indent=2)
             source_filter["augments"] = {
                 "schema_version": 1,
                 "upstream_entry_count": len(cdragon),
@@ -470,6 +493,127 @@ def _write_candidate(
         raise
 
 
+def _probe_sources() -> tuple[str, list[Mapping[str, Any]], Mapping[str, Any], str]:
+    versions = _load_json_result(DDRAGON_VERSIONS_URL, timeout_ms=10_000)
+    if not isinstance(versions, list) or not versions or not str(versions[0]).strip():
+        raise CatalogRefreshError("Data Dragon versions 为空")
+    cdragon = _load_json_result(CDRAGON_AUGMENTS_URL, timeout_ms=20_000)
+    metadata = _load_json_result(HEXTECH_METADATA_URL, timeout_ms=10_000)
+    if not isinstance(cdragon, list) or not cdragon or any(not isinstance(item, Mapping) for item in cdragon) or not isinstance(metadata, Mapping):
+        raise CatalogRefreshError("CDragon/Hextech metadata schema 无效")
+    _enabled_metadata_ids(metadata)
+    version = str(versions[0]).strip()
+    marker = hashlib.sha256(json.dumps(
+        {"version": version, "cdragon": cdragon, "metadata": metadata},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    return version, cdragon, metadata, marker
+
+
+def _retry_missing_capabilities(active, previous, remote_probe, *, context, stop_event):
+    """Bounded missing-icon repair; valid identities/assets are never reacquired.
+
+    PNG receipts survive game boundaries in the existing immutable raw cache.
+    Catalog cloning/rebinding happens only outside a game and without load pause.
+    """
+    from hextech.infrastructure.persistence.raw_responses import RawResponseCache
+
+    latest = context()
+    if latest.pause_background:
+        return None
+    missing_ids = {str(item["canonical_id"]) for item in previous["identities"] if not item["icon_ready"]}
+    catalog = json.loads((active.root / "海克斯资源目录.v1.json").read_text(encoding="utf-8"))
+    pending = [entry for entry in catalog["entries"] if str(entry.get("cdragon_id") or "") in missing_ids
+               and entry.get("source_icon_url")]
+    if not pending:
+        return None
+    marker = remote_probe[3]
+    cache = RawResponseCache(catalog_root().parent / "raw-responses", source="catalog-icons", revision=marker,
+                             max_bytes=32 * 1024**2, max_source_bytes=128 * 1024**2)
+    cursor_path = catalog_root() / "capability_retry.v1.json"
+    try:
+        cursor_payload = json.loads(cursor_path.read_text(encoding="utf-8"))
+        cursor = int(cursor_payload.get("cursor", 0)) if cursor_payload.get("marker") == marker else 0
+    except (OSError, ValueError, TypeError):
+        cursor = 0
+    limit = 1 if latest.in_game else 4
+    selected = [pending[(cursor + offset) % len(pending)] for offset in range(min(limit, len(pending)))]
+    recovered: dict[str, bytes] = {}
+    attempted = 0
+    for entry in selected:
+        current_context = context()
+        if current_context.pause_background or (current_context.in_game and attempted >= 1):
+            break
+        if stop_event is not None and stop_event.is_set():
+            raise CatalogRefreshError("catalog_refresh_cancelled")
+        attempted += 1
+        url = str(entry["source_icon_url"])
+        content = cache.get(url)
+        if content is None:
+            try:
+                content = _fetch_icon(entry, active.root, stop_event=stop_event)
+            except CatalogRefreshError:
+                if stop_event is not None and stop_event.is_set():
+                    raise
+                continue
+            cache.put(url, content)
+        if not is_valid_png_bytes(content):
+            raise CatalogRefreshError("catalog_retry_cached_png_invalid")
+        recovered[str(entry["cdragon_id"])] = content
+    atomic_write_json(cursor_path, {"schema_version": 1, "marker": marker, "cursor": (cursor + attempted) % len(pending)}, indent=2)
+    current_context = context()
+    if current_context.in_game or current_context.pause_background:
+        if recovered:
+            return {"state": "deferred", "changed": True, "reason_code": "catalog_build_deferred_in_game",
+                    "catalog_generation_id": active.generation_id, "recovered_icon_count": len(recovered)}
+        return None
+    # Include already downloaded receipts from earlier in-game rounds, bounded
+    # by the enabled pool size; these lookups never perform network requests.
+    for entry in pending:
+        content = cache.get(str(entry["source_icon_url"]))
+        if content is not None:
+            if not is_valid_png_bytes(content):
+                raise CatalogRefreshError("catalog_retry_cached_png_invalid")
+            recovered[str(entry["cdragon_id"])] = content
+    if not recovered:
+        return None
+    staging = catalog_root() / "staging" / f"catalog-{uuid.uuid4().hex}"
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(active.root, staging)
+    try:
+        assets = json.loads((staging / "augment_assets.v1.json").read_text(encoding="utf-8"))
+        for entry in pending:
+            canonical_id = str(entry["cdragon_id"])
+            content = recovered.get(canonical_id)
+            if content is None:
+                continue
+            digest = hashlib.sha256(content).hexdigest()
+            relative = f"assets/augments/{digest}.png"
+            target = staging / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists():
+                target.write_bytes(content)
+            entry.update(filename=f"{digest}.png", local_path=relative, icon_url=f"/{relative}", icon_sha256=digest)
+            entry.pop("icon_unavailable_reason", None)
+            catalog["name_to_icon"][entry["name"]] = f"/{relative}"
+            assets["entries"].append({"canonical_id": canonical_id, "augment_name_id": entry.get("augment_name_id", ""),
+                "relative_path": relative, "sha256": digest, "size": len(content), "source_icon_path": entry.get("source_icon_path", "")})
+        assets["entries"].sort(key=lambda item: int(item["canonical_id"]))
+        updated = build_production_augment_pool(remote_probe[2], catalog["entries"], schema_version=2, upstream_marker_sha256=marker)
+        updated.update(mode="aram-mayhem", source_marker_sha256=marker)
+        validate_production_augment_pool(updated)
+        atomic_write_json(staging / "海克斯资源目录.v1.json", catalog, ensure_ascii=False, indent=2)
+        atomic_write_json(staging / "augment_assets.v1.json", assets, ensure_ascii=False, indent=2)
+        atomic_write_json(staging / "augment_identities.v2.json", updated, ensure_ascii=False, indent=2)
+        manifest = build_catalog_manifest(staging, created_at=utc_now_iso())
+        validate_catalog_files(staging, manifest)
+        atomic_write_json(staging / "manifest.json", manifest.to_dict(), ensure_ascii=False, indent=2)
+        return staging, True, {"capability_retry": {"recovered_icon_count": len(recovered), "attempted_count": attempted}}
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
 def refresh_catalog(
     *,
     force: bool = False,
@@ -477,13 +621,46 @@ def refresh_catalog(
     promote_current: bool = False,
     pointer_output: str | Path | None = None,
     stop_event: threading.Event | None = None,
+    context: Callable[[], DownloadContext] = DownloadContext,
 ) -> dict[str, Any]:
     if promote_current:
         raise CatalogRefreshError("正式 Catalog current 只能由 cohort promotion 切换")
-    staging, changed, source_filter = _write_candidate(
+    remote_probe = _probe_sources() if allow_remote else None
+    active = load_active_catalog()
+    capability_candidate = None
+    if remote_probe is not None and not active.baseline:
+        identity_path = active.root / "augment_identities.v2.json"
+        if identity_path.is_file():
+            previous = json.loads(identity_path.read_text(encoding="utf-8"))
+            if previous.get("source_marker_sha256") == remote_probe[3]:
+                capability_candidate = _retry_missing_capabilities(active, previous, remote_probe,
+                    context=context, stop_event=stop_event)
+                if isinstance(capability_candidate, dict):
+                    return capability_candidate
+            if previous.get("source_marker_sha256") == remote_probe[3] and capability_candidate is None:
+                pointer = {
+                    "schema_version": 2, "catalog_generation_id": active.generation_id,
+                    "content_sha256": active.content_sha256, "manifest_sha256": active.manifest_sha256,
+                    "completed_at": active.manifest.created_at, "last_success_at": utc_now_iso(),
+                }
+                if pointer_output is not None:
+                    atomic_write_json(Path(pointer_output), pointer, ensure_ascii=False, indent=2)
+                return {"state": "ready", "changed": False, "catalog_generation_id": active.generation_id,
+                        "content_sha256": active.content_sha256, "forced": bool(force),
+                        "source_filter": {}, "marker_state": "unchanged",
+                        "capability_retry_pending_count": sum(not item["icon_ready"] and any(
+                            v.get("source_icon_url") for v in item["visual_variants"]
+                        ) for item in previous["identities"])}
+    latest = context()
+    if capability_candidate is None and allow_remote and (latest.in_game or latest.pause_background):
+        return {"state": "deferred", "changed": True, "reason_code": "catalog_build_deferred_in_game",
+                "catalog_generation_id": active.generation_id, "forced": bool(force)}
+    staging, changed, source_filter = capability_candidate or _write_candidate(
         catalog_root(),
         allow_remote=allow_remote,
         stop_event=stop_event,
+        remote_probe=remote_probe,
+        context=context,
     )
     try:
         payload = json.loads((staging / "manifest.json").read_text(encoding="utf-8"))
@@ -506,6 +683,11 @@ def refresh_catalog(
         }
         if pointer_output is not None:
             atomic_write_json(Path(pointer_output), pointer, ensure_ascii=False, indent=2)
+        identity_path = final / "augment_identities.v2.json"
+        published_identities = json.loads(identity_path.read_text(encoding="utf-8")) if identity_path.is_file() else {}
+        retry_pending_count = sum(not item["icon_ready"] and any(
+            v.get("source_icon_url") for v in item["visual_variants"]
+        ) for item in published_identities.get("identities", ()))
         return {
             "state": "ready",
             "changed": changed,
@@ -513,6 +695,7 @@ def refresh_catalog(
             "content_sha256": str(payload["content_sha256"]),
             "forced": bool(force),
             "source_filter": source_filter,
+            "capability_retry_pending_count": retry_pending_count,
         }
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)

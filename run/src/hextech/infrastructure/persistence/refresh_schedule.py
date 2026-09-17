@@ -24,6 +24,8 @@ class RefreshScheduleStore:
             if not isinstance(payload, dict):
                 raise ValueError("schedule 必须是对象")
             schedule = RefreshScheduleV1.from_mapping(payload)
+            from hextech.infrastructure.sources.refresh_policy import migrate_check_schedule
+            schedule = migrate_check_schedule(schedule)
             if set(schedule.sources) != set(SCHEDULE_SOURCES):
                 return RefreshScheduleV1(
                     updated_at=schedule.updated_at,

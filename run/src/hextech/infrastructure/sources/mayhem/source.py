@@ -11,6 +11,7 @@ profile、cookie 或代理池。输出固定保存 ARAMMayhem 原始字段和解
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -23,6 +24,12 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
 from hextech.infrastructure.transport.scrapling_client import fetch_text
+from hextech.infrastructure.transport.conditional_response import (
+    ConditionalFetchResult,
+    ConditionalResponseCache,
+    fetch_conditional,
+    parse_retry_after_seconds,
+)
 from hextech.modules.data.ports.atomic import atomic_write_json
 
 DEFAULT_COMBO_URL = "https://arammayhem.com/zh-cn/combo/"
@@ -41,6 +48,48 @@ def _configure_stdio() -> None:
 
 def _text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _content_revision(items: list[dict[str, Any]], bodies: list[bytes]) -> str:
+    """Hash parsed business rows; empty/failing pages fall back to exact response bytes."""
+
+    if items:
+        rows = sorted(
+            json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            for item in items
+        )
+        body = "\n".join(rows).encode("utf-8")
+    else:
+        body = b"\0".join(bodies)
+    return hashlib.sha256(body).hexdigest() if body else ""
+
+
+def _transport_summary(responses: list[Any]) -> dict[str, Any]:
+    retry_after_values = [
+        value
+        for result in responses
+        if (value := parse_retry_after_seconds(
+            getattr(result, "response_headers", None)
+        )) is not None
+    ]
+    return {
+        "check_complete": bool(responses) and all(
+            not str(getattr(result, "error", "") or "")
+            and getattr(result, "status_code", None) in {200, 304}
+            and bool(getattr(result, "text", ""))
+            for result in responses
+        ),
+        "not_modified": bool(responses) and all(
+            bool(getattr(result, "not_modified", False)) for result in responses
+        ),
+        "request_count": len(responses),
+        "downloaded_responses": sum(
+            not bool(getattr(result, "from_cache", False)) for result in responses
+        ),
+        "attempts": sum(max(1, int(getattr(result, "attempts", 1) or 1)) for result in responses),
+        "elapsed_ms": sum(max(0, int(getattr(result, "elapsed_ms", 0) or 0)) for result in responses),
+        "retry_after_seconds": max(retry_after_values, default=None),
+    }
 
 
 def _absolute_url(base_url: str, href: str) -> str:
@@ -214,17 +263,36 @@ def scrape_mayhem_combos(
     url: str = DEFAULT_COMBO_URL,
     max_pages: int = 0,
     timeout_ms: int = DEFAULT_TIMEOUT_MS,
+    conditional_cache: ConditionalResponseCache | None = None,
 ) -> dict[str, Any]:
-    page_result = fetch_text(url, timeout_ms=timeout_ms)
+    def fetch(url_to_fetch: str, *, accept: str) -> Any:
+        if conditional_cache is None:
+            return fetch_text(url_to_fetch, timeout_ms=timeout_ms, headers={"Accept": accept})
+        return fetch_conditional(
+            fetch_text,
+            url_to_fetch,
+            cache=conditional_cache,
+            headers={"Accept": accept},
+            fetch_kwargs={"timeout_ms": timeout_ms},
+        )
+
+    page_result = fetch(url, accept="text/html,application/xhtml+xml")
     fetched_at = datetime.now(timezone.utc).isoformat()
+    responses: list[Any] = [page_result]
+    response_bodies: list[bytes] = [
+        page_result.body if isinstance(page_result, ConditionalFetchResult)
+        else str(page_result.text or "").encode("utf-8")
+    ]
     rejects: list[dict[str, Any]] = []
-    if page_result.error or page_result.status_code != 200 or not page_result.text:
+    if page_result.error or page_result.status_code not in {200, 304} or not page_result.text:
         return {
             "schema_version": 1,
             "source": "arammayhem",
             "source_url": url,
             "fetched_at": fetched_at,
             "items": [],
+            "upstream_revision": _content_revision([], response_bodies),
+            "transport": _transport_summary(responses),
             "rejects": [{
                 "reason": "combo_page_fetch_failed",
                 "status_code": page_result.status_code,
@@ -237,8 +305,17 @@ def scrape_mayhem_combos(
     items: list[dict[str, Any]] = []
     parse_meta: dict[str, Any] = {}
     if manifest_url:
-        manifest_result = fetch_text(manifest_url, timeout_ms=timeout_ms)
-        if not manifest_result.error and manifest_result.status_code == 200 and manifest_result.text:
+        manifest_result = fetch(manifest_url, accept="application/json")
+        responses.append(manifest_result)
+        response_bodies.append(
+            manifest_result.body if isinstance(manifest_result, ConditionalFetchResult)
+            else str(manifest_result.text or "").encode("utf-8")
+        )
+        if (
+            not manifest_result.error
+            and manifest_result.status_code in {200, 304}
+            and manifest_result.text
+        ):
             try:
                 manifest_payload = json.loads(manifest_result.text)
                 if isinstance(manifest_payload, dict):
@@ -263,6 +340,7 @@ def scrape_mayhem_combos(
         items, html_rejects, parse_meta = parse_combo_html(page_result.text, url, max_pages=max_pages)
         rejects.extend(html_rejects)
 
+    upstream_revision = _content_revision(items, response_bodies)
     return {
         "schema_version": 1,
         "source": "arammayhem",
@@ -273,6 +351,8 @@ def scrape_mayhem_combos(
         "page": parse_meta,
         "items": items,
         "rejects": rejects,
+        "upstream_revision": upstream_revision,
+        "transport": _transport_summary(responses),
     }
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
+from datetime import datetime
 from typing import Any
 
 from hextech.contracts import GameSessionState, HealthState
@@ -23,13 +24,26 @@ def _source_state(snapshot_status: Mapping[str, Any], source: str) -> dict[str, 
     if isinstance(value, Mapping):
         freshness = str(value.get("freshness") or "unknown")
         data_status = str(value.get("data_status") or "unknown")
-        stale = freshness != "fresh" or data_status == "data_stale"
+        check_status = str(value.get("check_status") or "unknown")
+        evidence_bound = value.get("check_evidence_bound") is True
+        current = check_status == "up_to_date" and evidence_bound
+        stale = freshness != "fresh" or data_status != "fresh" or not current
+        reason = str(value.get("data_reason") or "") if stale else ""
+        if stale and not reason:
+            reason = {
+                "changed": "upstream_revision_changed",
+                "failed": "upstream_check_failed",
+            }.get(check_status, "upstream_check_unknown")
         return {
             "freshness": freshness,
             "data_status": data_status,
             "run_id": str(value.get("run_id") or ""),
-            "data_reason": str(value.get("data_reason") or "") if stale else "",
+            "data_reason": reason,
             "data_at": str(value.get("data_at") or ""),
+            "check_status": check_status,
+            "upstream_revision": str(value.get("upstream_revision") or ""),
+            "applied_revision": str(value.get("applied_revision") or ""),
+            "check_evidence_bound": "true" if evidence_bound else "false",
             "stale": "true" if stale else "false",
         }
     return {
@@ -38,6 +52,10 @@ def _source_state(snapshot_status: Mapping[str, Any], source: str) -> dict[str, 
         "run_id": "",
         "data_reason": "source_status_missing",
         "data_at": "",
+        "check_status": "unknown",
+        "upstream_revision": "",
+        "applied_revision": "",
+        "check_evidence_bound": "false",
         "stale": "true",
     }
 
@@ -79,22 +97,58 @@ def _annotate_blitz_fallback(
     if source_state["data_reason"]:
         row["data_reason"] = source_state["data_reason"]
     if source_state["stale"] == "true":
-        # stale Blitz 只能保留来源诊断，排名/tier 不得进入公开 DTO 或 Canvas。
-        row["stats"] = {
-            key: value
-            for key, value in row["stats"].items()
-            if key
-            not in {
-                "source_tier",
-                "champion_tier",
-                "rank",
-                "source_rank",
-                "score",
-            }
-        }
+        # 来源 DTO 已经通过同 Catalog 和字段校验；年龄只降健康度，不删除旧排名。
         row["data_status"] = "stale"
-        row["status_code"] = "STATS_STALE"
+        row["status_code"] = "GENERATION_DEGRADED"
     return row
+
+
+def _scoped_source_state(view: ScopedStatsView, status: Mapping[str, Any]) -> dict[str, str]:
+    """把 ranking 的检查证据严格绑定到当前英雄的 immutable component。"""
+
+    state = _source_state(status, "aramkit")
+    components = status.get("components")
+    ranking = components.get("ranking") if isinstance(components, Mapping) else None
+    champions = components.get("champions") if isinstance(components, Mapping) else None
+    component = champions.get(str(view.champion_id)) if isinstance(champions, Mapping) else None
+    reason = ""
+    if not isinstance(component, Mapping) or component.get("complete") is not True:
+        reason = "component_check_evidence_missing"
+    elif str(component.get("run_id") or "") != view.run_id:
+        reason = "component_run_mismatch"
+    elif not isinstance(ranking, Mapping) or (
+        str(component.get("catalog_id") or "") != str(ranking.get("catalog_id") or "")
+    ):
+        reason = "component_catalog_incompatible"
+    elif (
+        state["check_status"] != "up_to_date"
+        or state["check_evidence_bound"] != "true"
+        or not state["applied_revision"]
+        or state["applied_revision"] != state["upstream_revision"]
+        or str(component.get("source_version") or "") != state["applied_revision"]
+    ):
+        reason = (
+            "component_revision_outdated"
+            if state["check_status"] == "up_to_date"
+            else state["data_reason"] or "upstream_check_unknown"
+        )
+    if reason:
+        state = {
+            **state,
+            "freshness": "last_good" if state["freshness"] == "fresh" else state["freshness"],
+            "data_status": "data_stale",
+            "data_reason": reason,
+            "stale": "true",
+        }
+    else:
+        state = {
+            **state,
+            "freshness": "fresh",
+            "data_status": "fresh",
+            "data_reason": "",
+            "stale": "false",
+        }
+    return {**state, "run_id": view.run_id, "data_at": view.data_at}
 
 
 def apply_scoped_stage_stats(
@@ -105,6 +159,7 @@ def apply_scoped_stage_stats(
     scope_status: str,
     scope_reason: str,
     snapshot_status: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
 ) -> GameSessionState:
     """返回替换过统计行的新会话状态；原 DTO 和 Vision revision 保持不变。"""
 
@@ -114,6 +169,7 @@ def apply_scoped_stage_stats(
     status = snapshot_status if isinstance(snapshot_status, Mapping) else {}
     projected: list[dict[str, object]] = []
     any_degraded = False
+    del now  # 保留测试/调用兼容；数据生成年龄不再形成隐式 stale 门。
     for raw in recommendation.augment_slots:
         row: dict[str, Any] = dict(raw)
         if str(row.get("state") or "") != "ready" or str(row.get("status_code") or "") == "PRIVACY_OFF":
@@ -138,12 +194,12 @@ def apply_scoped_stage_stats(
         selection = scoped_view.select(canonical_id, stage_context.stage) if scoped_view and canonical_id else None
         if selection is not None and selection.record is not None:
             stats_payload = selection.to_stats_dict()
-            source_state = _source_state(status, "aramkit")
+            source_state = _scoped_source_state(scoped_view, status)
             stats_generation_id = str(scoped_view.generation_id or state.generation_id or "")
             stats_payload.update(
                 {
                     "stats_generation_id": stats_generation_id,
-                    "source_run_id": source_state["run_id"] or scoped_view.run_id,
+                    "source_run_id": scoped_view.run_id,
                     "source_freshness": source_state["freshness"],
                     "data_reason": source_state["data_reason"],
                     "source_data_at": source_state["data_at"],
@@ -155,7 +211,7 @@ def apply_scoped_stage_stats(
                     "data_status": "stale" if source_state["stale"] == "true" else "ready",
                     "data_reason": source_state["data_reason"],
                     # 过期但已通过同 Catalog、hash 和字段校验的 ARAMKit 仍是
-                    # 可核验的主统计：只降低健康度并在阶段栏提示，不清空百分比。
+                    # 可核验的主统计：只降低诊断健康度，不清空百分比或显示年龄。
                     # STATS_STALE 仅留给没有可安全展示统计的 fallback。
                     "status_code": "GENERATION_DEGRADED" if source_state["stale"] == "true" else "READY",
                     "stats": stats_payload,
@@ -165,7 +221,7 @@ def apply_scoped_stage_stats(
                     "stats_fallback_reason": selection.fallback_reason,
                     "requested_stage": stage_context.stage,
                     "source_freshness": source_state["freshness"],
-                    "source_run_id": source_state["run_id"] or scoped_view.run_id,
+                    "source_run_id": scoped_view.run_id,
                     "source_data_at": source_state["data_at"],
                 }
             )
@@ -187,6 +243,7 @@ def apply_scoped_stage_stats(
                 stats_generation_id=str(state.generation_id or ""),
             )
         )
+        any_degraded = any_degraded or projected[-1].get("status_code") == "GENERATION_DEGRADED"
 
     health = HealthState.DEGRADED if any_degraded else recommendation.health
     updated_recommendation = replace(

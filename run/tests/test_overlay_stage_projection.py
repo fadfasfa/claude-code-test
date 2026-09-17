@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 from types import MappingProxyType
 
 import pytest
@@ -89,12 +90,47 @@ def _context(stage: int | None = 1) -> StageContextV1:
     return StageContextV1(champion_id="1", game_instance_id="game-1", stage=stage, status="ready")
 
 
+def test_fresh_hero_statistics_do_not_inherit_old_global_ranking_freshness():
+    now = datetime.now(timezone.utc)
+    hero_at = (now - timedelta(minutes=5)).isoformat()
+    scoped = replace(_view(stage_record=_record(1500), all_record=_record(2000)),
+                     run_id="hero-fresh", data_at=hero_at)
+    status = {"source_status": {"aramkit": {
+        "run_id": "ranking-old", "freshness": "last_good", "data_status": "data_stale",
+        "data_reason": "source_data_expired", "data_at": "2020-01-01T00:00:00Z",
+        "check_status": "up_to_date", "check_evidence_bound": True,
+        "upstream_revision": "data/test", "applied_revision": "data/test",
+    }}, "components": {
+        "ranking": {"run_id": "ranking-old", "source_version": "data/test", "catalog_id": "catalog-1"},
+        "champions": {"1": {"run_id": "hero-fresh", "source_version": "data/test",
+                                "catalog_id": "catalog-1", "complete": True}},
+    }}
+    projected = apply_scoped_stage_stats(_state(), stage_context=_context(), scoped_view=scoped,
+        scope_status="ready", scope_reason="", snapshot_status=status, now=now)
+    row = projected.recommendation.augment_slots[0]
+    assert row["source_run_id"] == "hero-fresh"
+    assert row["source_data_at"] == hero_at
+    assert row["source_freshness"] == "fresh"
+    assert row["data_reason"] == ""
+    assert row["status_code"] == "READY"
+
+
 def _source_status() -> dict:
     return {
         "state": "ready",
         "source_status": {
-            "aramkit": {"freshness": "fresh", "data_status": "fresh", "run_id": "aramkit-run"},
-            "blitz": {"freshness": "fresh", "data_status": "fresh", "run_id": "blitz-run"},
+            "aramkit": {"freshness": "fresh", "data_status": "fresh", "run_id": "aramkit-ranking",
+                        "check_status": "up_to_date", "check_evidence_bound": True,
+                        "upstream_revision": "data/test", "applied_revision": "data/test"},
+            "blitz": {"freshness": "fresh", "data_status": "fresh", "run_id": "blitz-run",
+                      "check_status": "up_to_date", "check_evidence_bound": True,
+                      "upstream_revision": "blitz-v1", "applied_revision": "blitz-v1"},
+        },
+        "components": {
+            "ranking": {"run_id": "aramkit-ranking", "source_version": "data/test",
+                        "catalog_id": "catalog-1"},
+            "champions": {"1": {"run_id": "aramkit-run", "source_version": "data/test",
+                                    "catalog_id": "catalog-1", "complete": True}},
         },
     }
 
@@ -178,16 +214,15 @@ def test_stale_aramkit_record_keeps_private_and_visible_percentages_with_stage_n
     assert row["status_code"] == "GENERATION_DEGRADED"
     assert row["data_status"] == "stale"
     assert row["stats_source"] == "aramkit"
-    assert row["source_run_id"] == "aramkit-last-good"
+    assert row["source_run_id"] == "aramkit-run"
     assert row["stats_generation_id"] == "generation-1"
-    # 内部 DTO 与用户可见模型都保留可信百分比；年龄提示移到阶段区域。
+    # 内部 DTO 保留时效诊断；Canvas 只显示仍可信的百分比，不显示年龄。
     assert row["stats"]["winrate"] == 0.6
     assert row["stats"]["pickrate"] == 0.05
     assert rendered["stats_text"] == "胜率 60.0% · 出场 5.0%"
     assert rendered["status_text"] == ""
     session_model = build_render_model_from_session(projected)
-    assert session_model["data_notice"]["state"] == "stale"
-    assert "统计数据为 4 天前" in session_model["data_notice"]["text"]
+    assert session_model.get("data_notice") is None
     visible = " ".join(
         str(rendered.get(field) or "")
         for field in ("stats_text", "status_text", "winrate_text", "pickrate_text")
@@ -196,7 +231,7 @@ def test_stale_aramkit_record_keeps_private_and_visible_percentages_with_stage_n
     assert "5.0%" in visible
 
 
-def test_new_generation_notice_overrides_stale_age_for_current_epoch() -> None:
+def test_new_generation_remains_diagnostic_without_canvas_age_notice() -> None:
     source_status = _source_status()
     source_status["source_status"]["aramkit"] = {
         "freshness": "last_good",
@@ -224,10 +259,8 @@ def test_new_generation_notice_overrides_stale_age_for_current_epoch() -> None:
     )
 
     assert model["stats"][0]["stats_text"] == "胜率 60.0% · 出场 5.0%"
-    assert model["data_notice"]["state"] == "updating"
-    assert model["data_notice"]["reason"] == "new_generation_available"
-    assert model["stage_indicator"]["data_notice"] == model["data_notice"]
-    assert model["data_notice"]["text"] == "当前选择沿用上一代统计，下一轮采用新数据"
+    assert model.get("data_notice") is None
+    assert model["stage_indicator"].get("data_notice") is None
 
 
 def test_missing_stage_falls_back_to_all_and_hides_tiny_sample_rates() -> None:
@@ -269,7 +302,7 @@ def test_missing_aramkit_champion_keeps_blitz_tier_with_explicit_reason() -> Non
     assert rendered["winrate_text"] == ""
 
 
-def test_stale_blitz_fallback_removes_tier_and_rank_from_public_row() -> None:
+def test_stale_verified_blitz_fallback_keeps_rank_without_age_notice() -> None:
     source_status = _source_status()
     source_status["state"] = "degraded"
     source_status["source_status"]["blitz"] = {
@@ -289,12 +322,11 @@ def test_stale_blitz_fallback_removes_tier_and_rank_from_public_row() -> None:
     row = projected.recommendation.augment_slots[0]  # type: ignore[union-attr]
     rendered = build_render_model_from_session(projected)["stats"][0]
 
-    assert row["status_code"] == "STATS_STALE"
-    assert not {"source_tier", "champion_tier", "rank", "source_rank", "score"}.intersection(
-        row["stats"]
-    )
-    assert "T1" not in rendered["stats_text"]
-    assert "T3" not in rendered["stats_text"]
+    assert row["status_code"] == "GENERATION_DEGRADED"
+    assert row["source_freshness"] == "last_good"
+    assert row["data_status"] == "stale"
+    assert rendered["stats_text"] == "该英雄 T1 · 全局 T3"
+    assert rendered["status_text"] == ""
 
 
 def test_preparing_scope_does_not_show_blitz_early() -> None:

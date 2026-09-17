@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from hextech.infrastructure.persistence.diagnostic_retention import get_diagnostic_retention_worker
+from hextech.modules.vision.diagnostic_settings import selection_capture_enabled
 
 
 def run_loop(
@@ -32,11 +33,10 @@ def run_loop(
 
     retention_worker = get_diagnostic_retention_worker()
     retention_worker.request()
-    failure_writer = (
-        runner.FailureEvidenceWriter(retention_worker=retention_worker)
-        if write_event
-        else None
-    )
+    # Diagnostic capture availability is independent of public event-file publication.
+    failure_writer = runner.FailureEvidenceWriter(retention_worker=retention_worker) if selection_capture_enabled() else None
+    if failure_writer is not None:
+        failure_writer.start()  # Read existing counts off-thread before the next suspected scene.
     diagnostic_writer = runner.VisionDiagnosticWriter(
         trace_writer=vision_sidecar.write_vision_trace_if_changed,
         timeline_writer=vision_sidecar.write_selection_timeline_observation,

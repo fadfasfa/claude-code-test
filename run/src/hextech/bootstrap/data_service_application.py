@@ -91,6 +91,14 @@ class DataServiceApplication:
         """把 action 生命周期投影为 UI 可直接消费的稳定刷新状态。"""
 
         active = self._active_action or {}
+        progress = core_status.get("executor_progress")
+        if isinstance(progress, Mapping) and progress.get("state") != "idle" and (
+            not active or float(progress.get("started_at") or 0) >= float(active.get("started_at") or 0)
+        ):
+            # 来源/阶段/计数只由执行器提供。旧测试适配器没有该接口时才走旧action状态。
+            return {**dict(progress), "scope": normalize_refresh_scope(active.get("scope")),
+                    "pending_sources": ([str(progress["source"])] if progress.get("source") and
+                                        progress.get("state") in {"running", "core_ready"} else [])}
         if active.get("type") == "refresh":
             scope = normalize_refresh_scope(active.get("scope"))
             return _refresh_status_payload(
@@ -141,6 +149,18 @@ class DataServiceApplication:
             pending_sources=[str(item) for item in result.get("pending_sources") or []],
             started_at=float(last_refresh.get("started_at") or 0.0),
             completed_at=float(last_refresh.get("completed_at") or 0.0),
+            checked_at=float(result.get("checked_at") or 0.0),
+            data_at=str(result.get("data_at") or ""),
+            checked=bool(result.get("checked")),
+            content_changed=bool(result.get("content_changed")),
+            catalog_changed=bool(result.get("catalog_changed")),
+            last_good_available=bool(result.get("last_good_available")),
+            source_outcomes=(
+                dict(result.get("source_outcomes") or {})
+                if isinstance(result.get("source_outcomes"), Mapping)
+                else {}
+            ),
+            catalog_state=str(result.get("catalog_state") or ""),
         )
 
     def _last_refresh_locked(self) -> Mapping[str, Any] | None:
@@ -266,7 +286,7 @@ def _terminal_refresh_state(result: Mapping[str, Any], reason: str) -> str:
         return "deferred"
     if (
         result.get("state") == "failed"
-        or "failed" in reason
+        or ("failed" in reason and reason != "core_complete_optional_failed")
         or reason
         in {
             "data_stale",
@@ -276,6 +296,12 @@ def _terminal_refresh_state(result: Mapping[str, Any], reason: str) -> str:
         }
     ):
         return "failed"
+    if type(result.get("checked")) is bool:
+        if not result.get("checked"):
+            return "failed"
+        if result.get("content_changed") or result.get("catalog_changed"):
+            return "completed"
+        return "unchanged"
     if reason in {"not_stale", "no_content_change"} or result.get(
         "promotion_disposition"
     ) == "unchanged":
@@ -293,6 +319,14 @@ def _refresh_status_payload(
     pending_sources: list[str] | None = None,
     started_at: float = 0.0,
     completed_at: float = 0.0,
+    checked_at: float = 0.0,
+    data_at: str = "",
+    checked: bool = False,
+    content_changed: bool = False,
+    catalog_changed: bool = False,
+    last_good_available: bool = False,
+    source_outcomes: Mapping[str, Any] | None = None,
+    catalog_state: str = "",
 ) -> dict[str, Any]:
     return {
         "state": state,
@@ -303,6 +337,14 @@ def _refresh_status_payload(
         "pending_sources": list(pending_sources or []),
         "started_at": started_at,
         "completed_at": completed_at,
+        "checked_at": checked_at,
+        "data_at": data_at,
+        "checked": checked,
+        "content_changed": content_changed,
+        "catalog_changed": catalog_changed,
+        "last_good_available": last_good_available,
+        "source_outcomes": dict(source_outcomes or {}),
+        "catalog_state": catalog_state,
     }
 
 

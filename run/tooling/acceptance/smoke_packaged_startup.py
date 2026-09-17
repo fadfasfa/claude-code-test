@@ -116,12 +116,21 @@ def _validate_bundle_contract(package_dir: Path) -> dict[str, object]:
     if cohort:
         if (
             not isinstance(cohort, dict)
-            or int(cohort.get("schema_version") or 0) != 1
+            or int(cohort.get("schema_version") or 0) not in {1, 2}
             or int(cohort.get("production_pool_count") or 0) <= 0
             or not payload.get("cohort_seed_files")
             or not payload.get("cohort_seed_sha256")
         ):
             raise SmokeFailure("bundle manifest cohort seed 合同无效")
+        if int(cohort["schema_version"]) == 2 and (
+            cohort.get("snapshot_schema_version") != 3 or not isinstance(cohort.get("units"), dict)
+            or not cohort["units"]
+        ):
+            raise SmokeFailure("v3 cohort seed 必须声明完整 units 闭包")
+        if "recognition_catalog_generation_id" in cohort and not str(
+            cohort.get("recognition_catalog_generation_id") or ""
+        ).strip():
+            raise SmokeFailure("cohort seed recognition Catalog identity 无效")
     return payload
 
 
@@ -138,8 +147,8 @@ def _latest_package(dist_dir: Path) -> Path:
 
 
 def _copy_clean_package(source: Path, smoke_root: Path) -> Path:
-    if smoke_root.exists():
-        shutil.rmtree(smoke_root)
+    if smoke_root.exists() and any(smoke_root.iterdir()):
+        raise SmokeFailure("smoke root 已有证据；请使用新的隔离目录")
     smoke_root.mkdir(parents=True, exist_ok=True)
     target = smoke_root / source.name
     shutil.copytree(source, target)
@@ -493,13 +502,24 @@ def _required_paths_ready(package_dir: Path, runtime_root: Path, started_at_wall
         checks["package:resources/cohort-seed/catalog/current.v2.json"] = (
             _packaged_data_root(package_dir) / "resources" / "cohort-seed" / "catalog" / "current.v2.json"
         ).is_file()
-        for rel in (
+        source_pointers = (
             "catalog/current.v2.json",
             "sources/aramkit/current.v2.json",
             "sources/blitz/current.v2.json",
             "sources/apex/current.v2.json",
             "sources/mayhem/current.v2.json",
-        ):
+        )
+        seed_root = _packaged_data_root(package_dir) / "resources" / "cohort-seed"
+        cohort = _read_json_file(_packaged_data_root(package_dir) / "bundle_manifest.json").get("cohort_seed")
+        incremental = (isinstance(cohort, dict)
+                       and cohort.get("schema_version") == 2
+                       and cohort.get("snapshot_schema_version") == 3
+                       and bool(cohort.get("units")))
+        for rel in source_pointers:
+            # v3 消费快照固定的 unit closure；不存在的 Optional current 不是合同。
+            # seed 已携带的指针仍须安装，v2 保留原来的全来源要求。
+            if incremental and rel != "catalog/current.v2.json" and not (seed_root / rel).is_file():
+                continue
             checks[f"runtime:{rel}"] = (runtime_root / rel).is_file()
     for rel in REQUIRED_RUNTIME_DIRS:
         checks[f"runtime:{rel}"] = (runtime_root / rel).is_dir()
@@ -967,6 +987,12 @@ def _sidecar_pool_smoke(
     cohort = bundle_manifest.get("cohort_seed")
     if not isinstance(cohort, dict) or not cohort:
         return {"state": "not_applicable"}
+    from tooling.build.recognition_contract import recognition_pool_contract
+
+    try:
+        recognition = recognition_pool_contract(runtime_root, cohort)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise SmokeFailure(f"Sidecar recognition Catalog 无效：{type(exc).__name__}: {exc}") from exc
     status_path = runtime_root / "state" / "game_overlay_sidecar_status.json"
     status_path.unlink(missing_ok=True)
     env = dict(child_env)
@@ -994,7 +1020,9 @@ def _sidecar_pool_smoke(
         raise SmokeFailure(f"Sidecar pool smoke 状态不可读：{type(exc).__name__}") from exc
     if not isinstance(status, dict):
         raise SmokeFailure("Sidecar pool smoke 状态必须是对象")
-    expected_pool_count = int(cohort.get("production_pool_count") or 0)
+    expected_pool_count = int(recognition["production_pool_count"])
+    from hextech.modules.acquisition.hextech.production_pool import production_capability_status_valid
+
     matrix_rows = status.get("matrix_rows")
     excluded = status.get("excluded_reason_counts")
     checks = {
@@ -1009,14 +1037,17 @@ def _sidecar_pool_smoke(
         "generation_roles": str(status.get("stats_generation_id") or "") == ""
         and isinstance(status.get("generation_roles"), dict),
         "catalog_generation": str(status.get("catalog_generation_id") or "")
-        == str(cohort.get("catalog_generation_id") or ""),
-        "pool_id": str(status.get("production_pool_id") or "") == str(cohort.get("production_pool_id") or ""),
+        == recognition["catalog_generation_id"],
+        "recognition_catalog": str(status.get("recognition_catalog_id") or "")
+        == recognition["recognition_catalog_id"],
+        "pool_id": str(status.get("production_pool_id") or "") == recognition["production_pool_id"],
         "pool_state": status.get("production_pool_state") == "ready",
         "pool_count": int(status.get("production_pool_count") or 0) == expected_pool_count,
         "full_catalog_count": int(status.get("full_catalog_count") or 0)
-        == int(cohort.get("full_catalog_count") or 0),
+        == recognition["full_catalog_count"],
         "rank_identity_count": int(status.get("rank_identity_count") or 0) == expected_pool_count,
-        "matrix_rows": isinstance(matrix_rows, dict)
+        "matrix_rows": production_capability_status_valid(status, expected_pool_count)
+        if status.get("production_pool_schema_version") == 2 else isinstance(matrix_rows, dict)
         and all(int(matrix_rows.get(channel) or 0) >= expected_pool_count for channel in ("icon", "name", "alt_name"))
         and int(matrix_rows.get("observed_name") or 0) > 0,
         "no_unresolved": isinstance(excluded, dict)
@@ -1100,6 +1131,10 @@ def run_smoke(
 ) -> dict[str, object]:
     bundle_manifest = _validate_bundle_contract(package_dir)
     exe = _find_exe(package_dir)
+    conflict = _runtime_environment_conflict(exe)
+    if conflict:
+        return {"ok": False, "fixture": fixture, "package_dir": str(package_dir),
+                "blocked_reason": conflict, "last_error": conflict}
     _find_launcher(package_dir)
     _validate_windows_gui_subsystem(exe)
     stdout_path = package_dir / f"smoke_startup_{fixture}_stdout.log"
@@ -1108,6 +1143,9 @@ def run_smoke(
     appdata_root = package_dir.parent / f"appdata-{fixture}"
     child_env["LOCALAPPDATA"] = str(appdata_root / "Local")
     child_env["APPDATA"] = str(appdata_root / "Roaming")
+    # Parent build/test overrides must never merge the three isolated runtime fixtures.
+    child_env["HEXTECH_VAR_DIR"] = str(_get_packaged_runtime_root(child_env))
+    child_env["HEXTECH_DATA_SERVICE_SKIP_AUTO_REFRESH"] = "1"
     child_env["PYTHONDONTWRITEBYTECODE"] = "1"
     child_env["HEXTECH_LAUNCHER_WAIT"] = "1"
     child_env["HEXTECH_EXPECTED_BUILD_ID"] = str(bundle_manifest.get("build_id") or "")
@@ -1184,6 +1222,10 @@ def run_smoke(
         sidecar_pool: dict[str, object] = {}
         chain_ready = False
         while time.monotonic() - started_at < timeout_seconds:
+            conflict = _runtime_environment_conflict(exe)
+            if conflict:
+                last_error = conflict
+                break
             checks = _required_paths_ready(package_dir, runtime_root, started_at_wall)
             if all(checks.values()):
                 chain_checks, chain = _overlay_chain_status(
@@ -1270,6 +1312,32 @@ def run_smoke(
         "diagnostic_retention": diagnostic_retention,
         "last_error": "",
     }
+
+
+def _runtime_environment_conflict(expected_exe: Path) -> str:
+    """Native fixtures must not compete with a user's live game or another runtime.
+
+    Only process names and the matching app's executable path are inspected;
+    command lines, credentials and external window contents are never read.
+    """
+    import psutil
+    expected = str(expected_exe.resolve()).casefold()
+    try:
+        for process in psutil.process_iter(["name"]):
+            name = str(process.info.get("name") or "").casefold()
+            if name == "league of legends.exe":
+                return "real_game_active_smoke_requires_idle_environment"
+            if name == "hextech伴生终端.exe":
+                try:
+                    if str(Path(process.exe()).resolve()).casefold() != expected:
+                        return "other_hextech_runtime_active"
+                except psutil.NoSuchProcess:
+                    continue
+                except psutil.Error:
+                    return "other_hextech_runtime_identity_unknown"
+    except psutil.Error:
+        return "runtime_environment_probe_failed"
+    return ""
 
 
 def main() -> int:

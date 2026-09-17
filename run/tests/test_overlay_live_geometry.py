@@ -5,6 +5,13 @@ import pytest
 
 from hextech.interfaces.overlay import host_geometry, host_sync
 from hextech.modules.vision import window
+from support.host_input import PreloadedInputObserver
+
+
+@pytest.fixture(autouse=True)
+def preloaded_input(monkeypatch):
+    from hextech.interfaces.overlay import host_runner
+    monkeypatch.setattr(host_runner, "HostInputObserver", PreloadedInputObserver)
 
 
 def test_translation_invalidates_queued_mapping_without_hiding_canvas(monkeypatch):

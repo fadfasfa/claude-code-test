@@ -182,6 +182,8 @@ def _covered_by_span(epoch: int, sequence: int, spans: Sequence[Mapping[str, Any
 
 
 def _label_matches(slot: Mapping[str, Any], span: Mapping[str, Any]) -> bool:
+    if _negative_span(span):
+        return False
     expected_id = str(span.get("augment_id") or "")
     expected_name = str(span.get("name") or "")
     return bool(
@@ -189,6 +191,18 @@ def _label_matches(slot: Mapping[str, Any], span: Mapping[str, Any]) -> bool:
         and _integer(slot.get("slot_generation")) == _integer(span.get("slot_generation"))
         and (not expected_id or str(slot.get("augment_id") or "") == expected_id)
         and (not expected_name or str(slot.get("name") or "") == expected_name)
+    )
+
+
+def _negative_span(span: Mapping[str, Any]) -> bool:
+    return str(span.get("selection_type") or "") in {"non_hextech", "body_shard"}
+
+
+def _active_hextech(record: Mapping[str, Any]) -> bool:
+    return bool(
+        record.get("selection_type") == "hextech"
+        and record.get("scene_state") == "active"
+        and record.get("selection_window_active") is True
     )
 
 
@@ -337,7 +351,9 @@ def build_overlay_truth_report(
         end = _integer(span.get("end_observation_seq"))
         if start <= 0 or end < start:
             valid = False
-        if not str(span.get("augment_id") or "") and not str(span.get("name") or ""):
+        if str(span.get("selection_type") or "hextech") not in {"hextech", "non_hextech", "body_shard"}:
+            valid = False
+        if not _negative_span(span) and not str(span.get("augment_id") or "") and not str(span.get("name") or ""):
             valid = False
         if valid:
             valid_spans.append(span)
@@ -428,10 +444,9 @@ def build_overlay_truth_report(
         eligible = bool(
             _integer(record.get("schema_version")) == 2
             and str(record.get("observation_kind") or "recognition") == "recognition"
-            and str(record.get("capture_status") or "") == "captured"
-            and str(record.get("selection_type") or "") == "hextech"
-            and str(record.get("scene_state") or "") == "active"
-            and record.get("selection_window_active") is True
+            and (_covered_by_span(epoch, sequence, valid_spans) or (
+                str(record.get("capture_status") or "") == "captured" and _active_hextech(record)
+            ))
             and str(record.get("build_id") or "") == selected_build
             and str(record.get("session_id") or record.get("game_instance_id") or "") == selected_session
             and str(record.get("sidecar_instance_id") or "") == selected_sidecar
@@ -444,6 +459,14 @@ def build_overlay_truth_report(
                 _add_reason(excluded, "truth_frame_coverage_incomplete")
     report["eligible_timeline_epochs"] = sorted({epoch for epoch, _ in eligible_timeline_keys})
     report["eligible_timeline_frame_count"] = len(eligible_timeline_keys)
+    # observation_seq may also contain heartbeats; require labelled endpoints and
+    # every recognition within each span, not an invented dense sequence range.
+    for span in valid_spans:
+        epoch = _integer(span.get("selection_epoch"))
+        for field in ("start_observation_seq", "end_observation_seq"):
+            key = (epoch, _integer(span.get(field)))
+            if key not in truth_keys or key not in eligible_timeline_keys:
+                errors.append("human_truth_span_boundary_missing")
     timeline_by_key: dict[tuple[int, int], Mapping[str, Any]] = {}
     seen_timeline_identity: set[tuple[Any, ...]] = set()
     previous_timeline_seq: dict[int, int] = {}
@@ -519,14 +542,6 @@ def build_overlay_truth_report(
         if str(record.get("capture_status") or "") != "captured":
             report["invalid_result_count"] += 1
             _add_reason(excluded, "timeline_frame_not_captured")
-            continue
-        if not (
-            str(record.get("selection_type") or "") == "hextech"
-            and str(record.get("scene_state") or "") == "active"
-            and record.get("selection_window_active") is True
-        ):
-            report["invalid_result_count"] += 1
-            _add_reason(excluded, "inactive_or_non_hextech_frame")
             continue
         if abs(_number(record.get("captured_at")) - _number(frame.get("captured_at"))) > _TIME_TOLERANCE_SECONDS:
             report["invalid_result_count"] += 1
@@ -606,7 +621,8 @@ def build_overlay_truth_report(
             for slot_index, span in enumerate(frame_spans)
         )
         state_key = (epoch, state_span_keys)
-        state_started_at[state_key] = min(state_started_at.get(state_key, start), start)
+        if not any(_negative_span(span) for span in frame_spans):
+            state_started_at[state_key] = min(state_started_at.get(state_key, start), start)
         for span_key in state_span_keys:
             span_started_at[span_key] = min(span_started_at.get(span_key, start), start)
             span_last_at[span_key] = max(span_last_at.get(span_key, ready_at), ready_at)
@@ -628,7 +644,8 @@ def build_overlay_truth_report(
                 _integer(span.get("start_observation_seq")),
                 _integer(span.get("end_observation_seq")),
             )
-            correct = _label_matches(slot, span)
+            label_matches = _label_matches(slot, span)
+            correct = label_matches and _active_hextech(record)
             all_correct = all_correct and correct
             if correct and span_key not in first_correct:
                 first_correct[span_key] = {
@@ -641,7 +658,7 @@ def build_overlay_truth_report(
                     "ready_at": ready_at,
                     "latency_ms": round((ready_at - span_started_at[span_key]) * 1000.0, 3),
                 }
-            elif str(slot.get("state") or "") == "ready" and not correct:
+            elif str(slot.get("state") or "") == "ready" and not label_matches:
                 false_ready_records.append(
                     {
                         "selection_epoch": epoch,
@@ -690,7 +707,9 @@ def build_overlay_truth_report(
     all_three_p95 = _percentile(all_three_samples, 95)
     expected_states = set(state_started_at)
     all_three_passed = bool(
-        expected_states
+        not errors
+        and report["invalid_result_count"] == 0
+        and expected_states
         and expected_states == set(all_three_by_state)
         and all_three_p95 is not None
         and all_three_p95 <= ALL_THREE_CORRECT_TARGET_MS
@@ -716,13 +735,10 @@ def build_overlay_truth_report(
             _integer(span.get("end_observation_seq")),
         )
         span_by_key[key] = span
-    truth_frame_positions = [
-        (_integer(frame.get("selection_epoch")), _integer(frame.get("observation_seq"))) for frame in unique_frames
-    ]
     expected_span_keys = {
         key
         for key in span_by_key
-        if any(epoch == key[0] and key[3] <= sequence <= key[4] for epoch, sequence in truth_frame_positions)
+        if not _negative_span(span_by_key[key])
     }
     for key in sorted(expected_span_keys - set(first_correct)):
         epoch, slot_index, generation, start_seq, end_seq = key

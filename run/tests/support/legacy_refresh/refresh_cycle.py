@@ -1,3 +1,4 @@
+# Frozen V2 regression baseline only; not a production runtime entry point.
 """DataService 单次两阶段刷新事务。
 
 本模块只承载 ``CohortRefreshCoordinator.refresh`` 的事务编排，以控制主协调器体积；
@@ -16,8 +17,8 @@ from hextech.bootstrap.game_refresh_gate import (
     RefreshStopRequested,
     normalize_refresh_scope,
 )
-from hextech.bootstrap.source_freshness import iso_utc
-from hextech.bootstrap.source_worker_failure import SourceWorkerFailure
+from .source_freshness import iso_utc
+from .source_worker_failure import SourceWorkerFailure
 from hextech.infrastructure.persistence.refresh_schedule import SCHEDULE_SOURCES
 from hextech.modules.data.ports.atomic import atomic_write_json
 

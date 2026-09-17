@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter, deque
 from dataclasses import dataclass
 import math
+import time
 from typing import Any, Mapping, Sequence
 from PIL import Image
 
@@ -73,6 +74,17 @@ class OcrBatch:
     inflight_keys: tuple[tuple[str, ...], ...] = ()
     production: bool = False
     submitted_at: float = 0.0
+    submitted_wall_at: float = 0.0
+
+
+def build_inference_result(input_sha256: str, raw_text: str, confidence: float, match: Mapping[str, Any],
+                           *, elapsed_ms: float, task: OcrBatch, started_at: float) -> dict[str, Any]:
+    return {"state": "ready", "input_sha256": input_sha256, "raw_text": str(raw_text),
+            "confidence": round(float(confidence), 6), "elapsed_ms": elapsed_ms,
+            "scene_negative": classify_scene_negative(raw_text, confidence), **match,
+            "inference_timing": {"batch_first_queued_at": task.submitted_wall_at,
+                                 "inference_started_at": started_at,
+                                 "inference_completed_at": time.time()}}
 
 
 def build_production_evidence(
@@ -80,6 +92,7 @@ def build_production_evidence(
     context: OcrEvidenceContext,
     *,
     minimum_confidence: float,
+    cache_hit: bool = False,
 ) -> dict[str, Any]:
     admitted = bool(
         str(result.get("match_rule") or "") == "exact"
@@ -108,6 +121,11 @@ def build_production_evidence(
         "match_rule": str(result.get("match_rule") or ""),
         "acceptance_rule": "ocr_exact_fallback" if admitted else "",
         "scene_negative": scene_negative,
+        # Cached inference retains its original clock, never pretends to be a
+        # fresh inference for a new captured frame. Context binding is separate.
+        "inference_timing": dict(result.get("inference_timing") or {}),
+        "inference_reused": cache_hit,
+        "evidence_bound_at": time.time(),
     }
 
 

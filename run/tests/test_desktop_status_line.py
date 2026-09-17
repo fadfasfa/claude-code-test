@@ -108,16 +108,16 @@ def test_snapshot_data_timestamp_prefers_aramkit_data_at_and_falls_back_when_mis
 
 def test_refresh_status_copy_covers_running_deferred_and_terminal_states() -> None:
     assert format_data_refresh_status({"state": "running", "scope": "core"}) == (
-        "正在刷新核心数据",
+        "正在检测核心数据",
         UI_COLORS["warn"],
     )
     assert format_data_refresh_status(
         {"state": "running", "scope": "core", "reason_code": "resumed_after_game"}
-    )[0] == "赛后继续刷新"
+    )[0] == "赛后继续检测"
     assert format_data_refresh_status({"state": "deferred"})[0] == "对局中暂停，赛后继续"
-    assert format_data_refresh_status({"state": "completed"})[0] == "数据已更新"
+    assert format_data_refresh_status({"state": "completed"})[0] == "数据处理完成，更新状态未知"
     assert format_data_refresh_status({"state": "unchanged"})[0] == "数据已检查，无变化"
-    assert format_data_refresh_status({"state": "failed"})[0] == "刷新失败，沿用旧数据"
+    assert format_data_refresh_status({"state": "failed"})[0] == "检测失败，继续使用已验证数据"
 
 
 def test_refresh_running_is_sticky_and_old_terminal_yields_to_overlay(monkeypatch) -> None:
@@ -135,7 +135,7 @@ def test_refresh_running_is_sticky_and_old_terminal_yields_to_overlay(monkeypatc
             "completed_at": 0,
         }
     )
-    assert ui.status_line_label.text == "正在刷新核心数据"
+    assert ui.status_line_label.text == "正在检测核心数据"
 
     ui._set_data_refresh_status(
         {
@@ -414,3 +414,99 @@ def test_list_scrollbar_only_appears_on_overflow() -> None:
     HextechUI._sync_list_scrollbar(unmeasured)
     assert unmeasured.list_scrollbar.mapped is False
     assert unmeasured._yview_moves == []
+
+
+def test_unchanged_core_keeps_independent_optional_failure_visible():
+    from hextech.interfaces.desktop.app_shared import format_data_refresh_status
+    text, _ = format_data_refresh_status({"state": "unchanged", "reason_code": "no_content_change",
+        "checked_at": 100.0, "data_at": "2026-08-01T00:00:00Z",
+        "optional_sources": {"apex": {"state": "failed"}, "mayhem": {"state": "completed"}}})
+    assert "无变化" in text and "可选来源待重试" in text
+    assert "已更新" not in text
+
+
+def test_authoritative_refresh_copy_distinguishes_content_catalog_and_availability():
+    base = {"checked": True, "content_changed": False, "catalog_changed": False}
+    assert format_data_refresh_status({"state": "unchanged", **base})[0] == "已检查，与上游一致"
+    assert format_data_refresh_status({"state": "completed", **base, "catalog_changed": True})[0] == "识别目录已更新"
+    assert format_data_refresh_status({"state": "completed", **base, "content_changed": True})[0] == "数据已更新"
+    text, color = format_data_refresh_status({"state": "unchanged", **base, "source_outcomes": {
+        "blitz": {"state": "confirmed_empty", "availability": "confirmed_empty", "checked": True},
+    }})
+    assert text == "已检来源与上游一致 · Blitz 已确认无记录"
+    assert color == UI_COLORS["green"]
+    text, color = format_data_refresh_status({"state": "unchanged", **base,
+        "reason_code": "core_complete_optional_failed", "source_outcomes": {
+            "aramkit": {"state": "unchanged", "checked": True},
+            "blitz": {"state": "unavailable", "availability": "unavailable"},
+        }})
+    assert text == "已检来源与上游一致 · Blitz 暂不可用"
+    assert color == UI_COLORS["warn"]
+    text, color = format_data_refresh_status({"state": "unchanged", **base,
+        "catalog_state": "deferred"})
+    assert text == "已检查，与上游一致 · 识别资源赛后更新"
+    assert color == UI_COLORS["warn"]
+    inconsistent = {"state": "unchanged", **base, "checked": False}
+    assert format_data_refresh_status(inconsistent)[0] == "刷新未完成"
+
+
+def test_failed_refresh_only_claims_last_good_when_a_valid_source_was_preserved():
+    unavailable = {"state": "failed", "checked": False, "content_changed": False,
+                   "catalog_changed": False, "source_outcomes": {
+                       "blitz": {"state": "unavailable", "used_last_good": False}}}
+    assert format_data_refresh_status(unavailable)[0] == "检测失败，暂无可用数据"
+    preserved = {**unavailable, "source_outcomes": {
+        "aramkit": {"state": "last_good", "used_last_good": True}}}
+    assert format_data_refresh_status(preserved)[0] == "检测失败，继续使用已验证数据"
+    legacy_preserved = {**unavailable, "last_good_available": True, "source_outcomes": {}}
+    assert format_data_refresh_status(legacy_preserved)[0] == "检测失败，继续使用已验证数据"
+
+
+def test_not_due_and_partial_check_copy_never_claims_every_source_was_checked():
+    base = {"checked": False, "content_changed": False, "catalog_changed": False}
+    not_due = {**base, "state": "unchanged", "source_outcomes": {
+        "aramkit": {"state": "not_due"}, "apex": {"state": "not_due"},
+    }}
+    assert format_data_refresh_status(not_due)[0] == "尚未到检测时间"
+
+    partial = {**base, "checked": True, "state": "unchanged", "source_outcomes": {
+        "aramkit": {"state": "unchanged", "checked": True, "check_status": "up_to_date"},
+        "apex": {"state": "not_due"},
+    }}
+    assert format_data_refresh_status(partial)[0] == "已检来源与上游一致"
+
+
+def test_snapshot_generation_watch_reloads_without_inventing_refresh_copy():
+    from threading import RLock
+
+    class StopAfterOne:
+        calls = 0
+
+        def wait(self, _seconds):
+            self.calls += 1
+            return self.calls > 1
+
+    view = SimpleNamespace(
+        status=lambda: {"generation_id": "generation-new", "created_at": "2026-09-15T00:00:00Z"},
+        get_champions=lambda: [{"id": "1", "name": "测试英雄"}],
+    )
+    client = SimpleNamespace(status=view.status, open_view=lambda: view)
+    ui = object.__new__(HextechUI)
+    ui.stop_event = StopAfterOne()
+    ui._snapshot_client = client
+    ui.data_service = None
+    ui._snapshot_generation_id = "generation-old"
+    ui._champions_lock = RLock()
+    ui.champions = []
+    ui.current_candidate_groups = {}
+    ui._data_created_ts = 0.0
+    rendered = []
+    ui._run_on_ui_thread = lambda callback: callback() or True
+    ui.update_ui = lambda groups: rendered.append(groups)
+    ui._set_status = lambda *_args: (_ for _ in ()).throw(AssertionError("watcher invented refresh copy"))
+
+    ui._snapshot_watch_loop()
+
+    assert ui._snapshot_generation_id == "generation-new"
+    assert ui.champions == [{"id": "1", "name": "测试英雄"}]
+    assert rendered == [{}]

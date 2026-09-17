@@ -330,6 +330,17 @@ def test_report_separates_draw_mapped_and_composed_timestamps(tmp_path: Path) ->
         "window_visible": True,
         "draw_started_at": 10.0,
         "draw_completed_at": 11.0,
+        "event_read_started_at": 9.6,
+        "event_read_completed_at": 9.61,
+        "context_requested_at": 9.62,
+        "context_read_started_at": 9.63,
+        "context_read_completed_at": 9.7,
+        "context_input_sequence": 4,
+        "context_input_error": "",
+        "context_input_game_instance_id": "session-1",
+        "context_input_age_seconds": .04,
+        "context_gate_evaluated_at": 9.71,
+        "context_confirmed_at": 9.71,
         "game_window_mode_status": "supported",
         "game_window_mode": "borderless",
         "game_window_mode_reason": "window_mode_borderless",
@@ -370,6 +381,16 @@ def test_report_separates_draw_mapped_and_composed_timestamps(tmp_path: Path) ->
         composed = json.loads((report_dir / "latest.json").read_text(encoding="utf-8"))
         assert composed["presentation"]["state"] == "composed"
         assert composed["timing"]["draw_completed_at"] == 11.0
+        assert composed["timing"]["event_read_started_at"] == 9.6
+        assert composed["timing"]["event_read_completed_at"] == 9.61
+        assert composed["timing"]["context_requested_at"] == 9.62
+        assert composed["timing"]["context_read_started_at"] == 9.63
+        assert composed["timing"]["context_read_completed_at"] == 9.7
+        assert composed["timing"]["context_input_sequence"] == 4
+        assert composed["timing"]["context_input_game_instance_id"] == "session-1"
+        assert composed["timing"]["context_input_age_seconds"] == .04
+        assert composed["timing"]["context_gate_evaluated_at"] == 9.71
+        assert composed["timing"]["context_confirmed_at"] == 9.71
         assert composed["timing"]["mapped_at"] == 12.0
         assert composed["timing"]["presented_at"] == 13.0
         assert composed["timing"]["presented_event_written_at"] == 9.5

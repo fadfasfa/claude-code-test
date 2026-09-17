@@ -406,6 +406,12 @@ def test_legacy_summary_derivation_runs_on_the_single_preparation_worker(monkeyp
         semantic_key=lambda: ("stage", 1),
     )
     try:
+        # 首次选卡前完成真实后台预热；不得把选卡后才打开的 current 当作已知基线。
+        worker.warmup()
+        warmup_deadline = time.monotonic() + 2.0
+        while worker.status()["bootstrap_generation_id"] != "generation-a" and time.monotonic() < warmup_deadline:
+            threading.Event().wait(0.005)
+        assert worker.status()["bootstrap_generation_id"] == "generation-a"
         key = worker.request(
             payload,
             {"ok": True, "champion_id": "1"},

@@ -96,9 +96,11 @@ def _synergy_data_state(status: Mapping[str, Any]) -> tuple[str, str, str]:
     available = [source for source in sources if source is not None]
     if not available:
         return ("unknown", "", "")
+    # 联动来源与主统计采用同一 fail-closed 口径：只有绑定过最新检查证据后
+    # 投影为 fresh/fresh 才可标 ready。旧快照的 unknown 不能冒充已确认最新。
     degraded = any(
-        str(source.get("freshness") or "unknown") == "last_good"
-        or str(source.get("data_status") or "unknown") == "data_stale"
+        str(source.get("freshness") or "unknown") != "fresh"
+        or str(source.get("data_status") or "unknown") != "fresh"
         for source in available
     )
     # 过期码优先：last_good 与 expired 并存时，"数据为 X 前"比"上一代"信息量更大。

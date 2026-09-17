@@ -274,13 +274,12 @@ def _stats_display(
         ranking_text = _ranking_stats_text(stats)
         if ranking_text:
             degraded = _snapshot_sources_degraded(snapshot_status, ("blitz",))
-            stale_reason, stale_data_at = _stats_source_expiry(snapshot_status, ("blitz",))
             return (
-                _stats_stale_text(stale_reason, stale_data_at) if degraded else ranking_text,
-                "STATS_STALE" if degraded else "READY",
+                ranking_text,
+                "GENERATION_DEGRADED" if degraded else "READY",
                 "",
                 "",
-                _stats_stale_text(stale_reason, stale_data_at) if degraded else "",
+                "",
             )
         return text or "统计字段不完整", "NO_STATS", "", "", "统计不完整"
     if _snapshot_sources_degraded(snapshot_status, ("aramkit", "hextech")):
@@ -639,6 +638,11 @@ def build_render_model_from_session(
         sample_count: int | None = None
         stats_scope_value = _clean_text(normalized_stats.get("stats_scope"), limit=24)
         fallback_reason = _clean_text(normalized_stats.get("fallback_reason"), limit=80)
+        if status_code == "STATS_STALE" and (
+            (winrate_text and pickrate_text) or _ranking_stats_text(normalized_stats)
+        ):
+            # 仍有经过上游校验的旧值时保留展示，时效状态留在 DTO/诊断。
+            status_code = "GENERATION_DEGRADED"
         if status_code in {"READY", "GENERATION_DEGRADED"}:
             if scoped_display is not None:
                 stats_text = str(scoped_display["text"])
@@ -655,11 +659,7 @@ def build_render_model_from_session(
                     stats_text = _ranking_stats_text(normalized_stats) or stats_text
             status_text = ""
         elif status_code == "STATS_STALE":
-            stale_text = _stats_stale_text(
-                _clean_text(normalized_stats.get("data_reason"), limit=48),
-                _clean_text(normalized_stats.get("source_data_at"), limit=64),
-            )
-            stats_text = status_text = stale_text
+            stats_text = status_text = "统计暂不可用"
             winrate_text = pickrate_text = ""
         elif status_code in {"DETECTING", "STATS_PREPARING"}:
             stats_text, status_text = labels.get(status_code, ("识别中…", "识别中…"))

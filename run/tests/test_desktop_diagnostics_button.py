@@ -8,6 +8,54 @@ import threading
 from types import SimpleNamespace
 
 
+def test_diagnostics_menu_delegates_explicit_view_arguments(monkeypatch, tmp_path):
+    from hextech.interfaces.desktop import app as desktop_app, selection_diagnostics_view as view
+    calls = []
+    monkeypatch.setattr(view, "show_selection_diagnostics_menu", lambda *args, **kwargs: calls.append((args, kwargs)))
+    dummy = object.__new__(desktop_app.HextechUI)
+    dummy.root = object()
+    dummy.diagnostics_button = object()
+    dummy._set_status = lambda text, color: None
+    dummy._show_diagnostics_menu()
+    args, kwargs = calls[0]
+    assert args == (dummy.root, dummy.diagnostics_button)
+    assert kwargs == {"export_diagnostics": dummy._start_user_diagnostics_export,
+                      "set_status": dummy._set_status}
+
+
+def test_diagnostics_view_menu_keeps_export_and_recent_save_callbacks(monkeypatch, tmp_path):
+    from hextech.interfaces.desktop import selection_diagnostics_view as view
+    commands = []
+    class Menu:
+        def __init__(self, *args, **kwargs):
+            pass
+        def add_command(self, **kwargs):
+            commands.append(kwargs)
+        def add_separator(self):
+            pass
+        def tk_popup(self, x, y):
+            assert (x, y) == (10, 40)
+        def grab_release(self):
+            pass
+    monkeypatch.setattr(view.tk, "Menu", Menu)
+    monkeypatch.setattr(view, "read_selection_diagnostics", lambda path: {"live": True, "reason": "",
+        "status": {"selection_capture": {"recent_available": True}, "failure_evidence_writer": {
+            "selection_cache": {"groups": 3}, "failed": 1}}})
+    saves = []
+    monkeypatch.setattr(view, "request_recent_selection", lambda path: saves.append(path) or {"ok": True})
+    statuses = []
+    def export():
+        pass
+    anchor = SimpleNamespace(winfo_rootx=lambda: 10, winfo_rooty=lambda: 20, winfo_height=lambda: 20)
+    view.show_selection_diagnostics_menu(object(), anchor, var_dir=tmp_path, export_diagnostics=export,
+                                         set_status=lambda text, color: statuses.append(text))
+    assert commands[-1]["command"] == export
+    save = next(command for command in commands if command["label"].startswith("保存最近"))
+    assert save["state"] == view.tk.NORMAL
+    save["command"]()
+    assert saves == [tmp_path] and statuses == ["保存已请求 · 诊断菜单查看结果"]
+
+
 def test_diagnostics_button_is_created_in_title_frame(monkeypatch):
     import hextech.interfaces.desktop.app as desktop_app
 
@@ -97,7 +145,7 @@ def test_diagnostics_button_is_created_in_title_frame(monkeypatch):
     assert dummy.exit_button.kwargs["activebackground"] == desktop_app.UI_COLORS["red"]
     assert dummy.diagnostics_button.parent is dummy.title_frame
     assert dummy.diagnostics_button.kwargs["text"] == "诊断"
-    assert dummy.diagnostics_button.kwargs["command"] == dummy._start_user_diagnostics_export
+    assert dummy.diagnostics_button.kwargs["command"] == dummy._show_diagnostics_menu
     assert dummy.diagnostics_button.pack_options["side"] == desktop_app.tk.RIGHT
     assert dummy.diagnostics_button.grid_options is None
 

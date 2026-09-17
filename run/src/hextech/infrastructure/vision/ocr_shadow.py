@@ -34,9 +34,9 @@ from hextech.infrastructure.vision.ocr_completed import (
     CompletedOcrMailbox,
     OcrEvidenceContext,
     build_production_evidence,
+    build_inference_result,
     production_needed,
 )
-from hextech.infrastructure.vision.scene_negative import classify_scene_negative
 from hextech.modules.data.ports.paths import resource_path
 
 
@@ -139,7 +139,7 @@ def build_ocr_vocabulary(template_index: Sequence[Any]) -> tuple[OcrVocabularyEn
         name = str(getattr(template, "name", "") or "").strip()
         normalized = normalize_ocr_text(name)
         key = canonical_id, normalized
-        if not canonical_id or key in seen:
+        if not canonical_id or not normalized or key in seen:
             continue
         seen.add(key)
         entries.append(OcrVocabularyEntry(canonical_id, name, normalized))
@@ -425,6 +425,7 @@ class OcrShadowRuntime:
                         tuple(value for item in selected for value in item.inflight_keys),
                         True,
                         min(item.submitted_at for item in selected),
+                        min(item.submitted_wall_at for item in selected),
                     )
                 else:
                     remaining = next_batch_at - time.monotonic()
@@ -446,6 +447,7 @@ class OcrShadowRuntime:
                     )
                 self._active_tasks += len(task.input_sha256s)
             started_at = time.perf_counter()
+            inference_started_at = time.time()
             if not task.production:
                 next_batch_at = time.monotonic() + self.min_batch_interval_seconds
             try:
@@ -465,15 +467,9 @@ class OcrShadowRuntime:
                         recognized,
                         strict=True,
                     ):
-                        result = {
-                            "state": "ready",
-                            "input_sha256": input_sha256,
-                            "raw_text": str(raw_text),
-                            "confidence": round(float(confidence), 6),
-                            "elapsed_ms": elapsed_ms,
-                            "scene_negative": classify_scene_negative(raw_text, confidence),
-                            **match_ocr_text(raw_text, self.vocabulary),
-                        }
+                        result = build_inference_result(input_sha256, raw_text, confidence,
+                            match_ocr_text(raw_text, self.vocabulary), elapsed_ms=elapsed_ms,
+                            task=task, started_at=inference_started_at)
                         self._cache[input_sha256] = result
                         self._cache.move_to_end(input_sha256)
                         while len(self._cache) > self.cache_capacity:
@@ -584,6 +580,7 @@ class OcrShadowRuntime:
                             cached,
                             context_key,
                             minimum_confidence=OCR_PRODUCTION_MIN_CONFIDENCE,
+                            cache_hit=True,
                         )
                         admitted = slot["ocr_production"]["state"] == "admitted"
                         if admitted:
@@ -624,6 +621,7 @@ class OcrShadowRuntime:
             if not pending_input_sha256s:
                 return
             submitted_at = time.monotonic()
+            submitted_wall_at = time.time()
             diagnostic_indices: list[int] = []
             for pending_index, context_key in enumerate(pending_context_keys):
                 if context_key is None:
@@ -637,6 +635,7 @@ class OcrShadowRuntime:
                     (pending_inflight_keys[pending_index],),
                     True,
                     submitted_at,
+                    submitted_wall_at,
                 )
                 displaced = self._production_tasks.get(work_key)
                 if displaced is not None:
@@ -655,6 +654,7 @@ class OcrShadowRuntime:
                     tuple(pending_inflight_keys[index] for index in diagnostic_indices),
                     False,
                     submitted_at,
+                    submitted_wall_at,
                 )
                 displaced = self._diagnostic_task
                 if displaced is not None:

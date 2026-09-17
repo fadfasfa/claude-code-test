@@ -12,7 +12,7 @@ from typing import Any, Sequence
 import numpy as np
 
 
-TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION = 5
+TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION = 6
 TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE = np.float16
 
 
@@ -68,6 +68,7 @@ class TemplateEntry:
     name_variant_count: int = 1
     icon_variant_count: int = 0
     observed_name_variant_count: int = 0
+    requires_exact_ocr: bool = False
 
     def __post_init__(self) -> None:
         fingerprint = _fingerprint_array(self.fingerprint)

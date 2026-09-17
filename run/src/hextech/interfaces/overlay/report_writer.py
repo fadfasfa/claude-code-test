@@ -41,10 +41,13 @@ class OverlayReportWriter:
         *,
         max_queue: int = 8,
         retention_worker: Any | None = None,
+        visibility_path: Path | None = None,
     ) -> None:
         self.report_dir = Path(report_dir)
         self.evidence_dir = Path(evidence_dir)
         self.max_queue = max(1, int(max_queue))
+        # 唯一状态文件由 Host 构造时明确指定；任务 payload 不允许决定任意路径。
+        self.visibility_path = Path(visibility_path) if visibility_path is not None else None
         self._retention_worker = retention_worker
         self._condition = Condition()
         self._tasks: deque[_WriteTask] = deque()
@@ -67,6 +70,11 @@ class OverlayReportWriter:
 
     def submit_session(self, report: Mapping[str, Any], *, key: str) -> bool:
         return self._enqueue(_WriteTask("session", str(key), deepcopy(dict(report))))
+
+    def submit_visibility(self, status: Mapping[str, Any]) -> bool:
+        if self.visibility_path is None:
+            return False
+        return self._enqueue(_WriteTask("visibility", "latest", deepcopy(dict(status))))
 
     def submit_evidence(
         self,
@@ -142,10 +150,14 @@ class OverlayReportWriter:
             try:
                 if task.kind == "session":
                     self._write_session(task.payload)
+                elif task.kind == "visibility":
+                    if self.visibility_path is None:
+                        raise ValueError("visibility path is not configured")
+                    atomic_write_json(self.visibility_path, task.payload)
                 else:
                     self._write_evidence(task.payload)
                 request = getattr(self._retention_worker, "request", None)
-                if callable(request):
+                if task.kind != "visibility" and callable(request):
                     request()
                 with self._condition:
                     self._written_count += 1

@@ -66,6 +66,18 @@ def fit_stats_spacing(metrics: TextMetrics, text: str, size: int, budget: int) -
     raise ValueError("stats_text_exceeds_safe_area")
 
 
+def fit_stats_block(metrics: TextMetrics, text: str, size: int, width: int, height: int) -> tuple[str, str]:
+    """Keep the approved font: tighten gaps first, then split the two metrics if necessary."""
+    try:
+        return fit_stats_spacing(metrics, text, size, width)
+    except ValueError:
+        parts = text.split("·")
+        if len(parts) != 2 or metrics.line_height(size, True) * 2 + 2 > height:
+            raise
+        lines = [fit_stats_spacing(metrics, part.strip(), size, width)[0] for part in parts]
+        return "\n".join(lines), "two_lines"
+
+
 @lru_cache(maxsize=64)
 def _pillow_font(size: int, bold: bool) -> Any:
     from PIL import ImageFont
@@ -338,6 +350,7 @@ __all__ = [
     "TextMetrics",
     "canvas_text_metrics",
     "fit_stats_spacing",
+    "fit_stats_block",
     "pillow_text_width",
     "prepare_synergy_display_summaries",
     "synergy_display_spec",

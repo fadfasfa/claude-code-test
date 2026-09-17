@@ -33,7 +33,7 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             event_path = Path(tmp) / "event.json"
             with (
-                mock.patch.object(runner, "SharedOverlayDataSource", return_value=FakeSource()),
+                mock.patch.object(runner, "CatalogVisionDataSource", return_value=FakeSource()),
                 mock.patch.object(runner, "load_or_build_default_template_runtime", return_value=runtime),
                 mock.patch.object(runner, "_prepare_compute_runtime"),
                 mock.patch.object(runner, "_write_sidecar_status"),
@@ -104,7 +104,7 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
             recorded_events.append(dict(event))
 
         with (
-            mock.patch.object(runner, "SharedOverlayDataSource", return_value=FakeSource()),
+            mock.patch.object(runner, "CatalogVisionDataSource", return_value=FakeSource()),
             mock.patch.object(runner, "load_or_build_default_template_runtime", return_value=runtime),
             mock.patch.object(runner, "_prepare_compute_runtime"),
             mock.patch.object(runner, "_write_sidecar_status"),
@@ -426,7 +426,7 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             event_path = Path(tmp) / "event.json"
             with (
-                mock.patch.object(runner, "SharedOverlayDataSource", return_value=FakeSource()),
+                mock.patch.object(runner, "CatalogVisionDataSource", return_value=FakeSource()),
                 mock.patch.object(runner, "load_or_build_default_template_runtime", return_value=runtime),
                 mock.patch.object(runner, "_prepare_compute_runtime"),
                 mock.patch.object(
@@ -493,7 +493,7 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             event_path = Path(tmp) / "event.json"
             with (
-                mock.patch.object(runner, "SharedOverlayDataSource", return_value=FakeSource()),
+                mock.patch.object(runner, "CatalogVisionDataSource", return_value=FakeSource()),
                 mock.patch.object(runner, "load_or_build_default_template_runtime", return_value=runtime),
                 mock.patch.object(runner, "_prepare_compute_runtime"),
                 mock.patch.object(runner, "game_window_identity", return_value={"game_instance_id": "game-1"}),
@@ -556,7 +556,7 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
         frame = Image.new("RGB", (1920, 1080), "black")
         target = (123, (0, 0, 1920, 1080))
         with (
-            mock.patch.object(runner, "SharedOverlayDataSource", return_value=FakeSource()),
+            mock.patch.object(runner, "CatalogVisionDataSource", return_value=FakeSource()),
             mock.patch.object(runner, "load_or_build_default_template_runtime", return_value=runtime),
             mock.patch.object(runner, "_prepare_compute_runtime"),
             mock.patch.object(runner, "SelectionTracker", return_value=tracker),
@@ -631,7 +631,7 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             event_path = Path(tmp) / "event.json"
             with (
-                mock.patch.object(runner, "SharedOverlayDataSource", return_value=FakeSource()),
+                mock.patch.object(runner, "CatalogVisionDataSource", return_value=FakeSource()),
                 mock.patch.object(runner, "load_or_build_default_template_runtime", return_value=runtime),
                 mock.patch.object(runner, "_prepare_compute_runtime"),
                 mock.patch.object(runner, "_write_sidecar_status"),
@@ -696,7 +696,7 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             event_path = Path(tmp) / "event.json"
             with (
-                mock.patch.object(runner, "SharedOverlayDataSource", return_value=FakeSource()),
+                mock.patch.object(runner, "CatalogVisionDataSource", return_value=FakeSource()),
                 mock.patch.object(runner, "load_or_build_default_template_runtime", return_value=runtime),
                 mock.patch.object(runner, "_prepare_compute_runtime"),
                 mock.patch.object(runner, "_write_sidecar_status"),

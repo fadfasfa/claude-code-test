@@ -95,11 +95,20 @@ def build_production_augment_pool(
     catalog_sha256: str = "",
     catalog_manifest_sha256: str = "",
     last_good_pool: Mapping[str, Any] | None = None,
+    schema_version: int = 1,
 ) -> dict[str, Any]:
     """构造当前启用身份池；任何 ID 必须有且只有一个 canonical identity。"""
 
     if not isinstance(metadata, Mapping):
         raise ValueError("production pool metadata 必须是对象")
+    if schema_version not in (1, 2):
+        raise ValueError("production_pool_schema_invalid")
+    if schema_version == 2 and (not metadata or any(
+        not isinstance(raw, Mapping) or not isinstance(raw.get("enabled"), bool)
+        or not _id(raw_id).isdecimal() or int(_id(raw_id)) <= 0
+        for raw_id, raw in metadata.items()
+    )):
+        raise ValueError("production_pool_metadata_invalid")
     catalog_by_id: dict[str, list[Mapping[str, Any]]] = {}
     for entry in catalog_entries:
         if not isinstance(entry, Mapping):
@@ -115,7 +124,14 @@ def build_production_augment_pool(
     name_conflicts: list[dict[str, str]] = []
     for raw_id, raw_value in metadata.items():
         raw = raw_value if isinstance(raw_value, Mapping) else {}
-        identity = _metadata_identity(raw_id, raw)
+        identity = _metadata_identity(raw_id, raw) if schema_version == 1 else {
+            "canonical_id": _id(raw_id),
+            "name": _text(raw.get("displayName")),
+            "normalized_name": normalize_augment_name(_text(raw.get("displayName"))),
+            "augment_name_id": _text(raw.get("name")),
+            "tier": _text(raw.get("rarity")),
+            "enabled": raw["enabled"],
+        }
         canonical_id = identity["canonical_id"]
         if not identity["enabled"]:
             disabled_ids.append(canonical_id)
@@ -123,13 +139,14 @@ def build_production_augment_pool(
         matches = catalog_by_id.get(canonical_id, [])
         if not matches:
             unresolved_ids.append(canonical_id)
-            continue
+            if schema_version == 1:
+                continue
         # 同一 ID 允许多个资源变体；它们仍属于一个 canonical identity。
         variants: list[dict[str, Any]] = []
         seen_variant_keys: set[tuple[str, str]] = set()
         for entry in matches:
             entry_name = _text(entry.get("name"))
-            if entry_name and normalize_augment_name(entry_name) != identity["normalized_name"]:
+            if entry_name and identity["normalized_name"] and normalize_augment_name(entry_name) != identity["normalized_name"]:
                 name_conflicts.append({"canonical_id": canonical_id, "metadata_name": identity["name"], "catalog_name": entry_name})
             key = (_text(entry.get("augment_name_id") or entry.get("filename")), _text(entry.get("filename")))
             if key in seen_variant_keys:
@@ -149,19 +166,38 @@ def build_production_augment_pool(
             )
         identity["visual_variants"] = variants
         identity["icon_ambiguous"] = False
+        if schema_version == 2:
+            icon_ready = any(v["local_path"] and v["icon_sha256"] for v in variants)
+            identity.update(
+                name_ready=bool(identity["normalized_name"]),
+                icon_ready=icon_ready,
+                exemplar_ready=False,
+                capability_reasons={
+                    "name": "" if identity["normalized_name"] else "name_missing",
+                    "icon": "" if icon_ready else ("catalog_mapping_missing" if not matches else
+                        next((_text(entry.get("icon_unavailable_reason")) for entry in matches if entry.get("icon_unavailable_reason")), "icon_asset_missing")),
+                    "exemplar": "observed_exemplar_missing",
+                },
+            )
         identities.append(identity)
 
     identities.sort(key=lambda item: (not str(item["canonical_id"]).isdigit(), int(item["canonical_id"]) if str(item["canonical_id"]).isdigit() else str(item["canonical_id"])))
     canonical_ids = [str(item["canonical_id"]) for item in identities]
     names_to_ids: dict[str, list[str]] = {}
     for item in identities:
-        names_to_ids.setdefault(str(item["normalized_name"]), []).append(str(item["canonical_id"]))
-    duplicate_ids.extend(
-        canonical_id
-        for canonical_ids_for_name in names_to_ids.values()
-        if len(canonical_ids_for_name) > 1
-        for canonical_id in canonical_ids_for_name
-    )
+        if item["normalized_name"]:
+            names_to_ids.setdefault(str(item["normalized_name"]), []).append(str(item["canonical_id"]))
+    ambiguous_name_ids = {
+        canonical_id for values in names_to_ids.values() if len(values) > 1 for canonical_id in values
+    }
+    if schema_version == 1:
+        duplicate_ids.extend(ambiguous_name_ids)
+    else:
+        for item in identities:
+            if item["canonical_id"] in ambiguous_name_ids:
+                item["declared_name"] = item["name"]
+                item.update(name="", normalized_name="", name_ready=False)
+                item["capability_reasons"]["name"] = "ambiguous_name"
     icon_to_ids: dict[str, set[str]] = {}
     for item in identities:
         canonical_id = str(item["canonical_id"])
@@ -197,14 +233,14 @@ def build_production_augment_pool(
             if canonical_id in current_names and current_names[canonical_id] != old_name
         ]
     body: dict[str, Any] = {
-        "schema_version": POOL_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "catalog_generation_id": _text(catalog_generation_id),
         "catalog_sha256": _text(catalog_sha256),
         "catalog_manifest_sha256": _text(catalog_manifest_sha256),
         "metadata_marker_sha256": _text(upstream_marker_sha256),
         "metadata_total_count": len(metadata),
         "full_catalog_count": len(catalog_entries),
-        "enabled_count": len(identities) + len(unresolved_ids),
+        "enabled_count": len(identities) + (len(unresolved_ids) if schema_version == 1 else 0),
         "disabled_count": len(disabled_ids),
         "canonical_ids": canonical_ids,
         "identities": identities,
@@ -225,10 +261,10 @@ def build_production_augment_pool(
             "change_without_marker": change_without_marker,
         },
     }
-    body["pool_id"] = f"production-pool-v1-{_hash_payload(body)[:32]}"
+    body["pool_id"] = f"production-pool-v{schema_version}-{_hash_payload(body)[:32]}"
     body["state"] = (
         "ready"
-        if not unresolved_ids and not duplicate_ids and not name_conflicts and not change_without_marker
+        if (schema_version == 2 or not unresolved_ids) and not duplicate_ids and not name_conflicts and not change_without_marker and identities
         else "unavailable"
     )
     return body
@@ -237,17 +273,37 @@ def build_production_augment_pool(
 def validate_production_augment_pool(pool: Mapping[str, Any]) -> None:
     """发布前强制阻断 unresolved/duplicate/name conflict，禁止全量回退。"""
 
-    if str(pool.get("state") or "") != "ready":
+    schema_version = pool.get("schema_version", 1)
+    if schema_version not in (1, 2) or str(pool.get("state") or "") != "ready":
         raise ValueError("production_pool_unavailable")
     identities = pool.get("identities")
     canonical_ids = pool.get("canonical_ids")
     if not isinstance(identities, list) or not isinstance(canonical_ids, list):
         raise ValueError("production_pool_unavailable")
     actual = [str(item.get("canonical_id") or "") for item in identities if isinstance(item, Mapping)]
-    if len(actual) != len(set(actual)) or actual != [str(value) for value in canonical_ids]:
+    if not actual or len(actual) != len(identities) or len(actual) != len(set(actual)) or actual != [str(value) for value in canonical_ids]:
         raise ValueError("production_pool_duplicate_identity")
-    if pool.get("unresolved_ids") or pool.get("duplicate_ids") or pool.get("name_conflicts"):
+    if (schema_version == 1 and pool.get("unresolved_ids")) or pool.get("duplicate_ids") or pool.get("name_conflicts"):
         raise ValueError("production_pool_unavailable")
+    if schema_version == 2:
+        if int(pool.get("enabled_count") or 0) != len(identities):
+            raise ValueError("production_pool_count_invalid")
+        for item in identities:
+            if not str(item.get("canonical_id") or "").isdecimal() or item.get("enabled") is not True:
+                raise ValueError("production_pool_identity_invalid")
+            reasons = item.get("capability_reasons")
+            if not isinstance(reasons, Mapping):
+                raise ValueError("production_pool_capabilities_invalid")
+            for channel in ("name", "icon", "exemplar"):
+                if not isinstance(item.get(f"{channel}_ready"), bool) or (
+                    not item[f"{channel}_ready"] and not reasons.get(channel)
+                ):
+                    raise ValueError("production_pool_capabilities_invalid")
+            if item["name_ready"] != bool(_text(item.get("name"))):
+                raise ValueError("production_pool_name_capability_invalid")
+            variants = item.get("visual_variants")
+            if not isinstance(variants, list) or any(not isinstance(v, Mapping) for v in variants):
+                raise ValueError("production_pool_variants_invalid")
     migration = pool.get("migration") if isinstance(pool.get("migration"), Mapping) else {}
     if bool(migration.get("change_without_marker")):
         raise ValueError("production_pool_change_without_marker")
@@ -275,10 +331,75 @@ def production_pool_name_ids(pool: Mapping[str, Any]) -> set[str]:
     return result
 
 
+def validate_pool_asset_descriptors(pool: Mapping[str, Any], assets: object) -> None:
+    """Pure per-ID binding, shared by Catalog and snapshot publication validators."""
+    if not isinstance(assets, list) or any(not isinstance(item, Mapping) for item in assets):
+        raise ValueError("production_pool_catalog_assets_invalid")
+    by_id = {_text(item.get("canonical_id")): item for item in assets}
+    if "" in by_id or len(by_id) != len(assets):
+        raise ValueError("production_pool_catalog_assets_duplicate")
+    identities = pool.get("identities", ())
+    pool_ids = set(pool.get("canonical_ids", ()))
+    expected = {
+        _text(item.get("canonical_id")) for item in identities
+        if pool.get("schema_version") != 2 or item.get("icon_ready") is True
+    }
+    missing = sorted(expected - set(by_id))
+    unknown = sorted(set(by_id) - pool_ids)
+    unbound = []
+    for identity in identities:
+        canonical_id = _text(identity.get("canonical_id"))
+        asset = by_id.get(canonical_id)
+        variants = identity.get("visual_variants") or []
+        if asset is None:
+            # A disabled icon channel may not smuggle an unbound image path.
+            if pool.get("schema_version") == 2 and any(v.get("local_path") for v in variants):
+                unbound.append(canonical_id)
+            continue
+        path = _text(asset.get("relative_path")).replace("\\", "/")
+        sha = _text(asset.get("sha256"))
+        if canonical_id not in expected or not path or not sha or not any(
+            _text(v.get("local_path")).replace("\\", "/") == path and _text(v.get("icon_sha256")) == sha
+            for v in variants if isinstance(v, Mapping)
+        ):
+            unbound.append(canonical_id)
+        if any(_text(v.get("local_path")) and (
+            _text(v.get("local_path")).replace("\\", "/") != path or _text(v.get("icon_sha256")) != sha
+        ) for v in variants):
+            unbound.append(canonical_id)
+    if missing or unknown or unbound:
+        raise ValueError(f"production_pool_catalog_asset_mismatch missing={missing[:10]} unknown={unknown[:10]} unbound={unbound[:10]}")
+
+
+def production_capability_status_valid(status: Mapping[str, Any], expected_count: int) -> bool:
+    """V2 smoke checks per-channel availability rather than requiring every icon."""
+    capabilities = status.get("identity_capabilities")
+    rows = status.get("matrix_rows")
+    if status.get("production_pool_schema_version") != 2 or not isinstance(capabilities, Mapping) or not isinstance(rows, Mapping):
+        return False
+    if expected_count <= 0 or len(capabilities) != expected_count:
+        return False
+    for item in capabilities.values():
+        if not isinstance(item, Mapping) or not isinstance(item.get("capability_reasons"), Mapping):
+            return False
+        for channel in ("name", "icon", "exemplar"):
+            if not isinstance(item.get(f"{channel}_ready"), bool) or (
+                not item[f"{channel}_ready"] and not item["capability_reasons"].get(channel)
+            ):
+                return False
+    try:
+        return all(int(rows.get(matrix_channel) or 0) >= sum(item[f"{channel}_ready"] for item in capabilities.values())
+                   for channel, matrix_channel in (("icon", "icon"), ("exemplar", "observed_name")))
+    except (TypeError, ValueError):
+        return False
+
+
 __all__ = [
     "POOL_SCHEMA_VERSION",
     "LEGACY_SELECTION_POOL_IDS",
     "build_production_augment_pool",
     "production_pool_name_ids",
     "validate_production_augment_pool",
+    "validate_pool_asset_descriptors",
+    "production_capability_status_valid",
 ]

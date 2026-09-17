@@ -1,7 +1,7 @@
 """显示专用固定锚点；识别 ROI 调整不能改变用户看到的布局。
 
-这些数值是既有显示基线，不是新测量结果。缺少同规格真实内框证据时保持
-pending_real_device；禁止拿比例公式或说明图将其提升为已验收。
+1440p 锚点由 2026-09-16 原始选卡截图测量；其他规格仍保留未验收基线。
+截图校准不等于修复后的真机呈现验收，也不改变识别 ROI。
 """
 from __future__ import annotations
 
@@ -11,12 +11,15 @@ from functools import lru_cache
 
 from .display_contract import display_profile
 
-DISPLAY_GEOMETRY_VERSION = "display-anchors-v1"
+DISPLAY_GEOMETRY_VERSION = "display-anchors-v2"
+CALIBRATION_SHA256 = "6d2e07eecf87dcff4f8f9d3f8b4efecc4e23c4fea4c7db476d8fe9a9c9f377ea"
 _PANELS_16_9 = ((.198, .155, .384, .690), (.410, .155, .597, .690), (.623, .155, .811, .690))
 _PANELS_16_10 = ((.198, .175, .384, .655), (.410, .175, .597, .655), (.623, .175, .811, .655))
 # 每个已支持尺寸的统计内框单独定义，不由视觉识别卡框计算。
 _STAT_BOXES = {
-    (2560, 1440): ((557, 862, 933, 934), (1101, 862, 1477, 934), (1647, 862, 2023, 934)),
+    # Dark straight-edge interiors: [625,970), [1115,1460), [1605,1950).
+    # Inset 6px; bottom remains above the chamfer (starts near y=878).
+    (2560, 1440): ((631, 780, 964, 876), (1121, 780, 1454, 876), (1611, 780, 1944, 876)),
     (2560, 1600): ((557, 916, 933, 988), (1101, 916, 1477, 988), (1647, 916, 2023, 988)),
     (1920, 1080): ((417, 646, 699, 700), (825, 646, 1107, 700), (1235, 646, 1517, 700)),
     (1920, 1200): ((417, 687, 699, 741), (825, 687, 1107, 741), (1235, 687, 1517, 741)),
@@ -56,13 +59,15 @@ def display_geometry_key(viewport: tuple[int, int]) -> str:
 
 
 def display_geometry_metadata(viewport: tuple[int, int]) -> dict[str, object]:
+    measured = viewport == (2560, 1440)
     return {
         "display_profile": display_profile(*viewport),
         "anchor_version": DISPLAY_GEOMETRY_VERSION,
         "anchor_fingerprint": display_geometry_key(viewport),
-        "anchor_qualification": "pending_real_device",
-        "calibration_evidence_sha256": "",
-        "anchor_source": "preserved_display_baseline",
+        "anchor_qualification": "screenshot_calibrated_pending_presentation" if measured else "pending_real_device",
+        "calibration_evidence_sha256": CALIBRATION_SHA256 if measured else "",
+        "anchor_source": "measured_stat_interior" if measured else "preserved_display_baseline",
+        "calibration_scope": "stats_only_2560x1440_observed_frame" if measured else "",
         "resolution_qualification": "compatibility" if viewport == (1280, 720)
         else "target" if viewport in _STAT_BOXES else "unqualified",
     }

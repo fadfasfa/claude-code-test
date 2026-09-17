@@ -13,10 +13,10 @@ import time
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from hextech.interfaces.overlay.display_contract import DisplaySelectionGate, fragment_selection, ordinary_selection
-from hextech.interfaces.overlay.generation_pin import SelectionGenerationPin
+from hextech.interfaces.overlay.generation_pin import SelectionGenerationPin, first_selection_started
 from hextech.interfaces.overlay.host_render_state import HostGenerationHintCache, _detecting_stat
 from hextech.interfaces.overlay.host_stage_stats import OverlayStageRuntime
 from hextech.interfaces.overlay.renderer import build_render_model_from_session
@@ -59,13 +59,15 @@ def preparation_key(
                slot.get("diagnostic") == "evidence_starved", str(slot.get("tier") or ""),
                str(slot.get("visual_variant_id") or ""))
               for slot in slots[:3] if isinstance(slot, Mapping)),
+        first_selection_started(event),
         (int(viewport_size[0]), int(viewport_size[1])),
         "expanded" if str(display_mode) == "expanded" else "compact",
     )
 
 
-@dataclass(frozen=True)
-class PreparedOverlayData:
+@dataclass(frozen=True, slots=True)
+class DisplayModel:
+    """后台完整准备的一份显示输入；发布后所有字段按只读所有权交给 Tk。"""
     key: tuple[Any, ...]
     event: Mapping[str, Any]
     model: Mapping[str, Any]
@@ -74,9 +76,13 @@ class PreparedOverlayData:
     scope: Mapping[str, Any]
     scope_key: object
     content_key: str
-    phase: str
+    phase: Literal["hints_ready", "ready"]
     timings: Mapping[str, float]
     host_read_at: float
+
+
+# 保留既有调用名，不再建立第二份结构/状态源。
+PreparedOverlayData = DisplayModel
 
 
 class OverlayDataPreparation:
@@ -102,15 +108,36 @@ class OverlayDataPreparation:
         self._display_gate = DisplaySelectionGate()
         self._scope_identity: tuple[str, str] | None = None
         self._game_identity: tuple[Any, ...] | None = None
+        self._requested_game_identity: tuple[str, str] | None = None
+        self._selection_started = False
+        self._observed_game_identity: tuple[str, str] | None = None
+        self._observed_session_identity: tuple[str, str] | None = None
+        self._observed_selection_started = False
         self._warmup_requested = False
         self._last_idle_refresh = float("-inf")
         self._bootstrap_generation = ""
+        self._bootstrap_view: Any = None
         self._generation_status: dict[str, Any] = {}
         self._display_summaries = DisplaySummaryCache(max_entries=256)
 
     def warmup(self) -> None:
         """真实 Host 启动即后台校验 seed；不固定尚未开始的游戏局。"""
         self.request_idle_refresh()
+
+    def observe_input(self, event: Mapping[str, Any]) -> None:
+        """输入观察器即时记录首场景；Tk 尚未消费或 mailbox 合并都不能越过截止。"""
+        source = event.get("source") if isinstance(event.get("source"), Mapping) else {}
+        identity = (str(source.get("session_id") or ""), str(source.get("game_instance_id") or ""))
+        with self._condition:
+            if self._closed:
+                return
+            # 无身份的瞬时缺文件不证明换局，不能清掉尚未被 Tk 消费的首场景截止。
+            if identity[0] and identity != self._observed_session_identity:
+                self._observed_session_identity = identity
+                self._observed_selection_started = False
+            self._observed_game_identity = identity
+            if identity[0]:
+                self._observed_selection_started |= first_selection_started(event)
 
     def request_idle_refresh(self, *, now: float | None = None) -> bool:
         """无对局请求时最多每秒提交一次元数据预热，不在 GUI 线程读取快照。"""
@@ -132,6 +159,14 @@ class OverlayDataPreparation:
         viewport_size: tuple[int, int] = (1920, 1080),
         display_mode: str = "compact",
     ) -> tuple[Any, ...] | None:
+        # 在 GUI 请求入口只记录截止位，不读数据；不能让慢 open/合并队列漏掉首场景。
+        raw_source = event.get("source") if isinstance(event.get("source"), Mapping) else {}
+        requested_game = (str(raw_source.get("session_id") or ""), str(raw_source.get("game_instance_id") or ""))
+        with self._condition:
+            if requested_game != self._requested_game_identity:
+                self._requested_game_identity = requested_game
+                self._selection_started = False
+            self._selection_started = self._selection_started or first_selection_started(event)
         event = self._display_gate.filter(event)
         source = event.get("source") if isinstance(event.get("source"), Mapping) else {}
         if fragment_selection(event) or not str(source.get("session_id") or ""):
@@ -215,11 +250,13 @@ class OverlayDataPreparation:
 
     def _valid(self, version: int, key: tuple[Any, ...]) -> bool:
         with self._condition:
-            return not self._closed and version == self._version and key == self._current_key
+            return (not self._closed and version == self._version and key == self._current_key
+                    and key[:2] == self._requested_game_identity
+                    and (self._observed_game_identity is None or key[:2] == self._observed_game_identity))
 
     def _publish(self, version: int, result: PreparedOverlayData) -> None:
         with self._condition:
-            if not self._closed and version == self._version and result.key == self._current_key:
+            if self._valid(version, result.key):
                 self._result = result
                 self._error = ""
 
@@ -247,9 +284,11 @@ class OverlayDataPreparation:
         except Exception as exc:
             identity, error = "", type(exc).__name__
         with self._condition:
-            if not self._closed and self._current_key is None and version == self._version:
+            if (not self._closed and self._current_key is None and version == self._version
+                    and not self._selection_started and not self._observed_selection_started):
                 if identity:
                     self._bootstrap_generation = identity
+                    self._bootstrap_view = view
                 self._error = error
 
     def _run(self) -> None:
@@ -303,7 +342,7 @@ class OverlayDataPreparation:
         if now - self._last_source_check < 1.0:
             return False
         self._last_source_check = now
-        view = self._generation.resolve(event, self.source.open_view)
+        view = self._resolve_generation(version, key, event, request[3])
         if not self._valid(version, key):
             return False
         identity = source_refresh_identity(view.status()) if view is not None else None
@@ -328,7 +367,7 @@ class OverlayDataPreparation:
             self._generation.reset()
             self._scope.reset()
             self._game_identity = key[:2]
-        view = self._generation.resolve(event, self.source.open_view)
+        view = self._resolve_generation(version, key, event, context)
         timings = {"snapshot_ready_ms": (time.perf_counter() - started) * 1000.0}
         if not self._valid(version, key):
             return
@@ -361,7 +400,7 @@ class OverlayDataPreparation:
             user_enabled=True, game_present=True, private_stats_enabled=source_has_private_stats(hints),
         )
 
-        def publish(model: Mapping[str, Any], projected: Any, scope: Mapping[str, Any], scope_key: object, phase: str) -> None:
+        def publish(model: Mapping[str, Any], projected: Any, scope: Mapping[str, Any], scope_key: object, phase: Literal["hints_ready", "ready"]) -> None:
             content_key = hashlib.sha256(json.dumps(model, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
             self._publish(version, PreparedOverlayData(
                 key, event, model, projected, generation, scope, scope_key, content_key, phase,
@@ -403,3 +442,32 @@ class OverlayDataPreparation:
             cache=self._display_summaries,
         )
         publish(model, projected, scope_status, scope.semantic_key(), "ready")
+
+    def _resolve_generation(
+        self, version: int, key: tuple[Any, ...], event: Mapping[str, Any], context: Mapping[str, Any],
+    ) -> Any:
+        with self._condition:
+            started = (
+                self._selection_started and key[:2] == self._requested_game_identity
+                or self._observed_selection_started and key[:2] == self._observed_game_identity
+            )
+
+        def can_adopt() -> bool:
+            with self._condition:
+                return bool(
+                    self._valid(version, key)
+                    and (started or not (self._selection_started or self._observed_selection_started))
+                )
+
+        view = self._generation.resolve(
+            event, self.source.open_view,
+            champion_id=str(context.get("champion_id") or "") if context.get("ok") else "",
+            selection_started=started, can_adopt=can_adopt,
+            initial_view=self._bootstrap_view,
+            adoption_lock=self._condition,
+        )
+        with self._condition:
+            if view is not None and self._valid(version, key):
+                # 下一局/暂不可用 current 仍可使用已经验证的旧代；不重新打开冒充旧数据。
+                self._bootstrap_view = view
+        return view

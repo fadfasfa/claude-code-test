@@ -98,6 +98,13 @@ class PillowCanvas:
             "anchor": anchor,
         }
         if "\n" in text:
+            if anchor == "mm" and kwargs.get("justify") == "center":
+                lines = text.splitlines()
+                ascent, descent = font.getmetrics()
+                for index, line in enumerate(lines):
+                    center_y = y + (index - (len(lines) - 1) / 2) * (ascent + descent)
+                    self._draw.text((x, center_y), line, **draw_args)
+                return
             # Pillow 的 multiline_text 不接受 top/bottom anchor；正文统一按 ascender 左对齐。
             draw_args["anchor"] = "la"
             self._draw.multiline_text((x, y), text, spacing=max(2, size // 3), **draw_args)

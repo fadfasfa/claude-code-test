@@ -15,6 +15,19 @@ from hextech.infrastructure.persistence.file_lock import InterProcessFileLock
 from hextech.modules.data.generation import DataSnapshotPublisher
 
 
+def test_status_reuses_snapshot_client_and_reports_partial_publication(tmp_path, monkeypatch):
+    from hextech.bootstrap import data_service_runtime as runtime
+    from hextech.modules.data.generation import DataSnapshotPublisher
+    core = runtime.DataServiceCore(publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
+                                   private_stats_enabled=True, refresh_action=lambda *_: {},
+                                   initial_result={"state": "ready", "generation_id": "old"})
+    client = core._snapshot_client
+    monkeypatch.setattr(client, "status", lambda: {"state": "ready", "generation_id": "partial-new"})
+    assert core.status()["generation_id"] == "partial-new"
+    assert core.status()["generation_id"] == "partial-new"
+    assert core._snapshot_client is client
+
+
 def test_private_stats_handle_tracks_the_same_action_until_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     from hextech.interfaces.desktop import runtime
 
@@ -133,6 +146,44 @@ def test_refresh_status_preserves_deferred_core_scope(tmp_path: Path) -> None:
         "accepted": False,
         "reason_code": "invalid_refresh_scope",
     }
+
+
+def test_refresh_status_preserves_authoritative_change_and_source_outcomes(tmp_path: Path) -> None:
+    application = DataServiceApplication(
+        core=DataServiceCore(
+            publisher=DataSnapshotPublisher(tmp_path),
+            private_stats_enabled=False,
+            refresh_action=lambda _force, scope: {
+                "state": "ready",
+                "reason_code": "catalog_complete",
+                "generation_id": "generation-1",
+                "refresh_scope": scope,
+                "checked": True,
+                "content_changed": False,
+                "catalog_changed": True,
+                "catalog_state": "checked",
+                "source_outcomes": {
+                    "catalog": {"state": "updated", "availability": "available"},
+                    "blitz": {"state": "confirmed_empty", "availability": "confirmed_empty"},
+                },
+            },
+        ),
+        parent_pid=1,
+    )
+    application.submit_action("refresh", {"scope": "core"})
+    deadline = time.monotonic() + 1.0
+    status = application.status()["refresh_status"]
+    while status["state"] == "running" and time.monotonic() < deadline:
+        time.sleep(0.01)
+        status = application.status()["refresh_status"]
+    application.request_shutdown()
+
+    assert status["state"] == "completed"
+    assert status["checked"] is True
+    assert status["content_changed"] is False
+    assert status["catalog_changed"] is True
+    assert status["last_good_available"] is False
+    assert status["source_outcomes"]["blitz"]["state"] == "confirmed_empty"
 
 
 def test_force_refresh_upgrades_pending_recheck(tmp_path: Path) -> None:

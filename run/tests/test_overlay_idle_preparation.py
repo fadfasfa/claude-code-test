@@ -3,6 +3,12 @@ from queue import Queue
 from types import SimpleNamespace
 import pytest
 from hextech.interfaces.overlay import host_runner
+from support.host_input import PreloadedInputObserver
+
+
+@pytest.fixture(autouse=True)
+def preloaded_input(monkeypatch):
+    monkeypatch.setattr(host_runner, "HostInputObserver", PreloadedInputObserver)
 
 
 @pytest.mark.parametrize("show,session", [(False, ""), (False, "game-a"), (True, "game-a")])

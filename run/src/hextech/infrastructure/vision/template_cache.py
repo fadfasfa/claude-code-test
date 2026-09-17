@@ -112,6 +112,7 @@ def template_entry_to_manifest(entry: TemplateEntry, *, row_index: int) -> dict[
         "name_variant_count": int(entry.name_variant_count),
         "icon_variant_count": int(entry.icon_variant_count),
         "observed_name_variant_count": int(entry.observed_name_variant_count),
+        "requires_exact_ocr": entry.requires_exact_ocr,
     }
 
 
@@ -140,6 +141,7 @@ def template_entry_from_manifest(payload: Any) -> TemplateEntry:
         name_variant_count=max(1, int(payload.get("name_variant_count") or 1)),
         icon_variant_count=max(0, int(payload.get("icon_variant_count") or 0)),
         observed_name_variant_count=max(0, int(payload.get("observed_name_variant_count") or 0)),
+        requires_exact_ocr=payload.get("requires_exact_ocr") is True,
     )
 
 

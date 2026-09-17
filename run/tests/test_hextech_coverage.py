@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from hextech.bootstrap.refresh_coordinator import CohortRefreshCoordinator
+from support.legacy_refresh.refresh_coordinator import CohortRefreshCoordinator
 from hextech.contracts import RefreshScheduleV1, RefreshSourceState
 from hextech.infrastructure.persistence.refresh_schedule import SCHEDULE_SOURCES
 from hextech.modules.acquisition.common.contracts import ItemOutcome
@@ -421,6 +421,7 @@ def test_aramkit_backoff_does_not_probe_upstream_marker(tmp_path: Path, monkeypa
             updated_at=now.isoformat(),
             sources={
                 source: RefreshSourceState(
+                    last_success_at=now.isoformat(),
                     next_due_at=(now + timedelta(hours=1)).isoformat(),
                     state="backoff" if source == "aramkit" else "ready",
                 )

@@ -14,6 +14,7 @@ import re
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -26,6 +27,20 @@ from hextech.modules.data.source_runs import source_run_dir
 SCOPED_STATS_SCHEMA_VERSION = 1
 DEFAULT_SCOPED_STATS_CACHE_CAPACITY = 2
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _source_data_at(manifest: SourceRunManifestV2) -> str:
+    """只从已通过 provenance hash 校验的英雄 run 提取数据时间。"""
+    version = manifest.metadata.get("version")
+    marker = version.get("buildTimeUnixMs") if isinstance(version, Mapping) else None
+    if marker is not None and not isinstance(marker, bool):
+        try:
+            seconds = float(marker) / 1000.0
+            if math.isfinite(seconds) and seconds > 0:
+                return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
+        except (TypeError, ValueError, OverflowError, OSError):
+            pass
+    return str(manifest.completed_at or "")
 
 
 class ScopedStatsError(ValueError):
@@ -146,13 +161,21 @@ def _index_records(rows: object, *, scope: str) -> Mapping[str, Mapping[str, Any
     return MappingProxyType(indexed)
 
 
-def _snapshot_provenance(snapshot_view: SnapshotViewPort) -> tuple[str, SourceProvenance | None]:
+def _snapshot_provenance(snapshot_view: SnapshotViewPort, champion_id: str = "") -> tuple[str, SourceProvenance | None]:
     status = snapshot_view.status()
     generation_id = str(status.get("generation_id") or "") if isinstance(status, Mapping) else ""
     manifest = getattr(snapshot_view, "manifest", None)
     source_files = getattr(manifest, "source_files", ())
+    components = getattr(manifest, "components", {})
+    expected_run = ""
+    if getattr(manifest, "schema_version", 2) == 3:
+        component = components.get("champions", {}).get(champion_id, {})
+        if not component.get("complete"):
+            return generation_id, None
+        expected_run = str(component.get("run_id") or "")
     for item in source_files:
-        if getattr(item, "source", "") == "aramkit" and getattr(item, "artifact_role", "") == "scoped_stats":
+        if (getattr(item, "source", "") == "aramkit" and getattr(item, "artifact_role", "") == "scoped_stats"
+                and (not expected_run or getattr(item, "run_id", "") == expected_run)):
             return generation_id, item
     return generation_id, None
 
@@ -192,6 +215,7 @@ class ScopedStatsView:
     data_path: str
     all_stats: Mapping[str, Mapping[str, Any]]
     stage_stats: Mapping[int, Mapping[str, Mapping[str, Any]]]
+    data_at: str = ""
 
     def select(self, augment_id: object, stage: int | None) -> ScopedStatsSelection:
         canonical_id = str(augment_id or "").strip()
@@ -234,6 +258,7 @@ class ScopedStatsView:
             "champion_id": self.champion_id,
             "version": self.version,
             "data_path": self.data_path,
+            "data_at": self.data_at,
             "all_record_count": len(self.all_stats),
             "stage_record_counts": {str(stage): len(rows) for stage, rows in self.stage_stats.items()},
         }
@@ -266,8 +291,8 @@ class ScopedStatsCache:
         self._cache: OrderedDict[tuple[str, str, str], ScopedStatsLoadResult] = OrderedDict()
 
     def load(self, snapshot_view: SnapshotViewPort, champion_id: object) -> ScopedStatsLoadResult:
-        generation_id, provenance = _snapshot_provenance(snapshot_view)
         champion_key = str(champion_id or "").strip()
+        generation_id, provenance = _snapshot_provenance(snapshot_view, champion_key)
         run_id = str(getattr(provenance, "run_id", "") or "")
         key = (generation_id, run_id, champion_key)
         cached = self._cache.get(key)
@@ -412,6 +437,7 @@ class ScopedStatsCache:
             data_path=data_path,
             all_stats=all_stats,
             stage_stats=stage_stats,
+            data_at=_source_data_at(manifest),
         )
         return ScopedStatsLoadResult(view, generation_id, run_id, champion_id)
 

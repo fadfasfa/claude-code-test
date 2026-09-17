@@ -20,9 +20,16 @@ from hextech.modules.data.catalog.versioned import (
 class AramkitRefreshError(RuntimeError):
     """ARAMKit 候选无法满足完整、同版本、Catalog 绑定合同。"""
 
-    def __init__(self, reason: str, message: str = "") -> None:
+    def __init__(
+        self,
+        reason: str,
+        message: str = "",
+        *,
+        response: object | None = None,
+    ) -> None:
         super().__init__(message or reason)
         self.reason = reason
+        self.response = response
 
 
 def _positive_catalog_augment_ids(catalog_root: Path) -> frozenset[int]:

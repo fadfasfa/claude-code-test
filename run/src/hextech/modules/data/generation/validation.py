@@ -35,7 +35,23 @@ def safe_generation_file(directory: Path, relative_path: str) -> Path:
     return candidate
 
 
-def count_records(payloads: Mapping[str, Any]) -> tuple[int, int, int]:
+def champion_detail_complete(detail: object) -> bool:
+    """检查实际详情；声明 complete 不能把缺失统计变成完整英雄。"""
+    if not isinstance(detail, Mapping) or detail.get("data_status") == "pending":
+        return False
+    augments = detail.get("augments")
+    if not isinstance(augments, list) or not augments:
+        return False
+    if "stages" in detail:
+        stages = detail["stages"]
+        if not isinstance(stages, Mapping) or set(stages) != {"1", "2", "3", "4"}:
+            return False
+        if any(not isinstance(rows, list) or not rows for rows in stages.values()):
+            return False
+    return True
+
+
+def count_records(payloads: Mapping[str, Any], *, schema_version: int = 2) -> tuple[int, int, int]:
     champions = payloads.get("champions")
     details = payloads.get("champion_hextech")
     hints = payloads.get("overlay_hints")
@@ -88,7 +104,8 @@ def count_records(payloads: Mapping[str, Any]) -> tuple[int, int, int]:
                 f"英雄详情身份错配：name={detail_name} expected={expected_hero_id} actual={hero_id}"
             )
         augments = detail.get("augments", [])
-        if not isinstance(augments, list) or not augments:
+        pending = schema_version == 3 and detail.get("data_status") == "pending"
+        if not isinstance(augments, list) or (not augments and not pending):
             raise SnapshotValidationError(f"英雄 {hero_id} 必须包含非空统计")
         seen: set[str] = set()
         for augment in augments:
@@ -159,9 +176,11 @@ def content_fingerprint(source_files: Sequence[SourceProvenance]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def validate_complete_provenance(source_files: Sequence[SourceProvenance]) -> None:
+def validate_complete_provenance(source_files: Sequence[SourceProvenance], *, schema_version: int = 2) -> None:
     roles = {(item.source, item.artifact_role) for item in source_files}
-    if len(roles) != len(source_files):
+    unique_roles = {(item.source, item.artifact_role, item.run_id if schema_version == 3 and item.source == "aramkit" else "")
+                    for item in source_files}
+    if len(unique_roles) != len(source_files):
         raise SnapshotValidationError("generation provenance 角色重复")
     common_required = {
         ("catalog", "champions"),
@@ -170,11 +189,15 @@ def validate_complete_provenance(source_files: Sequence[SourceProvenance]) -> No
         ("apex", "synergy"),
         ("mayhem", "combos"),
     }
+    if schema_version == 3:
+        common_required -= {("apex", "synergy"), ("mayhem", "combos")}
     legacy_stats = ("hextech", "stats")
     current_stats = {("aramkit", "scoped_stats"), ("blitz", "augment_ranking")}
-    current_complete = current_stats.issubset(roles)
+    current_complete = bool(roles & {("aramkit", "scoped_stats"), ("aramkit", "hero_rankings")}) if schema_version == 3 else current_stats.issubset(roles)
     legacy_complete = legacy_stats in roles
-    allowed = {*common_required, legacy_stats, *current_stats, ("catalog", "augment_assets")}
+    allowed = {*common_required, legacy_stats, *current_stats, ("catalog", "augment_assets"), ("catalog", "augment_identities"), ("apex", "synergy"), ("mayhem", "combos")}
+    if schema_version == 3:
+        allowed.add(("aramkit", "hero_rankings"))
     if not common_required.issubset(roles) or current_complete == legacy_complete or not roles.issubset(allowed):
         raise SnapshotValidationError(
             "generation provenance 不完整或包含未知角色："
@@ -182,7 +205,7 @@ def validate_complete_provenance(source_files: Sequence[SourceProvenance]) -> No
             f"unknown={sorted(roles - allowed)}"
         )
     catalog_ids = {item.catalog_generation_id for item in source_files}
-    if len(catalog_ids) != 1:
+    if schema_version == 2 and len(catalog_ids) != 1:
         raise SnapshotValidationError("generation provenance 混用了不同 Catalog")
     for item in source_files:
         if item.source in {"hextech", "aramkit", "blitz", "apex", "mayhem"} and item.record_count <= 0:
@@ -215,9 +238,29 @@ def validate_generation_directory(
     if manifest.content_fingerprint != expected_fingerprint:
         raise SnapshotValidationError("generation content_fingerprint 与 provenance 不一致")
     if require_complete_provenance:
-        validate_complete_provenance(manifest.source_files)
+        validate_complete_provenance(manifest.source_files, schema_version=manifest.schema_version)
     if payloads is not None:
-        actual = count_records(payloads)
+        actual = count_records(payloads, schema_version=manifest.schema_version)
+        if manifest.schema_version == 3:
+            hero_ids = {str(item["id"]) for item in payloads["champions"]}
+            components = manifest.components["champions"]
+            if set(components) != hero_ids:
+                raise SnapshotValidationError("champion components 与 champions 身份不一致")
+            for is_ranking, component in ((True, manifest.components["ranking"]), *((False, item) for item in components.values())):
+                run_id = component.get("run_id")
+                if require_complete_provenance and manifest.source_files and component.get("complete", True) and not run_id:
+                    raise SnapshotValidationError("production complete component 缺少 run_id")
+                allowed_roles = {("aramkit", "scoped_stats"), ("hextech", "stats")}
+                if is_ranking:
+                    allowed_roles |= {("aramkit", "hero_rankings"), ("blitz", "augment_ranking")}
+                if run_id and not any(item.run_id == run_id and item.catalog_generation_id == component["catalog_id"]
+                                      and (item.source, item.artifact_role) in allowed_roles
+                                      for item in manifest.source_files):
+                    raise SnapshotValidationError("component run_id/Catalog 与 provenance 不一致")
+            for detail in payloads["champion_hextech"].values():
+                component = components[str(detail["hero_id"])]
+                if component["complete"] and not champion_detail_complete(detail):
+                    raise SnapshotValidationError("complete champion component 缺少完整统计")
         expected = (manifest.champion_count, manifest.augment_count, manifest.stat_record_count)
         if actual != expected:
             raise SnapshotValidationError(f"manifest 计数与 generation 内容不一致：expected={expected} actual={actual}")

@@ -30,6 +30,7 @@ if str(SRC_DIR) not in sys.path:
 
 from tooling.build.manifest import build_bundle_manifest, validate_snapshot_seed  # noqa: E402
 from tooling.build.deploy import default_install_dir, deploy_release  # noqa: E402
+from tooling.build.runtime_shutdown import shutdown_for_package  # noqa: E402
 from tooling.diagnostics.cleanup import cleanup_python_caches  # noqa: E402
 from tooling.build.rules import iter_package_data_entries, stage_package_data_tree  # noqa: E402
 
@@ -397,6 +398,35 @@ def parse_build_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def current_git_branch() -> str:
+    """返回当前工作树分支；无法证明时返回空串并由稳定部署门拒绝。"""
+
+    completed = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=REPO_DIR,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if completed.returncode != 0:
+        return ""
+    return completed.stdout.strip()
+
+
+def require_main_branch_for_stable_deploy() -> None:
+    """只有 main 工作树可以替换稳定安装和正式桌面入口。"""
+
+    branch = current_git_branch()
+    if branch != "main":
+        actual = branch or "detached-or-unknown"
+        raise RuntimeError(
+            "稳定部署仅允许从 main 分支执行："
+            f"current={actual}；当前工作树只能生成候选包和候选快捷方式"
+        )
+
+
 def configure_artifacts_dir(path: Path) -> None:
     """把本次 release/staging 定向到显式隔离根。"""
 
@@ -419,10 +449,14 @@ def prepare_runtime_data_for_package(
 
         result = refresh_runtime_once(force=True)
         state = str(result.get("state") or "")
-        if state != "ready":
+        failures = result.get("failures")
+        optional_only = (state == "degraded" and isinstance(failures, dict) and bool(failures)
+                         and set(failures).issubset({"blitz", "apex", "mayhem"})
+                         and bool(result.get("generation_id")))
+        if state != "ready" and not optional_only:
             reason_code = str(result.get("reason_code") or "unknown")
             raise RuntimeError(f"构建前数据刷新未达到 ready：state={state or 'unknown'} reason={reason_code}")
-        print_check("运行时数据刷新完成：state=ready")
+        print_check("核心数据已验证；可选来源缺项" if optional_only else "运行时数据刷新完成：state=ready")
         from hextech.modules.data.generation import default_snapshot_root
 
         seed_root = default_snapshot_root().resolve()
@@ -663,6 +697,8 @@ def run_packaged_smoke(
 ) -> None:
     """运行便携包首启 smoke；失败时调用方不得替换正式 release。"""
 
+    closed = shutdown_for_package(default_install_dir(), ARTIFACTS_DIR)
+    print_check(f"打包前受控 Hextech 已退出：pids={list(closed)}")
     smoke_script = BASE_DIR / "tooling" / "acceptance" / "smoke_packaged_startup.py"
     command = [
             sys.executable,
@@ -780,6 +816,10 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_build_args(argv)
     if args.artifacts_dir is not None:
         configure_artifacts_dir(args.artifacts_dir)
+    if args.deploy:
+        require_main_branch_for_stable_deploy()
+    closed = shutdown_for_package(default_install_dir(), ARTIFACTS_DIR)
+    print_check(f"构建前受控 Hextech 已退出：pids={list(closed)}")
     print("\n" + "=" * 60)
     print("  Hextech 伴生系统打包程序")
     print(f"  构建时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

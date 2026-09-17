@@ -1,8 +1,15 @@
 """首个等待界面不等待数据准备请求或其共享锁。"""
 from queue import Queue
 from types import SimpleNamespace
+import pytest
+from support.host_input import PreloadedInputObserver
 
 from hextech.interfaces.overlay import host_runner
+
+
+@pytest.fixture(autouse=True)
+def preloaded_input(monkeypatch):
+    monkeypatch.setattr(host_runner, "HostInputObserver", PreloadedInputObserver)
 
 
 def test_shell_maps_before_preparation_and_yields_to_native_idle(monkeypatch):

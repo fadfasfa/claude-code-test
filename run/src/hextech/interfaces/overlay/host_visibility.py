@@ -15,7 +15,6 @@ import psutil
 
 from hextech.interfaces.overlay.gameflow import GameflowState, probe_gameflow_state
 from hextech.interfaces.overlay.host_common import (
-    GAME_OVERLAY_VISIBILITY_FILE,
     HOST_VISIBILITY_STATUS_HEARTBEAT_SECONDS,
     OVERLAY_EXIT_FILE_ENV,
     OVERLAY_EXIT_POLL_MS,
@@ -599,6 +598,23 @@ def _build_visibility_status_payload(
             "data_generation_id": "legacy_stats_compat",
         },
         "updated_at": float(now),
+        "input": {
+            "sequence": int(visibility.get("input_sequence") or 0),
+            "host_read_at": float(visibility.get("host_read_at") or 0.0),
+            "age_seconds": visibility.get("input_age_seconds"),
+            "error": str(visibility.get("input_error") or ""),
+            "event_read_started_at": float(visibility.get("event_read_started_at") or 0.0),
+            "event_read_completed_at": float(visibility.get("event_read_completed_at") or 0.0),
+            "context_requested_at": float(visibility.get("context_requested_at") or 0.0),
+            "context_read_started_at": float(visibility.get("context_read_started_at") or 0.0),
+            "context_read_completed_at": float(visibility.get("context_read_completed_at") or 0.0),
+            "context_sequence": int(visibility.get("context_input_sequence") or 0),
+            "context_error": str(visibility.get("context_input_error") or ""),
+            "context_game_instance_id": str(
+                visibility.get("context_input_game_instance_id") or ""
+            ),
+            "context_age_seconds": visibility.get("context_input_age_seconds"),
+        },
         "functional_status": functional_status,
         "functional_reason": failure_reason,
         "game_window_mode": {
@@ -667,6 +683,8 @@ def _build_visibility_status_payload(
 def _visibility_status_key(payload: Mapping[str, Any]) -> str:
     comparable = dict(payload)
     comparable.pop("updated_at", None)
+    if isinstance(comparable.get("input"), Mapping):
+        comparable["input"] = {"error": comparable["input"].get("error", "")}
     return json.dumps(comparable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
@@ -678,7 +696,7 @@ def _write_host_visibility_status(
     should_show: bool,
     reason: str,
 ) -> None:
-    """把 host 最终显隐原因写入 state，供桌面 UI 和赛后诊断读取。"""
+    """把最终显隐原因提交给既有有界 writer；Tk 不执行状态文件写盘。"""
 
     payload = _build_visibility_status_payload(
         visibility,
@@ -689,18 +707,16 @@ def _write_host_visibility_status(
     )
     status_key = _visibility_status_key(payload)
     try:
-        last_written_at = float(visibility.get("last_visibility_status_written_at") or 0.0)
+        last_enqueued_at = float(visibility.get("last_visibility_status_enqueued_at") or 0.0)
     except (TypeError, ValueError):
-        last_written_at = 0.0
+        last_enqueued_at = 0.0
     if (
         status_key == visibility.get("last_visibility_status_key")
-        and now - last_written_at < HOST_VISIBILITY_STATUS_HEARTBEAT_SECONDS
+        and now - last_enqueued_at < HOST_VISIBILITY_STATUS_HEARTBEAT_SECONDS
     ):
         return
-    try:
-        atomic_write_json(GAME_OVERLAY_VISIBILITY_FILE, payload)
-    except OSError:
-        logger.debug("写入 game_overlay visibility 状态失败。", exc_info=True)
+    submit = getattr(visibility.get("report_writer"), "submit_visibility", None)
+    if not callable(submit) or not submit(payload):
         return
     visibility["last_visibility_status_key"] = status_key
-    visibility["last_visibility_status_written_at"] = float(now)
+    visibility["last_visibility_status_enqueued_at"] = float(now)

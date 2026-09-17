@@ -12,7 +12,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -72,6 +72,7 @@ def run_isolated_process(
     cancel_grace_seconds: float = 2.0,
     env: Mapping[str, str] | None = None,
     cwd: str | Path | None = None,
+    observe: Callable[[], None] | None = None,
 ) -> IsolatedProcessResult:
     """运行一个来源 worker；超时时先协作取消，再回收完整进程树。"""
 
@@ -111,6 +112,8 @@ def run_isolated_process(
                 stdout, stderr = process.communicate(timeout=min(0.05, max(0.01, deadline - time.monotonic())))
                 break
             except subprocess.TimeoutExpired:
+                if observe is not None:
+                    observe()
                 if cancel_file.is_file():
                     cancelled = True
                     try:

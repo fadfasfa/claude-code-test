@@ -300,7 +300,8 @@ def _production_pool_runtime_stats(
     canonical_ids = pool.get("canonical_ids") if isinstance(pool, Mapping) else ()
     exclusions = {
         "disabled": len(pool.get("disabled_ids") or ()),
-        "unresolved": len(pool.get("unresolved_ids") or ()),
+        "unresolved": len(pool.get("unresolved_ids") or ()) if pool.get("schema_version") != 2 else 0,
+        "catalog_mapping_missing": len(pool.get("unresolved_ids") or ()) if pool.get("schema_version") == 2 else 0,
         "duplicate": len(pool.get("duplicate_ids") or ()),
         "name_conflict": len(pool.get("name_conflicts") or ()),
     } if isinstance(pool, Mapping) else {"production_pool_unavailable": 1}
@@ -313,7 +314,26 @@ def _production_pool_runtime_stats(
         hint_cache,
         resource_signature=resource_signature,
     )
+    icon_ids = {entry.augment_id for entry in matrices.icon_templates}
+    exemplar_ids = {entry.augment_id for entry in matrices.observed_name_templates}
+    capabilities = {
+        entry.augment_id: {
+            "name_ready": bool(entry.name),
+            "icon_ready": entry.augment_id in icon_ids,
+            "exemplar_ready": entry.augment_id in exemplar_ids,
+            "capability_reasons": {
+                "name": "" if entry.name else "name_missing",
+                "icon": "" if entry.augment_id in icon_ids else "icon_fingerprint_unavailable",
+                "exemplar": "" if entry.augment_id in exemplar_ids else "observed_exemplar_missing",
+            },
+        }
+        for entry in matrices.index_ref
+    }
+    vision = (hint_cache or {}).get("vision")
     return {
+        "production_pool_schema_version": pool.get("schema_version", 1) if isinstance(pool, Mapping) else 1,
+        "recognition_catalog_id": str(vision.get("catalog_generation_id") or "") if isinstance(vision, Mapping) else str(pool.get("catalog_generation_id") or "") if isinstance(pool, Mapping) else "",
+        "identity_capabilities": capabilities,
         "production_pool_id": str(pool.get("pool_id") or "") if isinstance(pool, Mapping) else "",
         "production_pool_state": str(pool.get("state") or "unavailable") if isinstance(pool, Mapping) else "unavailable",
         "production_pool_count": len(canonical_ids) if isinstance(canonical_ids, list) else 0,

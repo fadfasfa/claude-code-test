@@ -1,3 +1,4 @@
+# Frozen V2 regression baseline only; not a production runtime entry point.
 """数据来源时间解析与绝对时效判定。
 
 从 refresh_coordinator 拆出的纯函数集合：ISO 时间解析/格式化、pointer 成功

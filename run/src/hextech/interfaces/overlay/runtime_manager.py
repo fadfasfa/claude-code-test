@@ -7,7 +7,6 @@ bootstrap 组装，模块本身不访问 infrastructure。
 from __future__ import annotations
 
 import inspect
-import json
 import threading
 import time
 from pathlib import Path
@@ -30,7 +29,6 @@ from hextech.interfaces.overlay.lifecycle import (
 from hextech.interfaces.overlay.context import start_overlay_context_poller, write_missing_overlay_context
 from hextech.interfaces.overlay.vision_handoff import VisionHandoffMixin
 
-OVERLAY_HOST_VISIBILITY_STALE_SECONDS = 6.0
 TEMPLATE_PREWARM_WAIT_TIMEOUT_SECONDS = 8.0
 OVERLAY_WARM_STARTUP_BUDGET_SECONDS = 30.0
 OVERLAY_COLD_STARTUP_BUDGET_SECONDS = 60.0
@@ -68,6 +66,7 @@ class OverlayRuntimeManager(VisionHandoffMixin):
         pid_exists: Callable[[int], bool] | None = None,
         process_create_time: Callable[[int], float | None] | None = None,
         now_func: Callable[[], float] = time.time,
+        game_active_probe: Callable[[], bool] | None = None,
     ) -> None:
         self._start_host_func = start_host_func
         self._start_sidecar_func = start_sidecar_func
@@ -89,6 +88,7 @@ class OverlayRuntimeManager(VisionHandoffMixin):
         self._pid_exists = pid_exists or psutil.pid_exists
         self._process_create_time = process_create_time or self._default_process_create_time
         self._now_func = now_func
+        self._game_active_probe = game_active_probe
         self._lock = threading.RLock()
         self._operation_lock = threading.Lock()
         self._prewarm_thread: threading.Thread | None = None
@@ -202,37 +202,6 @@ class OverlayRuntimeManager(VisionHandoffMixin):
             return "context_missing"
         return "degraded" if self.context_error else "stopped"
 
-    def _read_visibility_health(self) -> dict[str, str]:
-        try:
-            payload = json.loads(self._visibility_status_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-            return {"build_id": "", "visible_reason": "", "functional_status": "unknown", "functional_reason": ""}
-        if not isinstance(payload, Mapping) or int(payload.get("schema_version") or 0) not in {1, 2}:
-            return {"build_id": "", "visible_reason": "", "functional_status": "unknown", "functional_reason": "unknown_schema"}
-        try:
-            updated_at = float(payload.get("updated_at") or 0.0)
-        except (TypeError, ValueError):
-            updated_at = 0.0
-        if updated_at <= 0.0 or time.time() - updated_at > OVERLAY_HOST_VISIBILITY_STALE_SECONDS:
-            return {
-                "build_id": str(payload.get("build_id") or ""),
-                "visible_reason": "",
-                "functional_status": "failed" if self._process_running(self.host_process) else "unknown",
-                "functional_reason": "host_heartbeat_stale",
-            }
-        raw_decision = payload.get("decision")
-        decision: Mapping[str, Any] = raw_decision if isinstance(raw_decision, Mapping) else {}
-        schema_version = int(payload.get("schema_version") or 1)
-        return {
-            "build_id": str(payload.get("build_id") or ""),
-            "visible_reason": str(decision.get("reason") or "").strip(),
-            "functional_status": (
-                str(payload.get("functional_status") or "unknown").strip()
-                if schema_version >= 2
-                else "ready"
-            ),
-            "functional_reason": str(payload.get("functional_reason") or "").strip(),
-        }
 
     def _template_loader(self) -> Callable[..., Any]:
         if self._load_template_runtime_func is not None:
@@ -289,6 +258,7 @@ class OverlayRuntimeManager(VisionHandoffMixin):
             )
             with self._lock:
                 self.cache_status = "ready"
+                self._prepared_vision_hint_cache = dict(hint_cache)
                 if self.cache_hit is not False:
                     self.cache_hit = True
                 stats = getattr(runtime, "stats", None)
@@ -355,21 +325,29 @@ class OverlayRuntimeManager(VisionHandoffMixin):
             return self._stop("disabled")
         with self._operation_lock:
             with self._lock:
+                recovering_sidecar = self.status == "starting" and self.phase == "sidecar_restart"
+                if self.pending_vision_pool_fingerprint and self._vision_switch_blocked():
+                    self.vision_handoff_state = "deferred_game_active"
+                    if not recovering_sidecar:
+                        return self.snapshot()
+                    if not self._prepare_active_vision_recovery_locked():
+                        return self.snapshot()
                 if (
                     self._process_running(self.host_process)
                     and self._sidecar_is_reusable()
                     and not self.pending_vision_pool_fingerprint
                 ):
+                    self._vision_recovery_identity = None
                     self._start_context_poller()
                     self._mark(status="running", phase="running", error="")
                     return self.snapshot()
-                if self._process_running(self.sidecar_process):
-                    recovering_sidecar = self.status == "starting" and self.phase == "sidecar_restart"
+                if self._process_running(self.sidecar_process) and not self._vision_handoff_in_progress:
                     self._mark_sidecar_stale_locked()
                     if recovering_sidecar:
                         # 清理旧进程期间仍属于恢复预算内，不能让并发状态读取闪现 stale。
                         self._mark(status="starting", phase="sidecar_restart", error="")
                     if not stop_process(self.sidecar_process):
+                        self._vision_recovery_identity = None
                         self._mark(status="error", phase="sidecar_stale_cleanup_failed", error="Vision sidecar stale 后无法停止")
                         return self.snapshot()
                     self.sidecar_process = None
@@ -403,8 +381,10 @@ class OverlayRuntimeManager(VisionHandoffMixin):
 
     def _start(self, generation: int, cancel_event: threading.Event) -> dict[str, Any]:
         started_at = time.perf_counter()
+        recovery_identity = dict(self._vision_recovery_identity or {})
         with self._lock:
-            if self._process_running(self.host_process) and self._sidecar_is_reusable():
+            if self._process_running(self.host_process) and self._sidecar_is_reusable() and not self._vision_handoff_in_progress:
+                self._vision_recovery_identity = None
                 self._start_context_poller()
                 self._mark(status="running", phase="running", error="")
                 self.last_start_failure_kind = ""
@@ -415,9 +395,11 @@ class OverlayRuntimeManager(VisionHandoffMixin):
                 error=None if self.cache_status == "error" else "",
             )
         try:
-            self._prepare_data_func()
+            if not recovery_identity:
+                self._prepare_data_func()
             self._ensure_start_current(generation, cancel_event)
-            self._write_inactive_func()
+            if not self._vision_handoff_in_progress:
+                self._write_inactive_func()
             with self._lock:
                 self.phase = "context_start"
             self._start_context_poller()
@@ -464,16 +446,34 @@ class OverlayRuntimeManager(VisionHandoffMixin):
             if not self._process_running(self.host_process):
                 raise RuntimeError("game_overlay host 启动后立即退出")
             self._ensure_start_current(generation, cancel_event)
-            self._wait_for_template_prewarm(
-                started_at=started_at,
-                generation=generation,
-                cancel_event=cancel_event,
-            )
+            if not recovery_identity:
+                self._wait_for_template_prewarm(
+                    started_at=started_at, generation=generation, cancel_event=cancel_event,
+                )
+            if self._vision_handoff_in_progress:
+                if self._vision_switch_blocked():
+                    self.vision_handoff_state = "deferred_game_active"
+                    self._vision_handoff_in_progress = False
+                    self._mark(status="running", phase="running", error="")
+                    return self.snapshot()
+                if not stop_process(self.sidecar_process):
+                    raise SidecarCleanupError("旧 Vision 未退出，拒绝切换资源")
+                self.sidecar_process = None
+                if self._vision_switch_blocked():
+                    if not self._rollback_vision_handoff("game_started_during_handoff", generation, cancel_event):
+                        raise RuntimeError("game_started_during_handoff_restore_failed")
+                    self.vision_handoff_state = "deferred_game_active"
+                    return self.snapshot()
             with self._lock:
                 self.phase = "sidecar_start"
             if not self._process_running(self.sidecar_process):
                 self.sidecar_process = self._start_sidecar_with_retry(generation, cancel_event)
                 self._sidecar_started_at = self._now_func()
+            if self._vision_handoff_in_progress and self._vision_switch_blocked():
+                if not self._rollback_vision_handoff("game_started_during_sidecar_start", generation, cancel_event):
+                    raise RuntimeError("game_started_during_sidecar_start_restore_failed")
+                self.vision_handoff_state = "deferred_game_active"
+                return self.snapshot()
             if not self._process_running(self.sidecar_process):
                 raise RuntimeError("game_overlay sidecar 启动后立即退出")
             self._ensure_start_current(generation, cancel_event)
@@ -482,22 +482,15 @@ class OverlayRuntimeManager(VisionHandoffMixin):
                 self._finish_startup_session_locked()
                 self._mark(status="running", phase="running", error="")
                 self.last_start_failure_kind = ""
-                self.active_vision_pool_fingerprint = str(
-                    getattr(self.sidecar_process, "_hextech_vision_pool_fingerprint", "")
-                    or self.cache_stats.get("vision_pool_fingerprint")
-                    or ""
-                )
-                self.active_vision_origin_generation_id = str(
-                    getattr(self.sidecar_process, "_hextech_vision_origin_generation_id", "")
-                    or self.cache_stats.get("vision_pool_origin_generation_id")
-                    or ""
-                )
+                self._record_active_vision_identity_locked(recovery_identity)
                 if self.pending_vision_pool_fingerprint == self.active_vision_pool_fingerprint:
                     self.pending_vision_pool_fingerprint = ""
                     self.pending_vision_origin_generation_id = ""
+                    self.pending_recognition_catalog_id = ""
                     self._pending_vision_hint_cache = None
                     self.vision_handoff_state = "completed"
                     self._vision_handoff_in_progress = False
+                    self._observed_catalog_pointer = ""
             return self.snapshot()
         except _OverlayStartCancelled:
             return self.snapshot()
@@ -510,6 +503,8 @@ class OverlayRuntimeManager(VisionHandoffMixin):
                 return self.snapshot()
             self._rollback_failed_start(str(exc))
             raise
+        finally:
+            self._vision_recovery_identity = None
 
     @staticmethod
     def _sidecar_failure_is_retryable(exc: Exception) -> bool:
@@ -546,6 +541,7 @@ class OverlayRuntimeManager(VisionHandoffMixin):
         generation: int,
         cancel_event: threading.Event,
     ) -> ProcessLike:
+        start_identity = self._vision_recovery_identity or self.cache_stats
         for attempt in range(len(SIDECAR_RETRY_DELAYS_SECONDS) + 1):
             self._ensure_start_current(generation, cancel_event)
             with self._lock:
@@ -563,6 +559,8 @@ class OverlayRuntimeManager(VisionHandoffMixin):
                 self.startup_attempts.append(record)
             try:
                 parameters = inspect.signature(self._start_sidecar_func).parameters
+                if self._vision_handoff_in_progress and self._vision_switch_blocked():
+                    raise RuntimeError("game_started_before_sidecar_attempt")
                 accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
                 if accepts_kwargs or {"readiness_timeout_seconds", "cancel_event"}.issubset(parameters):
                     start_kwargs: dict[str, Any] = {
@@ -571,14 +569,16 @@ class OverlayRuntimeManager(VisionHandoffMixin):
                     }
                     if accepts_kwargs or "target_generation_id" in parameters:
                         start_kwargs["target_generation_id"] = str(
-                            self.cache_stats.get("vision_pool_origin_generation_id")
-                            or self.cache_stats.get("vision_pool_generation_id")
+                            start_identity.get("vision_pool_origin_generation_id")
+                            or start_identity.get("vision_pool_generation_id")
                             or ""
                         )
                     if accepts_kwargs or "expected_vision_pool_fingerprint" in parameters:
                         start_kwargs["expected_vision_pool_fingerprint"] = str(
-                            self.cache_stats.get("vision_pool_fingerprint") or ""
+                            start_identity.get("vision_pool_fingerprint") or ""
                         )
+                    if accepts_kwargs or "target_catalog_id" in parameters:
+                        start_kwargs["target_catalog_id"] = str(start_identity.get("recognition_catalog_id") or "")
                     process = self._start_sidecar_func(**start_kwargs)
                 else:
                     process = self._start_sidecar_func()
@@ -764,6 +764,8 @@ class OverlayRuntimeManager(VisionHandoffMixin):
                 "sidecar_pid": self._sidecar_pid() if self._process_running(self.sidecar_process) else None,
                 "sidecar_liveness": dict(self._sidecar_liveness),
                 "active_vision_pool_fingerprint": self.active_vision_pool_fingerprint,
+                "active_recognition_catalog_id": self.active_recognition_catalog_id,
+                "pending_recognition_catalog_id": self.pending_recognition_catalog_id,
                 "active_vision_origin_generation_id": self.active_vision_origin_generation_id,
                 "observed_data_generation_id": self.observed_data_generation_id,
                 "pending_vision_pool_fingerprint": self.pending_vision_pool_fingerprint,

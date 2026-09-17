@@ -23,6 +23,10 @@ def publish_apex_run(
     outcomes: tuple[ItemOutcome, ...],
     record_count: int,
     started_at: str,
+    data_at: str | None = None,
+    upstream_revision: str = "",
+    applied_revision: str = "",
+    parser_revision: str = "",
     promote_current: bool = False,
     pointer_output: str | Path | None = None,
 ) -> tuple[str, SourceRunManifest]:
@@ -67,6 +71,12 @@ def publish_apex_run(
             record_count=record_count,
         ),
         outcomes=outcomes,
+        metadata={
+            "data_at": data_at or started_at,
+            "upstream_revision": upstream_revision,
+            "applied_revision": applied_revision,
+            "parser_revision": parser_revision,
+        },
     )
     publish_source_run(
         manifest,

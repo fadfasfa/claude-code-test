@@ -15,10 +15,12 @@ from typing import Any, Callable, Mapping
 from hextech.contracts import GameSessionState
 from hextech.interfaces.overlay.generation_pin import selection_key
 from hextech.interfaces.overlay.host_data_preparation import OverlayDataPreparation
+from hextech.interfaces.overlay.host_input import HostInputObserver
 from hextech.interfaces.overlay.display_contract import DisplaySelectionGate
 from hextech.interfaces.overlay.context_gate import ContextRenderGate
 from hextech.interfaces.overlay.host_common import (
     RENDER_ERROR_BACKOFF_AFTER,
+    GAME_OVERLAY_VISIBILITY_FILE,
     ForegroundEventHook,
     GameflowPoller,
     HotkeyController,
@@ -96,13 +98,19 @@ def _schedule_event_render(
     data_source: OverlayDataSource | None = None,
     initial_hint_cache: Mapping[str, Any] | None = None,
     data_preparation: OverlayDataPreparation | None = None,
+    input_observer: HostInputObserver | None = None,
 ) -> Callable[[], None]:
-    """单一 tick 同步窗口、事件和显隐；隐藏时不加载 hint/context。"""
+    """Tk tick 只读输入邮箱；事件/context 磁盘读取由 Host 观察器拥有。"""
     fast_poll_ms = max(16, int(config.get("fast_event_poll_ms", 16) or 16))
     fast_hold_seconds = max(0.0, float(config.get("fast_event_hold_ms", 1200) or 1200) / 1000.0)
     source = data_source or SharedOverlayDataSource()
     preparation = data_preparation or OverlayDataPreparation(source, initial_hints=initial_hint_cache)
     visibility["data_preparation"] = preparation
+    observer = input_observer or HostInputObserver(
+        source, config=config, on_event=getattr(preparation, "observe_input", None),
+    )
+    visibility["input_observer"] = observer
+    observer.start()
     display_gate = DisplaySelectionGate()
     slot_render_cache = SlotRenderCache()
     context_gate = ContextRenderGate()
@@ -138,8 +146,21 @@ def _schedule_event_render(
         snapshot: Mapping[str, Any] = {}
         try:
             _drain_hotkey_requests(hotkey_queue, visibility)
-            snapshot = display_gate.filter(source.read_event())
-            visibility["host_read_at"] = time.time()
+            input_sample = observer.snapshot()
+            snapshot = display_gate.filter(input_sample.event)
+            visibility["host_read_at"] = input_sample.host_read_at
+            visibility["input_sequence"] = input_sample.sequence
+            visibility["input_age_seconds"] = max(0.0, time.monotonic() - input_sample.observed_at) if input_sample.sequence else None
+            visibility["input_error"] = input_sample.error
+            visibility["event_read_started_at"] = input_sample.event_read_started_at
+            visibility["event_read_completed_at"] = input_sample.event_read_completed_at
+            visibility["context_requested_at"] = input_sample.context_requested_at
+            visibility["context_read_started_at"] = input_sample.context_read_started_at
+            visibility["context_read_completed_at"] = input_sample.context_read_completed_at
+            visibility["context_input_sequence"] = input_sample.context_sequence
+            visibility["context_input_error"] = input_sample.context_error
+            visibility["context_input_game_instance_id"] = input_sample.context_game_instance_id
+            visibility["context_input_age_seconds"] = input_sample.context_age_seconds
             note_fast_event(
                 snapshot,
                 visibility,
@@ -188,12 +209,17 @@ def _schedule_event_render(
                     logger.info("game_overlay diagnostic=%s", status)
                     visibility["last_diagnostic_key"] = diagnostic_key
             should_show = _sync_event_visibility(root, config, visibility, snapshot, apply_window=False)
-            context = source.read_context() if should_show or str(event_source.get("session_id") or "") else {}
+            context = input_sample.context if should_show or str(event_source.get("session_id") or "") else {}
             visibility["context_ok"] = bool(isinstance(context, Mapping) and context.get("ok"))
             visibility["context_champion_id"] = str(context.get("champion_id") or "") if isinstance(context, Mapping) else ""
             visibility["context_source"] = str(context.get("source") or "") if isinstance(context, Mapping) else ""
-            visibility["context_error"] = str(context.get("error") or "") if isinstance(context, Mapping) else "context_missing"
+            visibility["context_error"] = (
+                str(context.get("error") or input_sample.context_error or "context_missing")
+                if isinstance(context, Mapping)
+                else str(input_sample.context_error or "context_missing")
+            )
             previous_context_revision = int(visibility.get("context_revision") or 0)
+            context_gate_evaluated_at = time.time()
             gate_decision = context_gate.evaluate(
                 context if isinstance(context, Mapping) else {},
                 game_instance_id=str(visibility.get("game_instance_id") or ""),
@@ -206,7 +232,20 @@ def _schedule_event_render(
             visibility["context_gate_reason"] = gate_decision.reason
             visibility["context_revision"] = gate_decision.context_revision
             visibility["context_held"] = gate_decision.held
-            visibility["context_confirmed_at"] = time.time()
+            visibility["context_gate_evaluated_at"] = context_gate_evaluated_at
+            if (
+                gate_decision.state == "confirmed"
+                and (
+                    float(visibility.get("context_confirmed_at") or 0.0) <= 0.0
+                    or int(visibility.get("context_confirmed_input_sequence") or 0)
+                    != input_sample.context_sequence
+                )
+            ):
+                visibility["context_confirmed_at"] = context_gate_evaluated_at
+                visibility["context_confirmed_input_sequence"] = input_sample.context_sequence
+            elif gate_decision.state != "holding" and gate_decision.context_revision <= 0:
+                visibility["context_confirmed_at"] = 0.0
+                visibility["context_confirmed_input_sequence"] = 0
             effective_context = gate_decision.payload
             if (
                 previous_context_revision > 0
@@ -523,7 +562,9 @@ def _schedule_event_render(
                     and str(poller_status.get("probe_status") or "") != "error"
                 ):
                     visibility["readiness_signaled"] = bool(_signal_overlay_ready())
-            schedule_render(retry_delay_ms())
+            delay_ms = retry_delay_ms()
+            observer.set_poll_ms(delay_ms)
+            schedule_render(delay_ms)
 
     visibility["presentation_state_changed"] = request_render
     render_once()
@@ -602,6 +643,7 @@ def _run_overlay_host_locked(*, diagnostic: bool = False) -> None:
     report_writer = OverlayReportWriter(
         get_var_dir() / "reports" / "overlay_sessions",
         Path(overlay_runtime_state_path("session_evidence")),
+        visibility_path=GAME_OVERLAY_VISIBILITY_FILE,
     )
     report_writer.start()
     visibility["report_writer"] = report_writer
@@ -650,6 +692,9 @@ def _run_overlay_host_locked(*, diagnostic: bool = False) -> None:
         _stop_hotkey_thread(hotkey_controller)
         window_target_poller.stop()
         gameflow_poller.stop()
+        observer = visibility.get("input_observer")
+        if isinstance(observer, HostInputObserver):
+            observer.close(timeout=2.0)
         preparation = visibility.get("data_preparation")
         if isinstance(preparation, OverlayDataPreparation):
             preparation.close(timeout=2.0)
