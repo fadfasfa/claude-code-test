@@ -32,14 +32,34 @@ def _pump(root) -> None:
 
 
 def _above(win32gui, upper: int, lower: int) -> bool:
+    """Compare owned fixture windows; hidden top-level windows also consume Z-order."""
+    if upper == lower:
+        return False
+    windows: set[int] = set()
+
+    def collect(hwnd, _context):
+        windows.add(int(hwnd))
+        return True
+
+    # The old fixed 128/256 limit returned false with hundreds of unrelated
+    # hidden windows between a topmost panel and a normal fixture blocker.
+    win32gui.EnumWindows(collect, None)
+    if upper not in windows or lower not in windows:
+        raise RuntimeError("fixture window missing from Z-order snapshot")
+    visited: set[int] = set()
     current = win32gui.GetWindow(lower, 3)
-    for _ in range(256):
+    for _ in range(len(windows)):
+        if not current:
+            return False
+        if current in visited:
+            raise RuntimeError("fixture Z-order traversal cycle")
+        visited.add(current)
         if current == upper:
             return True
-        if not current:
-            break
         current = win32gui.GetWindow(current, 3)
-    return False
+    if not current:
+        return False
+    raise RuntimeError("fixture Z-order changed beyond snapshot budget")
 
 
 def _control_pixels(ui, hwnd: int) -> dict:

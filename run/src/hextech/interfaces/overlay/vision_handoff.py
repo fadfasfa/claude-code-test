@@ -66,6 +66,7 @@ class VisionHandoffMixin:
         self._rollback_vision_origin_generation_id = ""
         self._rollback_sidecar_process: Any | None = None
         self._rollback_cache_stats: dict[str, Any] = {}
+        self._vision_recovery_identity: dict[str, str] | None = None
         self._vision_handoff_in_progress = False
         self._last_generation_observation: tuple[str, str] = ("", "")
 
@@ -125,6 +126,56 @@ class VisionHandoffMixin:
                 return False
             self._mark(status="starting", phase="sidecar_restart", error="")
             return True
+
+    def _prepare_active_vision_recovery_locked(self) -> bool:
+        identity = {
+            "vision_pool_fingerprint": str(self.active_vision_pool_fingerprint or ""),
+            "vision_pool_origin_generation_id": str(self.active_vision_origin_generation_id or ""),
+            "recognition_catalog_id": str(self.active_recognition_catalog_id or ""),
+        }
+        if not all(identity.values()):
+            self.last_start_failure_kind = "sidecar_recovery_identity_missing"
+            self._mark(
+                status="error",
+                phase="sidecar_recovery_blocked",
+                error="Vision sidecar 旧识别身份不完整，拒绝在游戏中采用待切换 Catalog",
+            )
+            return False
+        active_stats: dict[str, Any] = {}
+        for candidate in (self._rollback_cache_stats, self.cache_stats):
+            if (
+                candidate.get("vision_pool_fingerprint") == identity["vision_pool_fingerprint"]
+                and candidate.get("recognition_catalog_id") == identity["recognition_catalog_id"]
+            ):
+                active_stats = dict(candidate)
+                break
+        active_stats.update(identity)
+        self.cache_stats = active_stats
+        self.cache_status = "ready"
+        self._prepared_vision_hint_cache = (
+            dict(self._active_vision_hint_cache)
+            if self._active_vision_hint_cache is not None else None
+        )
+        self._vision_recovery_identity = identity
+        return True
+
+    def _record_active_vision_identity_locked(self, recovery_identity: Mapping[str, Any]) -> None:
+        identity = recovery_identity or self.cache_stats
+        self.active_vision_pool_fingerprint = str(
+            getattr(self.sidecar_process, "_hextech_vision_pool_fingerprint", "")
+            or identity.get("vision_pool_fingerprint") or ""
+        )
+        self.active_recognition_catalog_id = str(
+            getattr(self.sidecar_process, "_hextech_recognition_catalog_id", "")
+            or identity.get("recognition_catalog_id") or ""
+        )
+        self.active_vision_origin_generation_id = str(
+            getattr(self.sidecar_process, "_hextech_vision_origin_generation_id", "")
+            or identity.get("vision_pool_origin_generation_id")
+            or identity.get("vision_pool_generation_id") or ""
+        )
+        if not recovery_identity:
+            self._active_vision_hint_cache = self._prepared_vision_hint_cache
 
     def _selection_window_active(self) -> bool:
         try:

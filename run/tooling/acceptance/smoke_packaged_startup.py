@@ -127,6 +127,10 @@ def _validate_bundle_contract(package_dir: Path) -> dict[str, object]:
             or not cohort["units"]
         ):
             raise SmokeFailure("v3 cohort seed 必须声明完整 units 闭包")
+        if "recognition_catalog_generation_id" in cohort and not str(
+            cohort.get("recognition_catalog_generation_id") or ""
+        ).strip():
+            raise SmokeFailure("cohort seed recognition Catalog identity 无效")
     return payload
 
 
@@ -1028,6 +1032,12 @@ def _sidecar_pool_smoke(
         and isinstance(status.get("generation_roles"), dict),
         "catalog_generation": str(status.get("catalog_generation_id") or "")
         == str(cohort.get("catalog_generation_id") or ""),
+        "recognition_catalog": str(status.get("recognition_catalog_id") or "")
+        == str(
+            cohort.get("recognition_catalog_generation_id")
+            or cohort.get("catalog_generation_id")
+            or ""
+        ),
         "pool_id": str(status.get("production_pool_id") or "") == str(cohort.get("production_pool_id") or ""),
         "pool_state": status.get("production_pool_state") == "ready",
         "pool_count": int(status.get("production_pool_count") or 0) == expected_pool_count,

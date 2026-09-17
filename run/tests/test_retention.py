@@ -5,7 +5,14 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from hextech.infrastructure.persistence.retention import apply_retention, protected_references
+import pytest
+
+from hextech.infrastructure.persistence import retention
+from hextech.infrastructure.persistence.retention import (
+    apply_cohort_retention,
+    apply_retention,
+    protected_references,
+)
 
 
 NOW = datetime(2026, 7, 17, tzinfo=timezone.utc)
@@ -273,3 +280,184 @@ def test_retention_removes_only_expired_unprotected_catalog_generation_and_stagi
     assert recent_staging.is_dir()
     assert result["catalog_generations"] == 1
     assert result["staging"] == 1
+
+
+def test_cohort_retention_requires_explicit_idle_worker_boundary(tmp_path: Path) -> None:
+    orphan = _directory(tmp_path / "snapshots" / "generations" / "orphan")
+    _write_json(orphan / "manifest.json", {"source_files": []})
+    os.utime(orphan, (OLD.timestamp(), OLD.timestamp()))
+
+    result = apply_cohort_retention(tmp_path, workers_idle=False, now=NOW)
+
+    assert result["disposition"] == "skipped_workers_active"
+    assert orphan.is_dir()
+
+
+def test_cohort_retention_skips_all_deletion_when_authority_is_corrupt(tmp_path: Path) -> None:
+    orphan = _directory(tmp_path / "snapshots" / "generations" / "orphan")
+    _write_json(orphan / "manifest.json", {"source_files": []})
+    (tmp_path / "snapshots" / "current.v2.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "snapshots" / "current.v2.json").write_text("{", encoding="utf-8")
+
+    result = apply_cohort_retention(tmp_path, workers_idle=True, now=NOW)
+
+    assert result["disposition"] == "skipped_unsafe_state"
+    assert "unreadable reference" in str(result["reason"])
+    assert orphan.is_dir()
+
+
+@pytest.mark.parametrize(
+    ("source_files", "reason"),
+    [(None, "invalid source_files"), ({}, "invalid source_files"), ([None], "invalid provenance")],
+)
+def test_retention_fails_closed_for_invalid_protected_generation_provenance(
+    tmp_path: Path,
+    source_files: object,
+    reason: str,
+) -> None:
+    protected = _directory(tmp_path / "snapshots" / "generations" / "protected")
+    _write_json(protected / "manifest.json", {"source_files": source_files})
+    orphan = _directory(tmp_path / "snapshots" / "generations" / "orphan")
+    _write_json(orphan / "manifest.json", {"source_files": []})
+    _write_json(tmp_path / "snapshots" / "current.v2.json", {"current_generation_id": "protected"})
+
+    result = apply_cohort_retention(tmp_path, workers_idle=True, now=NOW)
+
+    assert result["disposition"] == "skipped_unsafe_state"
+    assert reason in str(result["reason"])
+    assert protected.is_dir() and orphan.is_dir()
+
+
+@pytest.mark.parametrize(
+    ("relative", "payload", "reason"),
+    [
+        ("catalog/current.v2.json", {}, "catalog current"),
+        ("catalog/current.v2.json", {"schema_version": 2}, "catalog current"),
+        ("sources/aramkit/current.v2.json", {}, "aramkit current"),
+        ("sources/aramkit/current.v2.json", {"schema_version": 2}, "aramkit current"),
+        ("snapshots/current.v2.json", {"schema_version": 2}, "snapshot current"),
+    ],
+)
+def test_retention_fails_closed_for_identityless_authority(
+    tmp_path: Path,
+    relative: str,
+    payload: object,
+    reason: str,
+) -> None:
+    orphan = _directory(tmp_path / "catalog" / "generations" / "old-catalog")
+    _write_json(tmp_path / relative, payload)
+
+    result = apply_cohort_retention(tmp_path, workers_idle=True, now=NOW)
+
+    assert result["disposition"] == "skipped_unsafe_state"
+    assert reason in str(result["reason"])
+    assert orphan.is_dir()
+
+
+def test_retention_fails_closed_for_malformed_protected_source_manifest(tmp_path: Path) -> None:
+    source_run = _directory(tmp_path / "sources" / "aramkit" / "runs" / "protected")
+    (source_run / "manifest.json").write_text("{", encoding="utf-8")
+    _write_json(tmp_path / "sources" / "aramkit" / "current.v2.json", {"run_id": "protected"})
+    orphan = _source_run(tmp_path, "aramkit", "orphan", success=True)
+
+    result = apply_cohort_retention(tmp_path, workers_idle=True, now=NOW)
+
+    assert result["disposition"] == "skipped_unsafe_state"
+    assert "unreadable reference" in str(result["reason"])
+    assert source_run.is_dir() and orphan.is_dir()
+
+
+def test_postcommit_retention_protects_all_live_generations_and_removes_orphan(tmp_path: Path) -> None:
+    for generation_id in ("current", "previous", "recovery", "host-session", "orphan"):
+        directory = _directory(tmp_path / "snapshots" / "generations" / generation_id)
+        _write_json(directory / "manifest.json", {"source_files": []})
+        os.utime(directory, (OLD.timestamp(), OLD.timestamp()))
+    _write_json(tmp_path / "snapshots" / "current.v2.json", {"current_generation_id": "current"})
+    _write_json(tmp_path / "snapshots" / "previous.v2.json", {"generation_id": "previous"})
+    _write_json(
+        tmp_path / "state" / "data-service" / "cohort_recovery_point.v1.json",
+        {"generation_id": "recovery", "pointers": {}},
+    )
+    _write_json(
+        tmp_path / "state" / "game_overlay_visibility.v1.json",
+        {"stats_generation_id": "host-session", "host": {"gameflow": True}},
+    )
+
+    result = apply_cohort_retention(tmp_path, workers_idle=True, now=NOW)
+
+    assert result["disposition"] == "completed"
+    assert result["generations"] == 1
+    assert not (tmp_path / "snapshots" / "generations" / "orphan").exists()
+    for generation_id in ("current", "previous", "recovery", "host-session"):
+        assert (tmp_path / "snapshots" / "generations" / generation_id).is_dir()
+
+
+def test_retention_protects_unpublished_staging_unit_and_never_scans_raw_cache(tmp_path: Path) -> None:
+    for index in range(4):
+        path = _source_run(tmp_path, "aramkit", f"run-{index}", success=True)
+        timestamp = (OLD + timedelta(minutes=index)).timestamp()
+        os.utime(path, (timestamp, timestamp))
+    _directory(tmp_path / "catalog" / "generations" / "catalog-candidate")
+    _write_json(
+        tmp_path / "snapshots" / "staging" / "incremental-active" / "units" / "hero-1.pointer.json",
+        {
+            "source": "aramkit",
+            "run_id": "run-0",
+            "catalog_generation_id": "catalog-candidate",
+        },
+    )
+    raw = _directory(tmp_path / "raw-responses" / "source" / "revision")
+    (raw / "opaque.body").write_bytes(b"protected raw evidence")
+    os.utime(raw, (OLD.timestamp(), OLD.timestamp()))
+
+    result = apply_cohort_retention(tmp_path, workers_idle=True, now=NOW)
+
+    assert result["disposition"] == "completed"
+    assert (tmp_path / "sources" / "aramkit" / "runs" / "run-0").is_dir()
+    assert (raw / "opaque.body").read_bytes() == b"protected raw evidence"
+
+
+def test_retention_refuses_reparse_or_junction_removal_target(monkeypatch, tmp_path: Path) -> None:
+    orphan = _directory(tmp_path / "snapshots" / "generations" / "unsafe-orphan")
+    _write_json(orphan / "manifest.json", {"source_files": []})
+    os.utime(orphan, (OLD.timestamp(), OLD.timestamp()))
+    original = retention._path_has_reparse
+    monkeypatch.setattr(
+        retention,
+        "_path_has_reparse",
+        lambda path: path.name == "unsafe-orphan" or original(path),
+    )
+
+    result = apply_cohort_retention(tmp_path, workers_idle=True, now=NOW)
+
+    assert result["disposition"] == "skipped_unsafe_state"
+    assert "unsafe removal tree" in str(result["reason"])
+    assert orphan.is_dir()
+
+
+def test_current_source_pointer_protects_its_bound_catalog(tmp_path: Path) -> None:
+    catalog = _directory(tmp_path / "catalog" / "generations" / "source-catalog")
+    os.utime(catalog, (OLD.timestamp(), OLD.timestamp()))
+    _write_json(
+        tmp_path / "sources" / "aramkit" / "current.v2.json",
+        {"run_id": "source-current", "catalog_generation_id": "source-catalog"},
+    )
+    _source_run(tmp_path, "aramkit", "source-current", success=True)
+
+    result = apply_cohort_retention(tmp_path, workers_idle=True, now=NOW)
+
+    assert result["disposition"] == "completed"
+    assert catalog.is_dir()
+
+
+def test_retention_reports_delete_failure_without_claiming_completion(monkeypatch, tmp_path: Path) -> None:
+    orphan = _directory(tmp_path / "snapshots" / "generations" / "orphan")
+    _write_json(orphan / "manifest.json", {"source_files": []})
+    os.utime(orphan, (OLD.timestamp(), OLD.timestamp()))
+    monkeypatch.setattr(retention.shutil, "rmtree", lambda _path: (_ for _ in ()).throw(OSError("disk busy")))
+
+    result = apply_cohort_retention(tmp_path, workers_idle=True, now=NOW)
+
+    assert result["disposition"] == "failed"
+    assert result["reason"] == "disk busy"
+    assert orphan.is_dir()

@@ -13,6 +13,7 @@ def test_native_foreground_panel_recovers_above_nonactivating_blocker(request, m
     import time
     from hextech.interfaces.desktop import client_layer
     from hextech.interfaces.desktop.foreground_layer import ForegroundLayerLease
+    from hextech.interfaces.desktop.presentation_smoke import _above
     from hextech.interfaces.desktop.window_activation import suppress_desktop_activation
     foreground = win32gui.GetForegroundWindow()
     windows = []
@@ -40,16 +41,7 @@ def test_native_foreground_panel_recovers_above_nonactivating_blocker(request, m
         win32gui.SetWindowPos(blocker, -1 if blocker_topmost else 0, 0, 0, 0, 0, flags)
         state = lease.maintain(panel, owner, eligible=True, now=10.2)
         assert state["actual_topmost"] and state["owner_matches"]
-        def above(a, b):
-            hwnd = win32gui.GetWindow(b, 3)
-            for _ in range(128):
-                if hwnd == a:
-                    return True
-                if not hwnd:
-                    return False
-                hwnd = win32gui.GetWindow(hwnd, 3)
-            return False
-        assert above(panel, blocker)
+        assert _above(win32gui, panel, blocker)
         client_layer.bind_client_layer(panel, owner)
         assert win32gui.GetWindowLong(panel, -20) & 8, "binder must preserve the foreground lease"
         assert win32gui.GetWindowLong(owner, -20) == owner_style

@@ -69,6 +69,184 @@ def test_handoff_blocked_for_entire_game_even_outside_selection():
     assert not runtime.prepare_vision_handoff()
 
 
+def test_pending_catalog_does_not_block_old_sidecar_recovery_during_game():
+    from support.process_fakes import FakeProcess
+
+    starts = []
+
+    def start_sidecar(**kwargs):
+        starts.append(dict(kwargs))
+        return FakeProcess(2234)
+
+    old = FakeProcess(1234)
+    runtime = OverlayRuntimeManager(
+        prepare_data_func=lambda: pytest.fail("recovery must not read the pending Catalog"),
+        game_active_probe=lambda: True,
+        start_context_poller_func=None,
+        write_inactive_func=lambda: None,
+        start_sidecar_func=start_sidecar,
+    )
+    runtime.host_process = FakeProcess(1235)
+    runtime.sidecar_process = old
+    runtime.desired_enabled = True
+    runtime.status = "starting"
+    runtime.phase = "sidecar_restart"
+    runtime.active_vision_pool_fingerprint = "old-fingerprint"
+    runtime.active_vision_origin_generation_id = "old-generation"
+    runtime.active_recognition_catalog_id = "old-catalog"
+    runtime._active_vision_hint_cache = {"vision": {"catalog_generation_id": "old-catalog"}}
+    runtime.cache_stats = {
+        "vision_pool_fingerprint": "new-fingerprint",
+        "vision_pool_origin_generation_id": "new-generation",
+        "recognition_catalog_id": "new-catalog",
+    }
+    runtime._prepared_vision_hint_cache = {"vision": {"catalog_generation_id": "new-catalog"}}
+    runtime.pending_vision_pool_fingerprint = "new-fingerprint"
+    runtime.pending_vision_origin_generation_id = "new-generation"
+    runtime.pending_recognition_catalog_id = "new-catalog"
+
+    result = runtime.set_enabled(True)
+
+    assert len(starts) == 1
+    assert starts[0]["target_generation_id"] == "old-generation"
+    assert starts[0]["target_catalog_id"] == "old-catalog"
+    assert starts[0]["expected_vision_pool_fingerprint"] == "old-fingerprint"
+    assert old.stopped
+    assert result["status"] == "running"
+    assert result["active_recognition_catalog_id"] == "old-catalog"
+    assert result["pending_recognition_catalog_id"] == "new-catalog"
+    assert runtime._active_vision_hint_cache == {
+        "vision": {"catalog_generation_id": "old-catalog"}
+    }
+
+
+@pytest.mark.parametrize("missing_field", [
+    "active_vision_pool_fingerprint", "active_recognition_catalog_id", "active_vision_origin_generation_id",
+])
+def test_pending_catalog_recovery_without_old_identity_fails_closed(missing_field):
+    from support.process_fakes import FakeProcess
+
+    old = FakeProcess(1234)
+    runtime = OverlayRuntimeManager(
+        game_active_probe=lambda: True,
+        start_context_poller_func=None,
+        start_sidecar_func=lambda **_: pytest.fail("pending Catalog must not cold-start"),
+    )
+    runtime.host_process = FakeProcess(1235)
+    runtime.sidecar_process = old
+    runtime.desired_enabled = True
+    runtime.status = "starting"
+    runtime.phase = "sidecar_restart"
+    runtime.active_vision_pool_fingerprint = "old-fingerprint"
+    runtime.active_recognition_catalog_id = "old-catalog"
+    runtime.active_vision_origin_generation_id = "old-generation"
+    setattr(runtime, missing_field, "")
+    runtime.pending_vision_pool_fingerprint = "new-fingerprint"
+    runtime.pending_recognition_catalog_id = "new-catalog"
+
+    result = runtime.set_enabled(True)
+
+    assert result["status"] == "error"
+    assert result["phase"] == "sidecar_recovery_blocked"
+    assert result["last_start_failure_kind"] == "sidecar_recovery_identity_missing"
+    assert result["pending_recognition_catalog_id"] == "new-catalog"
+    assert not old.stopped
+
+
+@pytest.mark.parametrize("old_catalog", ["old-catalog", ""])
+def test_supervisor_recovers_old_catalog_or_reports_missing_identity(monkeypatch, tmp_path, old_catalog):
+    import threading
+
+    from hextech.bootstrap.supervisor import RuntimeSupervisor
+    from support.process_fakes import FakeProcess
+
+    starts = []
+    finished = threading.Event()
+    runtime = OverlayRuntimeManager(
+        prepare_data_func=lambda: pytest.fail("restart must not read pending Catalog"),
+        game_active_probe=lambda: True,
+        start_context_poller_func=None,
+        write_inactive_func=lambda: None,
+        start_sidecar_func=lambda **kwargs: (starts.append(kwargs), FakeProcess(2234))[1],
+    )
+    runtime.host_process = FakeProcess(1235)
+    runtime.sidecar_process = FakeProcess(1234)
+    runtime.desired_enabled = True
+    runtime.status = "running"
+    runtime.active_vision_pool_fingerprint = "old-fingerprint"
+    runtime.active_vision_origin_generation_id = "old-generation"
+    runtime.active_recognition_catalog_id = old_catalog
+    runtime.pending_vision_pool_fingerprint = "new-fingerprint"
+    runtime.pending_recognition_catalog_id = "new-catalog"
+    runtime.cache_stats = {
+        "vision_pool_fingerprint": "new-fingerprint", "recognition_catalog_id": "new-catalog",
+    }
+    runtime._prepared_vision_hint_cache = {"vision": {"catalog_generation_id": "new-catalog"}}
+    monkeypatch.setattr(runtime, "_read_sidecar_liveness", lambda: {
+        "status": "running" if runtime._sidecar_pid() == 2234 else "stale",
+        "reason": "heartbeat_stale",
+    })
+    monkeypatch.setattr(runtime, "observe_data_generation", lambda: {
+        "changed": False, "state": "deferred_game_active",
+    })
+    supervisor = RuntimeSupervisor(parent_pid=0, overlay_runtime=runtime, event_log_path=tmp_path / "events.jsonl")
+    execute = supervisor._execute_game_overlay_action
+
+    def tracked_execute(**kwargs):
+        try:
+            execute(**kwargs)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(supervisor, "_execute_game_overlay_action", tracked_execute)
+    supervisor.tick()
+    assert finished.wait(2)
+    action = next(iter(supervisor._actions.values()))
+    events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    event_names = [event["event"] for event in events]
+    assert "game_overlay.sidecar_restart_requested" in event_names
+    assert "game_overlay.sidecar_recovered" not in event_names
+    assert runtime.pending_recognition_catalog_id == "new-catalog"
+    assert runtime._vision_recovery_identity is None
+    if old_catalog:
+        assert action["status"] == "completed"
+        assert "game_overlay.sidecar_restart" in event_names
+        assert starts[0]["target_catalog_id"] == "old-catalog"
+        assert starts[0]["expected_vision_pool_fingerprint"] == "old-fingerprint"
+        assert runtime._prepared_vision_hint_cache is None  # Never retain pending hints as active.
+        assert runtime.snapshot()["status"] == "running"
+    else:
+        assert action["status"] == "failed"
+        assert "game_overlay.failed" in event_names
+        assert "game_overlay.sidecar_restart" not in event_names
+        assert action["result"]["last_start_failure_kind"] == "sidecar_recovery_identity_missing"
+        assert not starts
+
+
+@pytest.mark.parametrize("entrypoint", ["set_enabled", "_start"])
+def test_reusable_sidecar_early_return_clears_recovery_identity(monkeypatch, entrypoint):
+    import threading
+
+    from support.process_fakes import FakeProcess
+
+    runtime = OverlayRuntimeManager(
+        prepare_data_func=lambda: pytest.fail("reusable sidecar does not prepare data"),
+        start_context_poller_func=None,
+    )
+    runtime.host_process = FakeProcess(1235)
+    runtime.sidecar_process = FakeProcess(1234)
+    runtime._vision_recovery_identity = {
+        "vision_pool_fingerprint": "old-fingerprint", "recognition_catalog_id": "old-catalog",
+    }
+    monkeypatch.setattr(runtime, "_read_sidecar_liveness", lambda: {"status": "running"})
+    if entrypoint == "set_enabled":
+        result = runtime.set_enabled(True)
+    else:
+        result = runtime._start(0, threading.Event())
+    assert result["status"] == "running"
+    assert runtime._vision_recovery_identity is None
+
+
 def test_game_starts_during_prewarm_preserves_old_sidecar(monkeypatch):
     from support.process_fakes import FakeProcess
 

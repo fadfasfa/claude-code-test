@@ -15,7 +15,7 @@ from .display_geometry import (
 from .data_notice import DataNoticeModel
 from .text_metrics import (
     canvas_text_metrics, _visual_text_width, _ellipsize_visual, _wrap_visual_text,
-    fit_stats_spacing,
+    fit_stats_block,
 )
 from .synergy_canvas import (
     draw_compact_synergy_panel as _draw_compact_synergy_panel_impl,
@@ -400,6 +400,7 @@ def _draw_stat_panel(
         fill=tone_colors.get(str(row.get("stats_tone") or "default"), OVERLAY_THEME["stat_value"]),
         font=_pixel_font(font_family, typography["stats_pixel_size"], "bold"),
         anchor="center",
+        justify="center",
     )
     bbox = getattr(canvas, "bbox", None)
     actual: Any = bbox(item) if callable(bbox) and item is not None else None
@@ -579,10 +580,11 @@ def draw_overlay_frame(
         prepared = row.copy()
         if row["status_code"] in {"READY", "GENERATION_DEGRADED"}:
             text = row["stats_text"] or f"胜率 {row['winrate_text']} · 出场 {row['pickrate_text']}"
-            fitted, spacing = fit_stats_spacing(metrics, text, size, box[2]-box[0]-2*pad)
+            fitted, spacing = fit_stats_block(metrics, text, size, box[2]-box[0]-2*pad, box[3]-box[1]-2*pad)
             prepared["stats_text"] = fitted
             stats_diagnostics.append({"slot": row["slot"], "spacing": spacing, "font_px": size,
-                                      "advance_px": metrics.width(fitted, size, True), "safe_box": list(box),
+                                      "advance_px": max(metrics.width(line, size, True) for line in fitted.splitlines()),
+                                      "line_count": len(fitted.splitlines()), "safe_box": list(box),
                                       "padding_px": pad})
         prepared_stats.append(prepared)
     # 上限随视口放大：120px 旧上限在 1600p 下容不下放大后的三段文字。

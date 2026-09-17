@@ -21,6 +21,37 @@ def test_smoke_accepts_explicit_v3_units_but_rejects_missing_closure(tmp_path):
         smoke._validate_bundle_contract(tmp_path)
 
 
+def test_smoke_accepts_dual_catalog_identity_and_rejects_empty_recognition_id(tmp_path):
+    root = tmp_path / "_internal"
+    root.mkdir()
+    manifest = {
+        "schema_version": smoke.BUNDLE_MANIFEST_SCHEMA_VERSION,
+        "build_id": "test",
+        "runtime_contracts": smoke.RUNTIME_CONTRACT_VERSIONS,
+        "cohort_seed": {
+            "schema_version": 2,
+            "snapshot_schema_version": 3,
+            "catalog_generation_id": "catalog-statistics",
+            "recognition_catalog_generation_id": "catalog-recognition",
+            "units": {"aramkit/rank": {}},
+            "production_pool_count": 1,
+        },
+        "cohort_seed_files": ["test"],
+        "cohort_seed_sha256": {"test": "a" * 64},
+    }
+    path = root / "bundle_manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    cohort = smoke._validate_bundle_contract(tmp_path)["cohort_seed"]
+    assert cohort["catalog_generation_id"] == "catalog-statistics"
+    assert cohort["recognition_catalog_generation_id"] == "catalog-recognition"
+
+    manifest["cohort_seed"]["recognition_catalog_generation_id"] = ""
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(smoke.SmokeFailure, match="recognition Catalog"):
+        smoke._validate_bundle_contract(tmp_path)
+
+
 def test_smoke_overrides_parent_runtime_and_disables_remote_auto_refresh(monkeypatch, tmp_path):
     package = tmp_path / "package"
     captured = {}

@@ -1,11 +1,9 @@
 """DataService 的增量来源执行器。
-
 Core 与 Optional 分别执行，只有发布锁串行化短事务。下载没有对局取消开关；
 worker 按短寿命上下文调整领取优先级。每个 immutable unit 通过投影器再发布。
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 import threading
@@ -28,20 +26,10 @@ from hextech.modules.data.freshness import parse_refresh_time
 from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher
 from hextech.modules.data.ports.atomic import atomic_write_json
 from .refresh_service_schedule import REFRESH_SOURCES, RefreshScheduleMixin
+from .refresh_service_lifecycle import CatalogRefreshDeferred, read_object as _object
+from .refresh_service_lifecycle import run_optional_refresh, try_postcommit_retention
 from .refresh_policy import exception_source_result, source_failure_kind
 from .aramkit.schema import version_marker
-
-
-def _object(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-        return dict(value) if isinstance(value, Mapping) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-class CatalogRefreshDeferred(RuntimeError):
-    """Markers were checked; expensive recognition acquisition waits for safe load."""
 
 
 class IncrementalRefreshService(RefreshScheduleMixin):
@@ -83,6 +71,8 @@ class IncrementalRefreshService(RefreshScheduleMixin):
         self._projection = None
         self._catalog_capability_pending = 0
         self._last_candidate = None
+        self._retention_pending = False
+        self._last_retention_result: dict[str, Any] = {}
         self._context: dict[str, Any] = {"champion_id": "", "in_game": True, "pause_background": True}
         self._load_guard = BackgroundLoadGuard()
         self._restore()
@@ -349,11 +339,15 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                 self.promotion.record_generation_promoted(manifest.generation_id)
                 self.promotion.commit()
                 self._last_candidate = candidate
+                self._retention_pending = True
             except Exception:
                 self.promotion.rollback()
                 raise
             self._progress = self._progress.advance(core_published_at=time.time(), generation_id=manifest.generation_id)
             return manifest.generation_id
+
+    def _try_retention(self) -> None:
+        try_postcommit_retention(self)
 
     def _run(self, source: str, work: Path, *, force: bool = False) -> dict[str, Any]:
         work.mkdir(parents=True, exist_ok=True)
@@ -416,7 +410,14 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                     with self._lock:
                         old_ranking, old_heroes = self._ranking, dict(self._heroes)
                         if path.name == "ranking.pointer.json":
+                            if self._projection is None:
+                                self._projection = self.projection_factory(self._open_catalog())
+                            ranked_ids = self._projection.ranked_champion_ids(unit)
                             self._ranking = unit
+                            self._heroes = {
+                                hero_id: pointer for hero_id, pointer in self._heroes.items()
+                                if hero_id in ranked_ids
+                            }
                             self._progress = self._progress.advance(total_items=parsed.artifact.record_count,
                                                                    completed_items=0)
                         else:
@@ -493,6 +494,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
         finally:
             with self._lock:
                 self._cancels.discard(cancel)
+            self._try_retention()
 
     def refresh(self, *, force: bool = False, scope: str = "due") -> dict[str, Any]:
         with self._refresh_condition:
@@ -522,6 +524,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                 if "result" in locals():
                     self._last_refresh_result = dict(result)
                 self._refresh_condition.notify_all()
+            self._try_retention()
         return result
 
     def _refresh_once(self, *, force: bool = False, scope: str = "due") -> dict[str, Any]:
@@ -699,13 +702,18 @@ class IncrementalRefreshService(RefreshScheduleMixin):
             ):
                 return
             self._optional_thread = threading.Thread(
-                target=self._refresh_optional,
+                target=run_optional_refresh,
+                args=(self,),
                 daemon=True,
                 name="optional-sources",
             )
+            self._optional_active = True
             self._optional_thread.start()
 
     def _refresh_optional(self) -> None:
+        run_optional_refresh(self)
+
+    def _refresh_optional_sources(self) -> None:
         catalog_id = str(self._catalog.get("catalog_generation_id") or "")
         force_check = False
         for source in ("apex", "mayhem"):
@@ -777,9 +785,6 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                     )
                 self._progress = self._progress.advance(**changes)
                 self._optional_results[source] = self._optional_progress.to_dict()
-        with self._lock:
-            self._optional_force_requested = False
-
     def request_stop(self) -> None:
         self._stop.set()
         with self._lock:

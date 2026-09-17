@@ -21,10 +21,14 @@ from pathlib import Path
 import psutil
 from filelock import FileLock, Timeout
 
+from hextech.contracts import CatalogManifestV2
+from hextech.contracts.data_pipeline import require_identifier
 from hextech.infrastructure.persistence.cohort_recovery import (
     CohortCandidate,
+    parse_utc,
     validate_generation_cohort,
 )
+from hextech.modules.data.catalog.versioned import sha256_file, validate_catalog_files
 from hextech.modules.data.generation.validation import SnapshotValidationError
 from hextech.modules.vision.diagnostic_settings import (
     RoiDumpMode,
@@ -548,6 +552,103 @@ def _validated_runtime_candidate(
     return candidate
 
 
+def _validated_catalog_generation_manifest(
+    root: Path,
+    catalog_id: str,
+) -> CatalogManifestV2:
+    catalog_id = require_identifier(
+        catalog_id,
+        field_name="catalog_generation_id",
+    )
+    catalog_root = root / "catalog" / "generations" / catalog_id
+    manifest_path = catalog_root / "manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("manifest must be an object")
+        manifest = CatalogManifestV2.from_mapping(payload)
+        if manifest.catalog_generation_id != catalog_id:
+            raise ValueError("catalog manifest identity mismatch")
+        validate_catalog_files(catalog_root, manifest)
+        return manifest
+    except (OSError, json.JSONDecodeError, TypeError, ValueError, KeyError) as exc:
+        raise ValueError("runtime recognition Catalog pointer/manifest 无效") from exc
+
+
+def _validated_runtime_catalog_manifest(
+    root: Path,
+    pointer: dict[str, object],
+) -> CatalogManifestV2:
+    catalog_id = str(pointer.get("catalog_generation_id") or "")
+    manifest = _validated_catalog_generation_manifest(root, catalog_id)
+    manifest_path = root / "catalog" / "generations" / catalog_id / "manifest.json"
+    if (
+        pointer.get("schema_version") != 2
+        or pointer.get("content_sha256") != manifest.content_sha256
+        or pointer.get("manifest_sha256") != sha256_file(manifest_path)
+    ):
+        raise ValueError("runtime recognition Catalog pointer/manifest 无效")
+    return manifest
+
+
+def _resolve_runtime_recognition_expected(
+    root: Path,
+    expected: dict[str, object],
+) -> tuple[dict[str, object], list[str]]:
+    """允许安装器保留比 bundle 更新且完整的独立识别 Catalog。"""
+
+    expected_id = str(
+        expected.get("recognition_catalog_generation_id")
+        or expected.get("catalog_generation_id")
+        or ""
+    )
+    try:
+        payload = json.loads(
+            (root / "catalog" / "current.v2.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        return dict(expected), [
+            "recognition Catalog current 不可读 "
+            f"path=catalog/current.v2.json error={type(exc).__name__}"
+        ]
+    if not isinstance(payload, dict):
+        return dict(expected), ["recognition Catalog current 不是对象"]
+    actual_id = str(payload.get("catalog_generation_id") or "")
+    if actual_id == expected_id:
+        if str(expected.get("recognition_catalog_generation_id") or ""):
+            try:
+                _validated_runtime_catalog_manifest(root, payload)
+            except ValueError as exc:
+                return dict(expected), [
+                    "runtime recognition Catalog 未通过完整验证："
+                    f"catalog={actual_id} error={type(exc).__name__}"
+                ]
+        return dict(expected), []
+    # Old one-Catalog packages did not authorize independent Catalog adoption.
+    if not str(expected.get("recognition_catalog_generation_id") or ""):
+        return dict(expected), []
+    try:
+        actual_manifest = _validated_runtime_catalog_manifest(root, payload)
+        expected_manifest = _validated_catalog_generation_manifest(
+            root,
+            expected_id,
+        )
+        if parse_utc(actual_manifest.created_at) < parse_utc(expected_manifest.created_at):
+            return dict(expected), [
+                "runtime recognition Catalog 早于 bundle seed："
+                f"expected={expected_id} actual={actual_id}"
+            ]
+    except (OSError, json.JSONDecodeError, TypeError, ValueError, KeyError) as exc:
+        return dict(expected), [
+            "runtime recognition Catalog 未通过完整验证："
+            f"catalog={actual_id} error={type(exc).__name__}"
+        ]
+    return {
+        **expected,
+        "recognition_catalog_generation_id": actual_id,
+    }, []
+
+
 def _resolve_runtime_cohort_expected(
     root: Path,
     expected: dict[str, object],
@@ -555,6 +656,11 @@ def _resolve_runtime_cohort_expected(
     validation_cache: dict[tuple[str, str], CohortCandidate] | None = None,
 ) -> tuple[dict[str, object], list[str]]:
     """允许启动刷新晋升同 Catalog/production pool 的更新完整 generation。"""
+
+    effective, recognition_errors = _resolve_runtime_recognition_expected(root, expected)
+    if recognition_errors:
+        return effective, recognition_errors
+    expected = effective
 
     pointer_path = root / "snapshots" / "current.v2.json"
     try:
@@ -642,7 +748,14 @@ def _runtime_cohort_errors(root: Path, expected: dict[str, object]) -> list[str]
 
     errors: list[str] = []
     generation_id = str(expected.get("generation_id") or "")
+    # v3 statistics remain bound to the Catalog that produced their immutable
+    # units, while recognition may independently adopt a newer Catalog.  Old
+    # bundles omit the explicit recognition identity and retain one-Catalog
+    # behavior through this fallback.
     catalog_id = str(expected.get("catalog_generation_id") or "")
+    recognition_catalog_id = str(
+        expected.get("recognition_catalog_generation_id") or catalog_id
+    )
     source_run_ids = expected.get("source_run_ids")
     if not isinstance(source_run_ids, dict):
         return ["bundle cohort seed 缺少 source_run_ids"]
@@ -663,7 +776,10 @@ def _runtime_cohort_errors(root: Path, expected: dict[str, object]) -> list[str]
         except (OSError, TypeError, ValueError, SnapshotValidationError) as exc:
             return [f"v3 runtime cohort unit closure 无效 error={type(exc).__name__}"]
     expected_fields = {
-        Path("catalog/current.v2.json"): ("catalog_generation_id", catalog_id),
+        Path("catalog/current.v2.json"): (
+            "catalog_generation_id",
+            recognition_catalog_id,
+        ),
         Path("snapshots/current.v2.json"): ("current_generation_id", generation_id),
         **{
             Path(f"sources/{source}/current.v2.json"): ("run_id", str(source_run_ids.get(source) or ""))
@@ -703,7 +819,10 @@ def _runtime_cohort_errors(root: Path, expected: dict[str, object]) -> list[str]
     if not isinstance(states, dict):
         errors.append("cohort schedule 缺少 sources")
         return errors
-    expected_runs = {"catalog": catalog_id, **{key: str(value) for key, value in source_run_ids.items()}}
+    expected_runs = {
+        "catalog": recognition_catalog_id,
+        **{key: str(value) for key, value in source_run_ids.items()},
+    }
     for source, run_id in expected_runs.items():
         state = states.get(source)
         if not isinstance(state, dict):
@@ -866,7 +985,14 @@ def _runtime_build_errors(
                         f"actual={actual_generation}"
                     )
             expected_fields = {
-                "catalog_generation_id": str(effective_cohort.get("catalog_generation_id") or ""),
+                "catalog_generation_id": str(
+                    effective_cohort.get("catalog_generation_id") or ""
+                ),
+                "recognition_catalog_id": str(
+                    effective_cohort.get("recognition_catalog_generation_id")
+                    or effective_cohort.get("catalog_generation_id")
+                    or ""
+                ),
                 "production_pool_id": str(effective_cohort.get("production_pool_id") or ""),
                 "production_pool_state": "ready",
                 "production_pool_count": expected_pool_count,

@@ -180,10 +180,10 @@ class IncrementalProjection:
                 any(not scoped.get("stages", {}).get(stage) for stage in ("1", "2", "3", "4"))):
             raise ValueError("champion component is incomplete")
 
-    def build(self, ranking_pointer: Mapping[str, Any],
-              champion_pointers: Mapping[str, Mapping[str, Any]],
-              optional_pointers: Mapping[str, Mapping[str, Any]]) -> IncrementalBuild:
-        self._used = set()
+    def _ranking_cohort(
+        self,
+        ranking_pointer: Mapping[str, Any],
+    ) -> tuple[_Loaded, str, list[dict[str, Any]]]:
         for path, expected in self._catalog_paths.items():
             if _stamp(path) != expected:
                 raise ValueError("immutable Catalog changed")
@@ -192,11 +192,30 @@ class IncrementalProjection:
         rows = ranking.payload.get("rows")
         if not isinstance(version, Mapping) or not version.get("dataPath") or not isinstance(rows, list) or not rows:
             raise ValueError("ranking artifact schema/version invalid")
-        source_version = str(version["dataPath"])
-        summaries = [{"id": row["id"], "source_rank": row["rank"], "source_tier": row["tier"],
-                      "sample_count": row["stats"]["sampleCount"], "win_rate": row["stats"]["winRate"],
-                      "pick_rate": row["stats"]["pickRate"]} for row in rows]
-        champions = build_hero_rankings(summaries, self.champions)
+        summaries = [
+            {
+                "id": row["id"],
+                "source_rank": row["rank"],
+                "source_tier": row["tier"],
+                "sample_count": row["stats"]["sampleCount"],
+                "win_rate": row["stats"]["winRate"],
+                "pick_rate": row["stats"]["pickRate"],
+            }
+            for row in rows
+        ]
+        return ranking, str(version["dataPath"]), build_hero_rankings(summaries, self.champions)
+
+    def ranked_champion_ids(self, ranking_pointer: Mapping[str, Any]) -> frozenset[str]:
+        """Validate a ranking unit and expose the exact cohort accepted by projection."""
+
+        _ranking, _source_version, champions = self._ranking_cohort(ranking_pointer)
+        return frozenset(str(item["id"]) for item in champions)
+
+    def build(self, ranking_pointer: Mapping[str, Any],
+              champion_pointers: Mapping[str, Mapping[str, Any]],
+              optional_pointers: Mapping[str, Mapping[str, Any]]) -> IncrementalBuild:
+        self._used = set()
+        ranking, source_version, champions = self._ranking_cohort(ranking_pointer)
         ranked_ids = {item["id"] for item in champions}
         if set(champion_pointers) - ranked_ids:
             raise ValueError("champion contribution absent from ranking cohort")

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
+from hextech.infrastructure.vision.epoch_diagnostics import build_epoch_recognition_summary, log_epoch_summary
 from hextech.infrastructure.vision.timeline_identity import selection_timeline_path as _selection_timeline_path
 
 from hextech.infrastructure.vision.sidecar_common import (
@@ -447,9 +448,7 @@ def _latency_percentiles(values: list[float]) -> dict[str, float | int | None]:
     return {"count": len(ordered), "p50": p50, "p95": ordered[p95_index]}
 
 
-def _timeline_epoch_latency_summary(target: Path, current: Mapping[str, Any]) -> dict[str, Any]:
-    """只汇总真实识别 observation，暂停探针不能稀释 P50/P95。"""
-
+def _timeline_epoch_entries(target: Path, current: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     entries: list[Mapping[str, Any]] = []
     try:
         lines = target.read_text(encoding="utf-8").splitlines()
@@ -463,6 +462,12 @@ def _timeline_epoch_latency_summary(target: Path, current: Mapping[str, Any]) ->
         if isinstance(payload, Mapping):
             entries.append(payload)
     entries.append(current)
+    return entries
+
+
+def _timeline_epoch_latency_summary(entries: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """只汇总真实识别 observation，暂停探针不能稀释 P50/P95。"""
+
     result: dict[str, Any] = {}
     for key in ("capture", "recognition", "total"):
         values: list[float] = []
@@ -722,7 +727,9 @@ def write_selection_timeline_observation(
         return target
     entry = _selection_timeline_entry(event_payload, _next_timeline_sequence(target))
     if terminal:
-        entry["epoch_latency_ms"] = _timeline_epoch_latency_summary(target, entry)
+        epoch_entries = _timeline_epoch_entries(target, entry)
+        entry["epoch_latency_ms"] = _timeline_epoch_latency_summary(epoch_entries)
+        entry["epoch_recognition"] = build_epoch_recognition_summary(epoch_entries)
     if not _append_timeline_line(target, entry):
         if not terminal:
             _TIMELINE_SEQUENCES[key] = max(0, _TIMELINE_SEQUENCES[key] - 1)
@@ -730,6 +737,7 @@ def write_selection_timeline_observation(
         raise OSError("timeline_append_failed")
     if terminal:
         _TIMELINE_TERMINATED.add(key)
+        log_epoch_summary(entry)
     if isinstance(event_payload, dict):
         event_payload["_timeline_write_disposition"] = "appended"
     # 删除/轮转只有 diagnostic_retention 一个所有者。writer 仅 append，避免与

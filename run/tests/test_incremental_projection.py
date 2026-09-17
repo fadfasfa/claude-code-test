@@ -69,6 +69,16 @@ def test_rank_first_then_individual_complete_heroes(inputs):
         SourceStatusV2.from_mapping(status)
 
 
+def test_ranked_champion_ids_uses_the_same_validated_cohort_as_build(inputs):
+    catalog, binding, version, rows, _, _, heroes = inputs
+    reduced = publish_unit(version, rows[:1], binding=binding)
+    projection = IncrementalProjection(catalog)
+
+    assert projection.ranked_champion_ids(reduced) == frozenset({"1"})
+    with pytest.raises(ValueError, match="absent from ranking cohort"):
+        projection.build(reduced, heroes, {})
+
+
 def full_pointer(catalog, version, details, run_id="full-fixture"):
     path, count = _write_artifact(run_id, version, details)
     artifact = source_runs.build_artifact_descriptor(path, role="scoped_stats", relative_path="scoped_stats/manifest.json",

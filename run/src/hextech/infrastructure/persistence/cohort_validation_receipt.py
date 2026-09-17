@@ -13,7 +13,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from hextech.contracts.data_pipeline import require_identifier
 from hextech.infrastructure.persistence.cohort_recovery import CohortCandidate, validate_generation_cohort
+from hextech.infrastructure.persistence.cohort_seed_catalog import validated_catalog_manifest
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.session.build_identity import get_build_identity
 
@@ -78,6 +80,7 @@ def _verified_paths(runtime: Path, candidate: CohortCandidate) -> tuple[Path, ..
         # Catalog validation already verifies content-addressed assets; retain
         # every file in that exact immutable Catalog, not only its JSON index.
         paths.update(path for path in catalog_root.rglob("*") if path.is_file())
+        paths.update(_recognition_catalog_paths(runtime))
         for pointer in candidate.units.values():
             source, run_id = str(pointer["source"]), str(pointer["run_id"])
             run_root = runtime / "sources" / source / "runs" / run_id
@@ -129,6 +132,40 @@ def receipt_path(runtime_root: str | Path) -> Path:
     return Path(runtime_root) / RECEIPT_RELATIVE_PATH
 
 
+def _recognition_catalog_pointer(runtime: Path) -> dict[str, Any]:
+    pointer = _read_object(runtime / "catalog/current.v2.json")
+    require_identifier(
+        pointer.get("catalog_generation_id"),
+        field_name="catalog_generation_id",
+    )
+    return pointer
+
+
+def _validate_recognition_catalog(runtime: Path) -> dict[str, Any]:
+    pointer = _recognition_catalog_pointer(runtime)
+    validated_catalog_manifest(runtime, pointer)
+    return pointer
+
+
+def _recognition_catalog_paths(runtime: Path) -> tuple[Path, ...]:
+    pointer = _recognition_catalog_pointer(runtime)
+    catalog_id = str(pointer["catalog_generation_id"])
+    root = runtime / "catalog" / "generations" / catalog_id
+    return tuple(sorted((path for path in root.rglob("*") if path.is_file()), key=lambda path: path.as_posix()))
+
+
+def _recognition_catalog_header_paths(runtime: Path) -> tuple[Path, ...]:
+    pointer = _recognition_catalog_pointer(runtime)
+    root = runtime / "catalog" / "generations" / str(pointer["catalog_generation_id"])
+    manifest_path = root / "manifest.json"
+    manifest = _read_object(manifest_path)
+    paths = {manifest_path}
+    for descriptor in manifest.get("files") or ():
+        if isinstance(descriptor, Mapping):
+            paths.add(_safe_runtime_path(root, descriptor.get("relative_path")))
+    return tuple(sorted(paths, key=lambda path: path.as_posix()))
+
+
 def _inventory(runtime: Path) -> list[dict[str, Any]]:
     """Only stat history headers; a newly materialized candidate invalidates fast return."""
     result = []
@@ -159,6 +196,7 @@ def _header_bindings(runtime: Path, candidate: CohortCandidate) -> dict[str, str
             paths.add(_safe_runtime_path(root, pointer["artifact"]["relative_path"]))
     for descriptor in _read_object(catalog_root / "manifest.json")["files"]:
         paths.add(_safe_runtime_path(catalog_root, descriptor["relative_path"]))
+    paths.update(_recognition_catalog_header_paths(runtime))
     result = {}
     for path in paths:
         relative = path.relative_to(runtime).as_posix()
@@ -171,10 +209,14 @@ def _header_bindings(runtime: Path, candidate: CohortCandidate) -> dict[str, str
 
 def _primary_bindings_match(runtime: Path, candidate: CohortCandidate) -> bool:
     for source, pointer in candidate.pointers.items():
-        path = runtime / "catalog/current.v2.json" if source == "catalog" else runtime / "sources" / source / "current.v2.json"
+        if source == "catalog":
+            continue
+        path = runtime / "sources" / source / "current.v2.json"
         actual = _read_object(path)
-        fields = ("catalog_generation_id", "content_sha256", "manifest_sha256") if source == "catalog" else (
-            "source", "run_id", "catalog_generation_id", "catalog_sha256", "manifest_sha256", "artifact")
+        fields = (
+            "source", "run_id", "catalog_generation_id", "catalog_sha256",
+            "manifest_sha256", "artifact",
+        )
         if any(actual.get(field) != pointer.get(field) for field in fields):
             return False
     return True
@@ -202,6 +244,7 @@ def write_validation_receipt(runtime_root: str | Path, candidate: CohortCandidat
             # Revalidate only current closure: cached candidates must not certify drift.
             if validate_generation_cohort(runtime, candidate.generation_id) != candidate:
                 return False
+            recognition_pointer = _validate_recognition_catalog(runtime)
             if (_metadata(runtime, _verified_paths(runtime, candidate)) != before_files
                     or _header_bindings(runtime, candidate) != before_headers
                     or _inventory(runtime) != before_inventory):
@@ -220,11 +263,13 @@ def write_validation_receipt(runtime_root: str | Path, candidate: CohortCandidat
             "production_pool_count": candidate.production_pool_count,
             "pointers": {key: dict(value) for key, value in candidate.pointers.items()},
             "journal_state": "absent",
-            "verified_files": _metadata(runtime, _verified_paths(runtime, candidate)),
+            "verified_files": before_files if candidate.snapshot_schema_version == 3 else
+                _metadata(runtime, _verified_paths(runtime, candidate)),
         }
         if candidate.snapshot_schema_version == 3:
             payload.update(snapshot_schema_version=3, units={key: dict(value) for key, value in candidate.units.items()},
-                           header_bindings=_header_bindings(runtime, candidate), generation_inventory=_inventory(runtime))
+                           recognition_catalog_pointer=recognition_pointer,
+                           header_bindings=before_headers, generation_inventory=before_inventory)
         from hextech.contracts import utc_now_iso
 
         payload["validated_at"] = utc_now_iso()
@@ -300,6 +345,19 @@ def load_valid_validation_receipt(runtime_root: str | Path) -> CohortCandidate |
         )
         if schema == 2:
             if not _primary_bindings_match(runtime, candidate):
+                return None
+            certified_recognition = payload.get("recognition_catalog_pointer")
+            if not isinstance(certified_recognition, Mapping):
+                return None
+            active_recognition = _recognition_catalog_pointer(runtime)
+            recognition_fields = (
+                "schema_version", "catalog_generation_id", "content_sha256",
+                "manifest_sha256",
+            )
+            if any(
+                active_recognition.get(field) != certified_recognition.get(field)
+                for field in recognition_fields
+            ):
                 return None
             manifest = _read_object(manifest_path)
             provenance = {f"{item['source']}/{item['run_id']}": item for item in manifest["source_files"]

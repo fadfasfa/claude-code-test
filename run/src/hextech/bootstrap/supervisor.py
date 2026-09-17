@@ -237,10 +237,11 @@ class RuntimeSupervisor:
             action_context = dict(self._actions.get(action_id) or {})
         try:
             result_payload = self._result_payload(self._overlay_runtime.set_enabled(enabled))
-            status = "completed"
+            status = "failed" if result_payload.get("status") == "error" else "completed"
             self.append_event(
                 {
-                    "event": "game_overlay.completed",
+                    "event": f"game_overlay.{status}",
+                    "level": "ERROR" if status == "failed" else "INFO",
                     "component": "game_overlay",
                     "correlation_id": action_id,
                     "duration_seconds": int(max(0.0, time.time() - started_at)),
@@ -271,7 +272,7 @@ class RuntimeSupervisor:
             )
             result_payload["runtime"] = failure_snapshot
         old_sidecar_pid = int(action_context.get("old_sidecar_pid") or 0)
-        if status == "completed" and old_sidecar_pid:
+        if status == "completed" and old_sidecar_pid and result_payload.get("status") == "running":
             new_sidecar_pid = int(result_payload.get("sidecar_pid") or 0)
             self.append_event(
                 {

@@ -26,6 +26,7 @@ from hextech.modules.data.ports.atomic import atomic_write_json
 from test_cohort_seed import _write_catalog
 from test_aramkit_source import _ranking, _detail, _version
 import hextech.infrastructure.sources.refresh_service as refresh_module
+import hextech.infrastructure.sources.refresh_service_lifecycle as refresh_lifecycle
 
 
 @pytest.fixture
@@ -301,6 +302,103 @@ def test_unchanged_publish_preserves_previous_and_recovery_previous(runtime, mon
     assert DataSnapshotClient(root / "snapshots").open_view().is_champion_complete("1")
 
 
+def test_postcommit_retention_waits_for_core_optional_and_process_workers(runtime, monkeypatch):
+    root, _, _ = runtime
+    service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)
+    calls = []
+
+    def retention(_root, *, workers_idle):
+        calls.append(workers_idle)
+        return {
+            "disposition": "completed" if workers_idle else "skipped_workers_active",
+            "reason": "",
+        }
+
+    monkeypatch.setattr(refresh_lifecycle, "apply_cohort_retention", retention)
+    service._retention_pending = True
+    service._refresh_active = True
+    service._try_retention()
+    service._refresh_active = False
+    service._cancels.add(root / "active.cancel")
+    service._try_retention()
+    service._cancels.clear()
+    service._optional_active = True
+    service._optional_thread = SimpleNamespace(is_alive=lambda: True)
+    service._try_retention()
+    assert service._retention_pending is True
+
+    service._optional_active = False
+    service._optional_thread = None
+    service._try_retention()
+
+    assert calls == [False, False, False, True]
+    assert service._retention_pending is False
+
+
+def test_retention_failure_does_not_undo_published_generation(runtime, monkeypatch):
+    root, _, binding = runtime
+    service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)
+    ranking, _ = _units(binding, root / "units")
+    service._ranking = ranking
+    generation_id = service._publish()
+    monkeypatch.setattr(
+        refresh_lifecycle,
+        "apply_cohort_retention",
+        lambda *_args, **_kwargs: {"disposition": "failed", "reason": "disk busy"},
+    )
+
+    service._try_retention()
+
+    assert service.publisher.current_generation_id() == generation_id
+    assert service._retention_pending is True
+    assert service._last_retention_result == {"disposition": "failed", "reason": "disk busy"}
+
+
+def test_unexpected_retention_exception_cannot_fail_committed_refresh(runtime, monkeypatch):
+    root, _, binding = runtime
+    service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)
+    ranking, _ = _units(binding, root / "units")
+    service._ranking = ranking
+    generation_id = service._publish()
+    monkeypatch.setattr(
+        refresh_lifecycle,
+        "apply_cohort_retention",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("unexpected")),
+    )
+
+    service._try_retention()
+
+    assert service.publisher.current_generation_id() == generation_id
+    assert service._retention_pending is True
+    assert service._last_retention_result == {
+        "disposition": "failed",
+        "reason": "RuntimeError:unexpected",
+    }
+
+
+def test_optional_worker_remains_active_until_all_optional_sources_finish(runtime, monkeypatch):
+    root, _, _ = runtime
+    service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)
+    calls = []
+    monkeypatch.setattr(
+        refresh_lifecycle,
+        "apply_cohort_retention",
+        lambda _root, *, workers_idle: calls.append(workers_idle) or {
+            "disposition": "completed" if workers_idle else "skipped_workers_active",
+            "reason": "",
+        },
+    )
+    service._retention_pending = True
+    service._optional_active = True
+    service._optional_thread = None
+    service._refresh_optional_sources = service._try_retention
+
+    refresh_lifecycle.run_optional_refresh(service)
+
+    assert calls == [False, True]
+    assert service._retention_pending is False
+
+
 def test_new_generation_identity_alone_does_not_claim_business_content_change(runtime, monkeypatch):
     root, _, binding = runtime
     service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)
@@ -345,10 +443,74 @@ def test_background_units_are_batched_but_current_hero_publishes_before_worker_e
         return IsolatedProcessResult(0, 0.1, False, "", "")
 
     service = _service(runtime, monkeypatch, process)
-    service._projection = SimpleNamespace(validate_champion=lambda *args: None)
+    service._projection = SimpleNamespace(
+        validate_champion=lambda *args: None,
+        ranked_champion_ids=lambda _pointer: frozenset({"1", "2", "3"}),
+    )
     monkeypatch.setattr(service, "_publish", lambda: published.append(set(service._heroes)) or "generation")
     service._run("aramkit", root / "work")
     assert published == [set(), {"1"}, {"1", "2", "3"}]
+
+
+def test_new_ranking_atomically_drops_heroes_outside_projected_cohort(runtime, monkeypatch):
+    root, _, binding = runtime
+    ranking, hero = _units(binding, root / "old-units")
+    published = []
+
+    def process(command, *, observe, **kwargs):
+        output = Path(command[command.index("--result-output") + 1])
+        directory = output.parent / "units"
+        new_ranking, _ = _units(binding, directory)
+        observe()
+        atomic_write_json(output, {"state": "ready", "pointer": new_ranking})
+        return IsolatedProcessResult(0, 0.1, False, "", "")
+
+    service = _service(runtime, monkeypatch, process)
+    service._ranking = ranking
+    service._heroes = {"1": hero, "2": hero}
+    service._projection = SimpleNamespace(
+        ranked_champion_ids=lambda _pointer: frozenset({"1"}),
+    )
+    monkeypatch.setattr(
+        service,
+        "_publish",
+        lambda: published.append(set(service._heroes)) or "generation",
+    )
+
+    service._run("aramkit", root / "work")
+
+    assert published == [{"1"}]
+    assert service._heroes == {"1": hero}
+
+
+def test_ranking_cohort_reduction_rolls_back_heroes_when_publish_fails(runtime, monkeypatch):
+    root, _, binding = runtime
+    old_ranking, hero = _units(binding, root / "old-units")
+
+    def process(command, *, observe, **kwargs):
+        output = Path(command[command.index("--result-output") + 1])
+        _units(binding, output.parent / "units")
+        observe()
+        atomic_write_json(output, {"state": "ready", "pointer": old_ranking})
+        return IsolatedProcessResult(0, 0.1, False, "", "")
+
+    service = _service(runtime, monkeypatch, process)
+    service._ranking = old_ranking
+    service._heroes = {"1": hero, "2": hero}
+    service._projection = SimpleNamespace(
+        ranked_champion_ids=lambda _pointer: frozenset({"1"}),
+    )
+    monkeypatch.setattr(
+        service,
+        "_publish",
+        lambda: (_ for _ in ()).throw(ValueError("projection rejected")),
+    )
+
+    with pytest.raises(RuntimeError, match="incremental_publish_failed"):
+        service._run("aramkit", root / "work")
+
+    assert service._ranking == old_ranking
+    assert service._heroes == {"1": hero, "2": hero}
 
 
 def test_missing_optional_is_due_even_if_old_catalog_schedule_is_ready(runtime):

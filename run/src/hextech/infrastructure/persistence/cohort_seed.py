@@ -19,6 +19,10 @@ from typing import Any, Literal
 
 from hextech.contracts import CatalogManifestV2, SourcePointerV2, SourceRunManifestV2
 from hextech.infrastructure.persistence.cohort import CohortPromotionStore
+from hextech.infrastructure.persistence.cohort_seed_catalog import (
+    startup_pointers as _startup_pointers,
+    validated_catalog_manifest as _validated_catalog_manifest,
+)
 from hextech.infrastructure.persistence.cohort_recovery import (
     CohortCandidate,
     build_recovery_point,
@@ -176,18 +180,28 @@ def _validate_installed_cohort(
         raise ValueError("cohort seed snapshot pointer 身份不一致")
     if metadata.get("schema_version") == 2:
         candidate = validate_generation_cohort(runtime_root, generation_id)
+        recognition_catalog_id = str(
+            metadata.get("recognition_catalog_generation_id") or catalog_id
+        )
         if (candidate.snapshot_schema_version != 3 or metadata.get("snapshot_schema_version") != 3
                 or dict(candidate.units) != metadata.get("units")
-                or set(pointers) != set(candidate.pointers)
+                or set(pointers).difference({"catalog"})
+                != set(candidate.pointers).difference({"catalog"})
                 or candidate.pointers["catalog"].get("catalog_generation_id") != catalog_id
+                or pointers["catalog"].get("catalog_generation_id") != recognition_catalog_id
                 or {source: pointer.get("run_id") for source, pointer in candidate.pointers.items() if source != "catalog"}
                 != metadata.get("source_run_ids")
                 or candidate.production_pool_id != metadata.get("production_pool_id")
                 or candidate.production_pool_count != metadata.get("production_pool_count")):
             raise ValueError("v3 cohort seed closure 与 generation 不一致")
+        _validated_catalog_manifest(runtime_root, pointers["catalog"])
         for role, expected in candidate.pointers.items():
-            fields = ("catalog_generation_id", "content_sha256", "manifest_sha256") if role == "catalog" else (
-                "source", "run_id", "catalog_generation_id", "catalog_sha256", "manifest_sha256", "artifact")
+            if role == "catalog":
+                continue
+            fields = (
+                "source", "run_id", "catalog_generation_id", "catalog_sha256",
+                "manifest_sha256", "artifact",
+            )
             if any(pointers[role].get(key) != expected.get(key) for key in fields):
                 raise ValueError("v3 cohort seed primary pointer 不一致")
         return
@@ -309,33 +323,6 @@ def _same_current(
         return True
     except (TypeError, ValueError):
         return False
-
-
-def _startup_pointers(runtime: Path, candidate: CohortCandidate) -> dict[str, Mapping[str, Any]]:
-    """统计恢复不回退已独立发布且更新的识别 Catalog。"""
-    pointers = dict(candidate.pointers)
-    if candidate.snapshot_schema_version != 3:
-        return pointers
-    try:
-        current = _read_object(runtime / "catalog/current.v2.json")
-        catalog_id = str(current.get("catalog_generation_id") or "")
-        from hextech.contracts.data_pipeline import require_identifier
-
-        require_identifier(catalog_id, field_name="catalog_generation_id")
-        root = runtime / "catalog/generations" / catalog_id
-        manifest = CatalogManifestV2.from_mapping(_read_object(root / "manifest.json"))
-        if (current.get("schema_version") != 2 or manifest.catalog_generation_id != catalog_id
-                or current.get("manifest_sha256") != sha256_file(root / "manifest.json")
-                or current.get("content_sha256") != manifest.content_sha256):
-            return pointers
-        validate_catalog_files(root, manifest)
-        old_id = str(candidate.pointers["catalog"]["catalog_generation_id"])
-        old = CatalogManifestV2.from_mapping(_read_object(runtime / "catalog/generations" / old_id / "manifest.json"))
-        if parse_utc(manifest.created_at) >= parse_utc(old.created_at):
-            pointers["catalog"] = current
-    except (OSError, ValueError, TypeError, KeyError, RuntimeError):
-        pass  # 无效独立指针不能阻断已验证统计 cohort 的恢复。
-    return pointers
 
 
 def _optional_object(path: Path) -> dict[str, Any]:
@@ -590,6 +577,20 @@ def _install_bundled_cohort(bundle_base: Path, runtime: Path) -> InstallState:
             if receipt_sort_time < bundle_candidate.sort_time:
                 receipt_candidate = None
     if receipt_candidate is not None:
+        receipt_pointer = {
+            "schema_version": 2,
+            "current_generation_id": receipt_candidate.generation_id,
+        }
+        desired = _startup_pointers(
+            runtime,
+            receipt_candidate,
+            bundled_catalog=pointers["catalog"],
+        )
+        if not _same_current(runtime, desired, receipt_pointer):
+            # A newer bundled recognition Catalog still needs the normal
+            # promotion transaction even when the statistics receipt is valid.
+            receipt_candidate = None
+    if receipt_candidate is not None:
         state: InstallState = (
             "already_current"
             if receipt_candidate.generation_id == bundle_generation_id
@@ -633,7 +634,12 @@ def _install_bundled_cohort(bundle_base: Path, runtime: Path) -> InstallState:
         )
         previous_pointer = _optional_object(runtime / "snapshots" / "previous.v2.json")
         previous_id = str(previous_pointer.get("generation_id") or "")
-        if _same_current(runtime, _startup_pointers(runtime, candidate), selected_pointer):
+        startup_pointers = _startup_pointers(
+            runtime,
+            candidate,
+            bundled_catalog=pointers["catalog"],
+        )
+        if _same_current(runtime, startup_pointers, selected_pointer):
             try:
                 existing_point = load_recovery_point(runtime)
             except (TypeError, ValueError):
@@ -677,7 +683,11 @@ def _install_bundled_cohort(bundle_base: Path, runtime: Path) -> InstallState:
             selected_source=selected_source,
             bundled_schedule_path=schedule_path,
         )
-        startup_pointers = _startup_pointers(runtime, candidate)
+        startup_pointers = _startup_pointers(
+            runtime,
+            candidate,
+            bundled_catalog=pointers["catalog"],
+        )
         for role in ("catalog", *SOURCE_ROLES):
             if role in startup_pointers:
                 store.record_target(role, startup_pointers[role])

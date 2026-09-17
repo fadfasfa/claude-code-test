@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from PIL import Image
 
-from hextech.infrastructure.vision import runner, sidecar_diagnostics
+from hextech.infrastructure.vision import epoch_diagnostics, runner, sidecar_diagnostics
 
 
 def _event(*, epoch: int, observed_at: float, active: bool = True) -> dict:
@@ -84,6 +85,52 @@ def _event(*, epoch: int, observed_at: float, active: bool = True) -> dict:
             {"slot": 1, "state": "detecting"},
             {"slot": 2, "state": "detecting"},
         ],
+    }
+
+
+def test_terminal_summary_retains_slow_slot_evidence_once(tmp_path: Path, caplog) -> None:
+    trace_path = tmp_path / "state" / "overlay_vision_trace.v1.json"
+    first = _event(epoch=99, observed_at=100.0)
+    sidecar_diagnostics.write_selection_timeline_observation(first, trace_path)
+    partial = _event(epoch=99, observed_at=100.324)
+    partial["slots"][0].update(state="ready", acceptance_rule="ocr_exact_fallback")
+    partial["slots"][1].update(state="ready", acceptance_rule="ocr_exact_fallback")
+    partial["slots"][2].update(evidence_hits=2, required_hits=3, temporal_state="evidence_pending")
+    partial["_raw_slots"][2] = {"ocr_production": {"state": "rejected", "reason": "low_confidence", "raw_text": "private-ocr"}}
+    sidecar_diagnostics.write_selection_timeline_observation(partial, trace_path)
+    ready = _event(epoch=99, observed_at=107.91)
+    for slot in ready["slots"]:
+        slot.update(state="ready", acceptance_rule="ocr_exact_fallback")
+    sidecar_diagnostics.write_selection_timeline_observation(ready, trace_path)
+    ended = _event(epoch=99, observed_at=108.0, active=False)
+    ended["source"]["reason"] = "selection_completed"
+    with caplog.at_level(logging.INFO, logger=epoch_diagnostics.__name__):
+        target = sidecar_diagnostics.write_selection_timeline_observation(ended, trace_path)
+        sidecar_diagnostics.write_selection_timeline_observation(ended, trace_path)
+    assert target is not None
+    final = json.loads(target.read_text(encoding="utf-8").splitlines()[-1])
+    summary = final["epoch_recognition"]
+    assert summary["observations"] == 3
+    assert [slot["first_ready_ms"] for slot in summary["slots"]] == [344.0, 344.0, 7930.0]
+    assert summary["slots"][2]["last_pending"]["ocr_reason"] == "low_confidence"
+    assert summary["slots"][2]["last_pending"]["evidence_hits"] == 2
+    messages = [record.getMessage() for record in caplog.records if "vision_epoch_summary=" in record.getMessage()]
+    assert len(messages) == 1
+    assert "private-ocr" not in messages[0]
+    assert len(messages[0]) < 4096
+
+
+def test_recognition_summary_marks_truncation_and_excludes_pause_probes():
+    active = sidecar_diagnostics._selection_timeline_entry(_event(epoch=100, observed_at=100.0), 1)
+    paused = dict(active, observation_kind="visibility_probe")
+    paused["slots"] = [{"state": "ready"}] * 3
+    truncated = {"observation_kind": "diagnostic_truncated"}
+    summary = epoch_diagnostics.build_epoch_recognition_summary([active, paused, truncated])
+    assert summary["observations"] == 1
+    assert summary["truncated"] is True
+    assert all(slot["first_ready_ms"] is None for slot in summary["slots"])
+    assert epoch_diagnostics.build_epoch_recognition_summary([paused, truncated]) == {
+        "observations": 0, "slots": [], "truncated": True,
     }
 
 

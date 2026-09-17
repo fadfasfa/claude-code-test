@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
+import shutil
 
 import pytest
 
-from hextech.contracts import ArtifactDescriptor, CohortRecoveryPointV1, SourceProvenance, SourceRunManifestV2
+from hextech.contracts import ArtifactDescriptor, CatalogManifestV2, CohortRecoveryPointV1, SourceProvenance, SourceRunManifestV2
 from hextech.infrastructure.persistence.cohort_recovery import build_recovery_point, validate_generation_cohort
 from hextech.infrastructure.persistence.cohort_seed import install_bundled_cohort
 from hextech.infrastructure.persistence.cohort_validation_receipt import write_validation_receipt
@@ -63,6 +65,34 @@ def _v3_runtime(tmp_path: Path, *, details: bool) -> tuple[Path, str, Path | Non
     return runtime, manifest.generation_id, child_path
 
 
+def _publish_independent_recognition_catalog(runtime: Path) -> dict[str, object]:
+    current_path = runtime / "catalog/current.v2.json"
+    current = json.loads(current_path.read_text(encoding="utf-8"))
+    old_id = str(current["catalog_generation_id"])
+    new_id = "catalog-recognition-new"
+    source = runtime / "catalog/generations" / old_id
+    target = runtime / "catalog/generations" / new_id
+    shutil.copytree(source, target)
+    manifest_path = target / "manifest.json"
+    manifest = CatalogManifestV2.from_mapping(json.loads(manifest_path.read_text(encoding="utf-8")))
+    updated = replace(
+        manifest,
+        catalog_generation_id=new_id,
+        created_at="2026-09-15T00:00:00+00:00",
+    )
+    atomic_write_json(manifest_path, updated.to_dict(), ensure_ascii=False, indent=2)
+    pointer: dict[str, object] = {
+        "schema_version": 2,
+        "catalog_generation_id": new_id,
+        "content_sha256": updated.content_sha256,
+        "manifest_sha256": sha256_file(manifest_path),
+        "completed_at": updated.created_at,
+        "last_success_at": updated.created_at,
+    }
+    atomic_write_json(current_path, pointer, ensure_ascii=False, indent=2)
+    return pointer
+
+
 @pytest.mark.parametrize("details", [False, True])
 def test_v3_seed_installs_partial_and_all_referenced_units(tmp_path: Path, details: bool) -> None:
     runtime, generation_id, _ = _v3_runtime(tmp_path / "input", details=details)
@@ -82,6 +112,106 @@ def test_v3_seed_installs_partial_and_all_referenced_units(tmp_path: Path, detai
     assert CohortRecoveryPointV1.from_mapping(point.to_dict()).units == candidate.units
     assert write_validation_receipt(installed, candidate)
     assert install_bundled_cohort(bundle_root=bundle, runtime_root=installed) == "already_current"
+
+
+def test_v3_seed_packages_independent_recognition_catalog_and_old_statistics_closure(
+    tmp_path: Path,
+) -> None:
+    runtime, generation_id, _ = _v3_runtime(tmp_path / "input", details=True)
+    statistics = validate_generation_cohort(runtime, generation_id)
+    statistics_catalog_id = str(statistics.pointers["catalog"]["catalog_generation_id"])
+    recognition = _publish_independent_recognition_catalog(runtime)
+
+    seed = collect_cohort_seed(runtime / "snapshots")
+
+    assert seed.metadata["catalog_generation_id"] == statistics_catalog_id
+    assert seed.metadata["recognition_catalog_generation_id"] == recognition["catalog_generation_id"]
+    packaged_catalogs = {
+        path.parent.name
+        for path in seed.files
+        if path.name == "manifest.json" and path.parent.parent.name == "generations"
+    }
+    assert {statistics_catalog_id, recognition["catalog_generation_id"]}.issubset(packaged_catalogs)
+
+    bundle = _bundle_from_runtime(tmp_path / "package", runtime)
+    installed = tmp_path / "installed"
+    assert install_bundled_cohort(bundle_root=bundle, runtime_root=installed) == "installed"
+    assert json.loads((installed / "catalog/current.v2.json").read_text(encoding="utf-8")) == recognition
+    installed_statistics = validate_generation_cohort(installed, generation_id)
+    assert installed_statistics.pointers["catalog"]["catalog_generation_id"] == statistics_catalog_id
+    assert all(
+        pointer["catalog_generation_id"] == statistics_catalog_id
+        for pointer in installed_statistics.units.values()
+    )
+    assert write_validation_receipt(installed, installed_statistics)
+    assert install_bundled_cohort(bundle_root=bundle, runtime_root=installed) == "already_current"
+
+
+def test_v3_installer_accepts_legacy_single_catalog_metadata(tmp_path: Path) -> None:
+    runtime, generation_id, _ = _v3_runtime(tmp_path / "input", details=True)
+    bundle = _bundle_from_runtime(tmp_path / "package", runtime)
+    manifest_path = bundle / "bundle_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    statistics_catalog_id = str(manifest["cohort_seed"]["catalog_generation_id"])
+    manifest["cohort_seed"].pop("recognition_catalog_generation_id", None)
+    atomic_write_json(manifest_path, manifest, ensure_ascii=False, indent=2)
+
+    installed = tmp_path / "installed"
+    assert install_bundled_cohort(bundle_root=bundle, runtime_root=installed) == "installed"
+    current = json.loads(
+        (installed / "catalog/current.v2.json").read_text(encoding="utf-8")
+    )
+    assert current["catalog_generation_id"] == statistics_catalog_id
+    assert validate_generation_cohort(installed, generation_id).generation_id == generation_id
+
+
+def test_v3_seed_rejects_broken_independent_recognition_catalog(tmp_path: Path) -> None:
+    runtime, _generation_id, _ = _v3_runtime(tmp_path, details=True)
+    recognition = _publish_independent_recognition_catalog(runtime)
+    manifest_path = (
+        runtime
+        / "catalog/generations"
+        / str(recognition["catalog_generation_id"])
+        / "manifest.json"
+    )
+    manifest_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Catalog"):
+        collect_cohort_seed(runtime / "snapshots")
+
+
+def test_v3_seed_rejects_unsafe_recognition_catalog_id(tmp_path: Path) -> None:
+    runtime, _generation_id, _ = _v3_runtime(tmp_path, details=True)
+    current_path = runtime / "catalog/current.v2.json"
+    current = json.loads(current_path.read_text(encoding="utf-8"))
+    current["catalog_generation_id"] = "../outside"
+    atomic_write_json(current_path, current, ensure_ascii=False, indent=2)
+
+    with pytest.raises(ValueError, match="catalog_generation_id"):
+        collect_cohort_seed(runtime / "snapshots")
+
+
+def test_v3_installer_rejects_unsafe_recognition_catalog_id(tmp_path: Path) -> None:
+    runtime, _generation_id, _ = _v3_runtime(tmp_path / "input", details=True)
+    bundle = _bundle_from_runtime(tmp_path / "package", runtime)
+    manifest_path = bundle / "bundle_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    pointer_name = "resources/cohort-seed/catalog/current.v2.json"
+    pointer_path = bundle / Path(pointer_name)
+    pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    pointer["catalog_generation_id"] = "../outside"
+    atomic_write_json(pointer_path, pointer, ensure_ascii=False, indent=2)
+    manifest["cohort_seed"]["recognition_catalog_generation_id"] = "../outside"
+    manifest["cohort_seed_sha256"][pointer_name] = hashlib.sha256(
+        pointer_path.read_bytes()
+    ).hexdigest()
+    atomic_write_json(manifest_path, manifest, ensure_ascii=False, indent=2)
+
+    with pytest.raises(ValueError, match="catalog_generation_id"):
+        install_bundled_cohort(
+            bundle_root=bundle,
+            runtime_root=tmp_path / "installed",
+        )
 
 
 def test_every_scoped_child_is_validated_before_seed_copy(tmp_path: Path) -> None:

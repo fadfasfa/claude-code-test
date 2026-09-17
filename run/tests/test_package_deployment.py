@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -55,11 +56,14 @@ def _write_runtime_cohort(root: Path, expected: dict[str, object]) -> None:
     source_run_ids = expected["source_run_ids"]
     assert isinstance(source_run_ids, dict)
     catalog_id = str(expected["catalog_generation_id"])
+    recognition_catalog_id = str(
+        expected.get("recognition_catalog_generation_id") or catalog_id
+    )
     generation_id = str(expected["generation_id"])
     payloads = {
         Path("catalog/current.v2.json"): {
             "schema_version": 2,
-            "catalog_generation_id": catalog_id,
+            "catalog_generation_id": recognition_catalog_id,
         },
         Path("snapshots/current.v2.json"): {
             "schema_version": 2,
@@ -85,7 +89,7 @@ def _write_runtime_cohort(root: Path, expected: dict[str, object]) -> None:
                 "catalog": {
                     "state": "ready",
                     "failure_kind": "",
-                    "current_run_id": catalog_id,
+                    "current_run_id": recognition_catalog_id,
                 },
                 **{
                     source: {
@@ -124,6 +128,8 @@ def _sidecar_pool_status(
             "data_generation_id": "legacy_vision_pool_compat",
         },
         "catalog_generation_id": expected["catalog_generation_id"],
+        "recognition_catalog_id": expected.get("recognition_catalog_generation_id")
+        or expected["catalog_generation_id"],
         "production_pool_id": expected["production_pool_id"],
         "production_pool_state": "ready",
         "production_pool_count": pool_count,
@@ -486,6 +492,64 @@ def test_runtime_cohort_validation_accepts_bound_generation_and_rejects_mixed_ca
     assert any("cohort source Catalog 不一致" in error and "sources/apex" in error for error in errors)
 
 
+def test_runtime_cohort_separates_recognition_catalog_from_statistics_binding(tmp_path):
+    from tooling.build import deploy
+
+    expected = {
+        **_cohort_metadata(),
+        "recognition_catalog_generation_id": "catalog-recognition-new",
+    }
+    _write_runtime_cohort(tmp_path, expected)
+
+    assert deploy._runtime_cohort_errors(tmp_path, expected) == []
+    catalog = json.loads(
+        (tmp_path / "catalog/current.v2.json").read_text(encoding="utf-8")
+    )
+    aramkit = json.loads(
+        (tmp_path / "sources/aramkit/current.v2.json").read_text(encoding="utf-8")
+    )
+    assert catalog["catalog_generation_id"] == "catalog-recognition-new"
+    assert aramkit["catalog_generation_id"] == "catalog-new"
+
+
+def test_packaged_sidecar_pool_smoke_uses_independent_recognition_catalog(
+    tmp_path,
+    monkeypatch,
+):
+    from tooling.acceptance import smoke_packaged_startup as smoke
+
+    expected = {
+        **_cohort_metadata(),
+        "recognition_catalog_generation_id": "catalog-recognition-new",
+    }
+    package_dir = tmp_path / "package"
+    runtime_root = tmp_path / "runtime"
+    exe = package_dir / "Hextech伴生终端.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"fixture")
+
+    def run(command, **_kwargs):
+        status_path = runtime_root / "state/game_overlay_sidecar_status.json"
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+        status_path.write_text(
+            json.dumps(_sidecar_pool_status(expected)),
+            encoding="utf-8",
+        )
+        return smoke.subprocess.CompletedProcess(command, 0, stdout=b"")
+
+    monkeypatch.setattr(smoke.subprocess, "run", run)
+
+    result = smoke._sidecar_pool_smoke(
+        exe,
+        package_dir,
+        {},
+        runtime_root,
+        {"build_id": "test-build", "cohort_seed": expected},
+    )
+
+    assert result["state"] == "ready"
+
+
 def test_runtime_cohort_allows_due_schedule_and_historical_complete_checkpoint(tmp_path):
     from tooling.build import deploy
 
@@ -600,6 +664,62 @@ def test_runtime_cohort_accepts_newer_valid_stats_generation_with_same_vision_po
     assert isinstance(resolved_runs, dict)
     assert resolved_runs["blitz"] == "blitz-newer"
     assert deploy._runtime_cohort_errors(tmp_path, resolved) == []
+
+
+def test_runtime_cohort_preserves_newer_verified_recognition_catalog(
+    tmp_path,
+    monkeypatch,
+):
+    from tooling.build import deploy
+
+    expected = {
+        **_cohort_metadata(),
+        "recognition_catalog_generation_id": "catalog-recognition-bundled",
+    }
+    _write_runtime_cohort(tmp_path, expected)
+    catalog_path = tmp_path / "catalog/current.v2.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "catalog_generation_id": "catalog-recognition-runtime",
+                "content_sha256": "a" * 64,
+                "manifest_sha256": "b" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        deploy,
+        "_validated_runtime_catalog_manifest",
+        lambda _root, _pointer: SimpleNamespace(
+            created_at="2026-09-16T00:00:00+00:00"
+        ),
+    )
+    monkeypatch.setattr(
+        deploy,
+        "_validated_catalog_generation_manifest",
+        lambda _root, _catalog_id: SimpleNamespace(
+            created_at="2026-09-15T00:00:00+00:00"
+        ),
+    )
+
+    resolved, errors = deploy._resolve_runtime_cohort_expected(tmp_path, expected)
+
+    assert errors == []
+    assert (
+        resolved["recognition_catalog_generation_id"]
+        == "catalog-recognition-runtime"
+    )
+
+
+def test_deploy_rejects_unsafe_recognition_catalog_id_before_path_resolution(
+    tmp_path,
+):
+    from tooling.build import deploy
+
+    with pytest.raises(ValueError, match="catalog_generation_id"):
+        deploy._validated_catalog_generation_manifest(tmp_path, "../outside")
 
 
 def test_runtime_cohort_waits_while_bundle_seed_is_still_materializing(tmp_path, monkeypatch):
