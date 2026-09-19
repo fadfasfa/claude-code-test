@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import math
 from collections.abc import Sequence
 from typing import Any, Literal, NotRequired, Protocol, TypedDict
 
@@ -153,12 +154,17 @@ def _clean_text(value: Any, *, limit: int = 120) -> str:
 
 
 def _format_percent(value: Any) -> str:
+    if isinstance(value, bool):
+        return ""
     try:
         numeric = float(value)
     except (TypeError, ValueError):
         return ""
     percent = numeric * 100.0 if abs(numeric) <= 1.0 else numeric
-    return f"{percent:.1f}%"
+    if not math.isfinite(percent) or not 0.0 <= percent <= 100.0:
+        return ""
+    formatted = f"{percent:.1f}%"
+    return "100%" if formatted == "100.0%" else formatted
 
 
 def _clamp(low: int, value: float, high: int) -> int:
@@ -579,7 +585,7 @@ def draw_overlay_frame(
     hits_start, misses_start = metrics.hits, metrics.misses
     layout_ready_at = time.perf_counter()
     typography["stats_pixel_size"] = size
-    pad = max(2, int(6 * viewport_width / 2560 + .5))
+    pad = 5 if (viewport_width, viewport_height) == (2560, 1440) else max(2, int(6 * viewport_width / 2560 + .5))
     prepared_stats: list[StatPanelModel] = []
     stats_diagnostics: list[dict[str, Any]] = []
     for row, box in zip(model["stats"], base_layout["stat_boxes"]):

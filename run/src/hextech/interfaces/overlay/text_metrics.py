@@ -11,6 +11,7 @@ from copy import deepcopy
 import unicodedata
 import weakref
 import time
+import re
 
 from hextech.modules.recommendation.display_summary import (
     DisplaySummaryCache,
@@ -91,15 +92,12 @@ def fit_stats_spacing(metrics: TextMetrics, text: str, size: int, budget: int) -
 
 
 def fit_stats_block(metrics: TextMetrics, text: str, size: int, width: int, height: int) -> tuple[str, str]:
-    """Keep the approved font: tighten gaps first, then split the two metrics if necessary."""
-    try:
-        return fit_stats_spacing(metrics, text, size, width)
-    except ValueError:
-        parts = text.split("·")
-        if len(parts) != 2 or metrics.line_height(size, True) * 2 + 2 > height:
-            raise
-        lines = [fit_stats_spacing(metrics, part.strip(), size, width)[0] for part in parts]
-        return "\n".join(lines), "two_lines"
+    """Keep complete values and fixed type on one line; never wrap numeric stats."""
+    if "\n" in text or "\r" in text:
+        raise ValueError("stats_text_must_be_single_line")
+    # Also normalize preformatted models, without changing 1100.0%/100.01%.
+    text = re.sub(r"(?<![\d.])100\.0%", "100%", text)
+    return fit_stats_spacing(metrics, text, size, width)
 
 
 @lru_cache(maxsize=64)

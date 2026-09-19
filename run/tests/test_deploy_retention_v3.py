@@ -9,9 +9,58 @@ import pytest
 from hextech.infrastructure.persistence.cohort_recovery import due_schedule, validate_generation_cohort
 from hextech.infrastructure.persistence.retention import protected_references
 from hextech.modules.data.ports.atomic import atomic_write_json
+from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher
+from hextech.contracts import SourcePointerV2, SourceProvenance
 from tooling.build import deploy
 from tooling.build.cohort_seed import collect_cohort_seed
 from test_cohort_v3 import _v3_runtime
+
+
+def _v3_with_optional(tmp_path: Path, source: str):
+    runtime, _, _ = _v3_runtime(tmp_path, details=True)
+    pointer = SourcePointerV2.from_mapping(json.loads(
+        (runtime / f"sources/{source}/current.v2.json").read_text(encoding="utf-8")))
+    view = DataSnapshotClient(runtime / "snapshots").open_view()
+    provenance = SourceProvenance(source=source, run_id=pointer.run_id,
+        catalog_generation_id=pointer.catalog_generation_id, artifact_role=pointer.artifact.role,
+        artifact_sha256=pointer.artifact.sha256, record_count=pointer.artifact.record_count,
+        manifest_sha256=pointer.manifest_sha256, content_schema_version=pointer.artifact.content_schema_version)
+    manifest = DataSnapshotPublisher(runtime / "snapshots").publish(
+        deepcopy(view._payloads), source_files=[*view.manifest.source_files, provenance],
+        components=view.manifest.components, require_complete_provenance=True)
+    candidate = validate_generation_cohort(runtime, manifest.generation_id)
+    metadata = collect_cohort_seed(runtime / "snapshots").metadata
+    schedule = due_schedule(candidate).to_dict()
+    schedule["sources"][source].update(state="backoff", failure_kind="validation", check_status="failed")
+    atomic_write_json(runtime / "state/data-service/refresh_schedule.v1.json", schedule)
+    return runtime, metadata, schedule
+
+
+@pytest.mark.parametrize("source", ["apex", "mayhem", "blitz"])
+def test_verified_v3_optional_last_good_backoff_is_not_install_failure(tmp_path, source):
+    runtime, metadata, _ = _v3_with_optional(tmp_path, source)
+    assert deploy._runtime_cohort_errors(runtime, metadata) == []
+
+
+@pytest.mark.parametrize("damage", ["core_backoff", "wrong_run", "wrong_catalog", "bad_artifact", "empty_failure"])
+def test_optional_backoff_does_not_relax_cohort_or_core_guards(tmp_path, damage):
+    runtime, metadata, schedule = _v3_with_optional(tmp_path, "apex")
+    pointer_path = runtime / "sources/apex/current.v2.json"
+    pointer = json.loads(pointer_path.read_text())
+    if damage == "core_backoff":
+        schedule["sources"]["aramkit"].update(state="backoff", failure_kind="timeout")
+    elif damage == "wrong_run":
+        schedule["sources"]["apex"]["current_run_id"] = "unverified-run"
+    elif damage == "empty_failure":
+        schedule["sources"]["apex"]["failure_kind"] = ""
+    elif damage == "wrong_catalog":
+        pointer["catalog_generation_id"] = "other-catalog"
+        atomic_write_json(pointer_path, pointer)
+    else:
+        artifact = runtime / "sources/apex/runs" / pointer["run_id"] / pointer["artifact"]["relative_path"]
+        artifact.write_bytes(b"tampered")
+    atomic_write_json(runtime / "state/data-service/refresh_schedule.v1.json", schedule)
+    assert deploy._runtime_cohort_errors(runtime, metadata)
 
 
 @pytest.mark.parametrize("details", [False, True])

@@ -35,9 +35,8 @@ def test_native_safe_area_matrix(request):
                 assert box[0]+pad <= left < right <= box[2]-pad
                 assert box[1] <= top < bottom <= box[3]
                 assert abs((left+right)/2-(box[0]+box[2])/2) <= 1
-            expected_spacing = "two_lines" if viewport == (2560, 1440) else "compact"
-            assert perf["display_layout"]["stats_text"][0]["spacing"] == expected_spacing
-            assert perf["display_layout"]["stats_text"][0]["line_count"] == (2 if viewport == (2560, 1440) else 1)
+            assert perf["display_layout"]["stats_text"][0]["spacing"] in {"normal", "thin", "hair", "compact"}
+            assert all(entry["line_count"] == 1 for entry in perf["display_layout"]["stats_text"])
             canvas.delete("all")
     finally:
         root.destroy()

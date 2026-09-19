@@ -829,7 +829,15 @@ def _runtime_cohort_errors(root: Path, expected: dict[str, object]) -> list[str]
             errors.append(f"cohort schedule 缺少来源：{source}")
             continue
         schedule_state = str(state.get("state") or "")
-        if schedule_state not in {"ready", "due"} or str(state.get("failure_kind") or ""):
+        # A failed optional check does not invalidate its immutable last-good
+        # artifact. Only v3 with the fully verified unit closure above may use
+        # this state; core/catalog, missing or mismatched bindings still fail.
+        optional_last_good = (
+            candidate is not None and source in {"blitz", "apex", "mayhem"}
+            and schedule_state == "backoff" and bool(str(state.get("failure_kind") or ""))
+            and str(state.get("current_run_id") or "") == run_id
+        )
+        if not optional_last_good and (schedule_state not in {"ready", "due"} or str(state.get("failure_kind") or "")):
             errors.append(f"cohort schedule 来源状态无效：{source} state={schedule_state}")
         if str(state.get("current_run_id") or "") != run_id:
             errors.append(f"cohort schedule run 不一致 source={source}")

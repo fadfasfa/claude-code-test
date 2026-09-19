@@ -542,10 +542,7 @@ def test_native_tk_1440_stats_clear_measured_frame_without_shrinking(request) ->
                     assert 780 <= y0 < y1 <= 876
                     assert abs((x0 + x1) / 2 - (left + right) / 2) <= 2
                     assert "-30" in canvas.itemcget(item, "font")
-                if texts[0].startswith("胜率 48"):
-                    assert all(entry["line_count"] == 1 for entry in perf["display_layout"]["stats_text"])
-                else:
-                    assert perf["display_layout"]["stats_text"][0]["line_count"] == 2
+                assert all(entry["line_count"] == 1 for entry in perf["display_layout"]["stats_text"])
                 canvas.delete("all")
     finally:
         root.destroy()
