@@ -346,6 +346,16 @@ def _synergy_status(
     if not (isinstance(context, Mapping) and context.get("ok")):
         return "CONTEXT_MISSING"
     if not isinstance(matched, Mapping):
+        source_status = snapshot_status.get("source_status")
+        if isinstance(source_status, Mapping):
+            states = [source_status.get(name) for name in ("apex", "mayhem")]
+            present = [value for value in states if isinstance(value, Mapping)]
+            if present and all(value.get("data_status") == "confirmed_empty" for value in present):
+                return "CONFIRMED_EMPTY"
+            if present and all(value.get("data_status") in {
+                "pending", "unavailable", "failed", "missing", "confirmed_empty",
+            } for value in present):
+                return "SOURCE_UNAVAILABLE"
         return "NO_MATCH"
     if _snapshot_sources_degraded(snapshot_status, ("apex", "mayhem")):
         return "SYNERGY_DEGRADED"

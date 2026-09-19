@@ -318,7 +318,7 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
             self.assertEqual(visibility["vision_pool_generation_id"], "vision-pool-a")
 
             self.assertIn(("draw", ["detecting", "detecting", "detecting"]), calls)
-            self.assertFalse(opened.is_set())  # 首个shell先呈现，尚未请求后台数据。
+            self.assertTrue(opened.wait(1.0))  # shell先排入呈现，同tick已提交非阻塞准备。
             self.assertEqual(canvas.after_calls[0][0], 16)
             canvas.after_calls[0][1]()
             self.assertTrue(opened.wait(1.0))

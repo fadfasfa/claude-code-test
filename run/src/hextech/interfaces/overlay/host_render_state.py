@@ -443,7 +443,7 @@ def data_notice_semantic_key(
     if not isinstance(source_status, Mapping):
         return ()
     result: list[tuple[str, str, str, str, str]] = []
-    for source in ("aramkit", "blitz"):
+    for source in ("aramkit",):
         value = source_status.get(source)
         if not isinstance(value, Mapping):
             result.append((source, "", "", "", ""))

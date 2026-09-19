@@ -3,10 +3,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from typing import Mapping
+from typing import Any, Mapping
 
 from hextech.contracts import FetchAttempt, utc_now_iso
 from hextech.contracts.models import FailureKind
+
+
+@dataclass(frozen=True)
+class _DetailResult:
+    champion_id: str
+    response: _Response | None
+    normalized: Mapping[str, Any] | None = None
+    reason: str = ""
+
+    @property
+    def success(self) -> bool:
+        return self.normalized is not None and not self.reason
+
+    @property
+    def retryable(self) -> bool:
+        return self.response is not None and self.response.retryable
 
 
 @dataclass(frozen=True)

@@ -284,7 +284,7 @@ def test_missing_stage_falls_back_to_all_and_hides_tiny_sample_rates() -> None:
     assert rendered["low_sample_outline"] is True
 
 
-def test_missing_aramkit_champion_keeps_blitz_tier_with_explicit_reason() -> None:
+def test_missing_aramkit_champion_does_not_consume_retired_blitz() -> None:
     projected = apply_scoped_stage_stats(
         _state(),
         stage_context=_context(1),
@@ -296,13 +296,14 @@ def test_missing_aramkit_champion_keeps_blitz_tier_with_explicit_reason() -> Non
     row = projected.recommendation.augment_slots[0]  # type: ignore[union-attr]
     rendered = build_render_model_from_session(projected)["stats"][0]
 
-    assert row["stats_source"] == "blitz"
+    assert row["stats_source"] == ""
     assert row["stats_fallback_reason"] == "aramkit_champion_missing"
-    assert rendered["stats_text"] == "该英雄 T1 · 全局 T3"
+    assert rendered["status_code"] == "CHAMPION_STAT_MISSING"
+    assert not row["stats"]
     assert rendered["winrate_text"] == ""
 
 
-def test_stale_verified_blitz_fallback_keeps_rank_without_age_notice() -> None:
+def test_stale_verified_blitz_remains_readable_but_not_a_runtime_fallback() -> None:
     source_status = _source_status()
     source_status["state"] = "degraded"
     source_status["source_status"]["blitz"] = {
@@ -322,11 +323,10 @@ def test_stale_verified_blitz_fallback_keeps_rank_without_age_notice() -> None:
     row = projected.recommendation.augment_slots[0]  # type: ignore[union-attr]
     rendered = build_render_model_from_session(projected)["stats"][0]
 
-    assert row["status_code"] == "GENERATION_DEGRADED"
-    assert row["source_freshness"] == "last_good"
-    assert row["data_status"] == "stale"
-    assert rendered["stats_text"] == "该英雄 T1 · 全局 T3"
-    assert rendered["status_text"] == ""
+    assert row["status_code"] == "CHAMPION_STAT_MISSING"
+    assert row["data_status"] == "missing"
+    assert not row["stats"]
+    assert "T3" not in rendered["stats_text"]
 
 
 def test_preparing_scope_does_not_show_blitz_early() -> None:

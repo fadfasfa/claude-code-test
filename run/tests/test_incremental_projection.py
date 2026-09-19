@@ -227,17 +227,17 @@ def test_v3_scoped_queries_resolve_distinct_hero_runs(inputs, tmp_path):
     assert view.get_champion_detail("1") == first_detail
 
 
-def test_blitz_fallback_does_not_invent_complete_aramkit_or_winrate(inputs):
+def test_retired_blitz_is_not_projected_into_new_generation(inputs):
     from hextech.infrastructure.sources.blitz.schema import normalize_payload
     from test_blitz_source import _row
     catalog, _, _, _, _, ranking, _ = inputs
     pointer = optional_pointer(catalog, "blitz", normalize_payload({"data": [_row(10)]}))
     result = IncrementalProjection(catalog).build(ranking, {}, {"blitz": pointer})
     detail = result.payloads["champion_hextech"]["Hero1"]
-    assert detail["source"] == "blitz" and detail["augments"]
-    assert "winrate" not in detail["augments"][0]
+    assert detail["data_status"] == "pending" and not detail["augments"]
     assert not result.components["champions"]["1"]["complete"]
-    assert result.source_status["blitz"]["data_status"] == "fresh"
+    assert "blitz" not in result.source_status
+    assert all(item.source != "blitz" for item in result.source_files)
 
 
 @pytest.mark.parametrize("data_at,expected", [

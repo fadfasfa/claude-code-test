@@ -125,7 +125,7 @@ def test_real_unit_to_v3_publish_without_optional(runtime):
     assert progress["optional_sources"]["apex"]["checked"] is False
     assert format_data_refresh_status(progress)[0].startswith("数据已更新")
     assert not (root / "state" / "data-service" / "promotion_journal.v1.json").exists()
-    assert set(calls) == {"catalog", "aramkit", "blitz", "apex", "mayhem"}
+    assert set(calls) == {"catalog", "aramkit", "apex", "mayhem"}
 
 
 def test_game_context_updates_never_write_cancel(runtime):
@@ -553,15 +553,13 @@ def test_core_checks_catalog_and_marker_despite_seed_future_due(runtime, monkeyp
         raise RuntimeError("optional_unavailable")
     monkeypatch.setattr(service, "_run", run)
     result = service.refresh(scope="core")
-    assert calls == ["catalog", "blitz"] and markers == [1]
+    assert calls == ["catalog"] and markers == [1]
     assert result["promotion_disposition"] == "unchanged"
     assert result["checked"] is True
     assert result["content_changed"] is False
     assert result["catalog_changed"] is False
     assert result["source_outcomes"]["aramkit"]["state"] == "unchanged"
-    assert result["source_outcomes"]["blitz"]["state"] == "unavailable"
-    assert result["source_outcomes"]["blitz"]["failure_kind"] == "source_runtime"
-    assert result["source_outcomes"]["blitz"]["next_retry_at"]
+    assert "blitz" not in result["source_outcomes"]
     assert result["generation_id"] == generation
     progress = service.progress()
     assert progress["state"] == "unchanged"
@@ -570,13 +568,13 @@ def test_core_checks_catalog_and_marker_despite_seed_future_due(runtime, monkeyp
     expected = datetime.fromtimestamp(resolve_version(_version())["buildTimeUnixMs"] / 1000, timezone.utc).isoformat()
     assert progress["data_at"] == expected
     assert progress["data_at"] != ranking["completed_at"]
-    assert progress["reason_code"] == "core_complete_optional_failed"
+    assert progress["reason_code"] == "no_content_change"
     aram_state = service.schedule_store.load().sources["aramkit"]
     assert aram_state.upstream_revision == resolve_version(_version())["dataPath"]
     assert aram_state.applied_revision == resolve_version(_version())["dataPath"]
     assert aram_state.last_checked_at
     assert format_data_refresh_status(progress)[0] == (
-        "已检来源与上游一致 · Blitz 暂不可用 · 部分源待重试"
+        "已检来源与上游一致 · 部分源待重试"
     )
 
 
@@ -754,26 +752,26 @@ def test_failed_worker_check_evidence_reaches_schedule(runtime, monkeypatch):
 
     service = _service(runtime, monkeypatch, process)
     with pytest.raises(RuntimeError, match="validation_unchanged"):
-        service._run("blitz", root / "failed-blitz")
-    service._mark_source("blitz", error="validation")
+        service._run("apex", root / "failed-apex")
+    service._mark_source("apex", error="validation")
 
-    state = service.schedule_store.load().sources["blitz"]
+    state = service.schedule_store.load().sources["apex"]
     assert state.upstream_revision == "u" * 64
     assert state.applied_revision == "p" * 64
     assert state.failure_fingerprint == "f" * 64
     assert state.check_status == "failed"
     outcome = service._source_outcomes(
-        attempted={"blitz"},
-        failures={"blitz": "validation_unchanged"},
+        attempted={"apex"},
+        failures={"apex": "validation_unchanged"},
         deferred=set(),
         initial_identities=service._source_identities(),
-    )["blitz"]
+    )["apex"]
     assert outcome["upstream_revision"] == "u" * 64
     assert outcome["applied_revision"] == "p" * 64
     assert outcome["check_evidence"]["failure_fingerprint"] == "f" * 64
 
 
-def test_force_is_schedule_only_for_blitz(runtime, monkeypatch):
+def test_force_does_not_restart_retired_blitz(runtime, monkeypatch):
     service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)
     monkeypatch.setattr(service, "_start_optional", lambda: None)
     monkeypatch.setattr(service, "_due", lambda source, force=False: source == "blitz")
@@ -786,7 +784,7 @@ def test_force_is_schedule_only_for_blitz(runtime, monkeypatch):
     monkeypatch.setattr(service, "_run", fail)
     service.refresh(force=True)
 
-    assert ("blitz", False) in calls
+    assert all(source != "blitz" for source, _force in calls)
     assert ("blitz", True) not in calls
 
 

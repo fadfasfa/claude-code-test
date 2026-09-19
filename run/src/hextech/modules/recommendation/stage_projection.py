@@ -1,7 +1,7 @@
 """把固定 Stage 的 ARAMKit 统计投影到现有 Overlay 推荐行。
 
 投影只覆盖已稳定识别的行：Stage 记录优先、同英雄 ``all`` 次之；两者都没有时
-保留既有 Blitz tier。它不改变 Vision DTO、slot revision 或 Web API。
+明确报告缺失，不消费历史 Blitz tier。它不改变 Vision DTO、slot revision 或 Web API。
 """
 
 from __future__ import annotations
@@ -234,15 +234,16 @@ def apply_scoped_stage_stats(
             if selection is not None
             else scope_reason or "aramkit_scoped_stats_unavailable"
         )
-        projected.append(
-            _annotate_blitz_fallback(
-                row,
-                fallback_reason=fallback_reason,
-                requested_stage=stage_context.stage,
-                snapshot_status=status,
-                stats_generation_id=str(state.generation_id or ""),
-            )
-        )
+        row.update(stats_fallback_reason=fallback_reason, requested_stage=stage_context.stage)
+        # An old snapshot may still contain tier-only Blitz rows. Keep identity, not its tier.
+        stats = row.get("stats")
+        if isinstance(stats, Mapping) and (
+            stats.get("stats_source") == "blitz"
+            or (stats.get("source_tier") and stats.get("winrate", stats.get("win_rate")) is None)
+        ):
+            row.update(stats={}, stats_source="", stats_scope="", data_status="missing",
+                       data_reason="champion_stat_missing", status_code="CHAMPION_STAT_MISSING")
+        projected.append(row)
         any_degraded = any_degraded or projected[-1].get("status_code") == "GENERATION_DEGRADED"
 
     health = HealthState.DEGRADED if any_degraded else recommendation.health

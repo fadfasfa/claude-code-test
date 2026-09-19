@@ -62,7 +62,7 @@ def build_data_notice(
 
     source_status = snapshot_status.get("source_status") if isinstance(snapshot_status, Mapping) else None
     source_status = source_status if isinstance(source_status, Mapping) else {}
-    for name in ("aramkit", "hextech", "blitz"):
+    for name in ("aramkit", "hextech"):
         source = source_status.get(name)
         if not isinstance(source, Mapping):
             continue
@@ -74,7 +74,7 @@ def build_data_notice(
         )
         if unavailable:
             return {
-                "text": "Blitz 排名暂不可用" if name == "blitz" else "统计暂不可用",
+                "text": "统计暂不可用",
                 "source": name,
                 "reason": reason or "source_unavailable",
                 "data_at": str(source.get("data_at") or ""),

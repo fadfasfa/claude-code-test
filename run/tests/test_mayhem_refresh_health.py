@@ -429,8 +429,14 @@ def test_mayhem_semantic_same_does_not_create_orphan_source_run(tmp_path, monkey
 def test_default_mayhem_projection_uses_in_memory_raw_payload(tmp_path) -> None:
     from hextech.infrastructure.sources.mayhem import service
 
-    _write_json(tmp_path / "海克斯资源目录.v1.json", [{"name": "测试海克斯", "tier": "黄金"}])
-    _write_json(tmp_path / "英雄目录.v1.json", {"24": {"name": "武器大师", "en_name": "Jax"}})
+    _write_json(tmp_path / "海克斯资源目录.v1.json", {
+        "schema_version": 2, "entries": [{"name": "测试海克斯", "tier": "黄金"}],
+    })
+    _write_json(tmp_path / "英雄目录.v1.json", {
+        "schema_version": 1,
+        "id_to_name": {"24": {"name": "武器大师", "en_name": "Jax"}},
+        "id_to_detail": {"24": "武器大师"},
+    })
     summary = service._merge_candidate(
         {
             "items": [{
@@ -496,8 +502,13 @@ def test_mayhem_repaired_rejects_retry_same_business_revision(tmp_path, monkeypa
     from hextech.infrastructure.sources.mayhem import service, source
     from hextech.infrastructure.transport.scrapling_client import ScraplingFetchResult
 
-    _write_json(tmp_path / "海克斯资源目录.v1.json", [{"name": "测试海克斯", "tier": "黄金"}])
-    _write_json(tmp_path / "英雄目录.v1.json", {"24": {"name": "武器大师", "en_name": "Jax"}})
+    _write_json(tmp_path / "海克斯资源目录.v1.json", {
+        "schema_version": 2, "entries": [{"name": "测试海克斯", "tier": "黄金"}],
+    })
+    _write_json(tmp_path / "英雄目录.v1.json", {
+        "schema_version": 1, "id_to_name": {"24": {"name": "武器大师", "en_name": "Jax"}},
+        "id_to_detail": {"24": "武器大师"},
+    })
     monkeypatch.setattr(service, "load_active_catalog", lambda: SimpleNamespace(
         generation_id="catalog", content_sha256="a" * 64, root=tmp_path,
     ))

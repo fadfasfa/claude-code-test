@@ -23,12 +23,11 @@ class InterProcessFileLock:
         if self._file is not None:
             return True
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        file_obj = self.path.open("a+b")
+        # Lock before touching contents. A buffered pre-lock initialization can
+        # race another owner's truncate and then fail again while close flushes.
+        descriptor = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
+        file_obj = os.fdopen(descriptor, "r+b", buffering=0)
         try:
-            file_obj.seek(0, os.SEEK_END)
-            if file_obj.tell() == 0:
-                file_obj.write(b"0")
-                file_obj.flush()
             file_obj.seek(0)
             if os.name == "nt":
                 import msvcrt
@@ -39,8 +38,9 @@ class InterProcessFileLock:
 
                 fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             file_obj.seek(0)
-            file_obj.truncate()
-            file_obj.write(json.dumps({"pid": os.getpid()}).encode("ascii"))
+            metadata = json.dumps({"pid": os.getpid()}).encode("ascii")
+            file_obj.write(metadata)
+            file_obj.truncate(len(metadata))
             file_obj.flush()
         except (OSError, BlockingIOError):
             file_obj.close()

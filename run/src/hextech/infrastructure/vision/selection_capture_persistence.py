@@ -31,6 +31,8 @@ def _retention_priority(retention_class: str) -> int:
 
 def _manifest_retention_priority(manifest: Mapping[str, Any]) -> int:
     # Exact legacy automatic groups predate the classification; treat them as normal successes.
+    # Sparse final frames cannot disprove an earlier anomaly floor. Never
+    # downgrade persisted severity merely because later frames became READY.
     return {"weak": 100, "success": 200, "anomaly": 300, "manual": 400}.get(
         str(manifest.get("retention_class") or "success"), 300,
     )
@@ -112,7 +114,10 @@ def selection_cache_status(root: Path) -> dict:
     retained = _groups(root)
     total, count = _inventory(root) if root.exists() else (0, 0)
     return {"groups": sum(g[4] for g in retained), "automatic_groups": sum(g[3] for g in retained),
-            "bytes": total, "quota_groups": count, "root": str(root)}
+            "bytes": total, "quota_groups": count, "root": str(root),
+            "byte_limit": CACHE_BYTE_LIMIT, "group_limit": CACHE_GROUP_LIMIT,
+            "protected_bytes": total - sum(g[2] for g in retained if g[3]),
+            "available_bytes": max(0, CACHE_BYTE_LIMIT - total)}
 
 
 def persist_selection_capture(root: Path, draft: Any, *, group_limit=CACHE_GROUP_LIMIT,

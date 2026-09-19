@@ -247,7 +247,7 @@ def test_full_render_tick_never_presents_old_canvas_after_surface_change(
         assert visibility["prepared_shell_key"] == shell_key
         assert "render_semantic_key" not in visibility
         preparation.poll.assert_not_called()  # 新 shell 不得等待后台数据。
-        preparation.request.assert_not_called()
+        preparation.request.assert_called_once()  # shell先呈现，同tick仅提交非阻塞准备。
     else:
         assert "hide" not in operations and "draw" not in operations, trace
         assert visibility["prepared_shell_key"] == shell_key
@@ -255,5 +255,5 @@ def test_full_render_tick_never_presents_old_canvas_after_surface_change(
         assert [item for item in trace if item[0] == "present"] == [("present", viewport, target_hwnd)]
         preparation.poll.assert_called_once_with("new-request")
     if replace_surface:
-        scheduled[0][1]()  # 首帧映射之后才进入数据准备。
+        scheduled[0][1]()  # 后续tick才消费准备结果，不在shell tick覆盖旧画面。
     assert preparation.request.call_args.kwargs["viewport_size"] == viewport

@@ -111,7 +111,7 @@ class DataServiceApplication:
                     else "refresh_running"
                 ),
                 generation_id=str(core_status.get("generation_id") or ""),
-                pending_sources=["aramkit", "blitz"] if scope == "core" else [],
+                pending_sources=["aramkit"] if scope == "core" else [],
                 started_at=float(active.get("started_at") or 0.0),
             )
         if "refresh" in self._queued_action_types:
@@ -122,7 +122,7 @@ class DataServiceApplication:
                 reason="refresh_queued",
                 generation_id=str(core_status.get("generation_id") or ""),
                 pending_sources=(
-                    ["aramkit", "blitz"] if self._queued_refresh_scope == "core" else []
+                    ["aramkit"] if self._queued_refresh_scope == "core" else []
                 ),
             )
         last_refresh = self._last_refresh_locked()

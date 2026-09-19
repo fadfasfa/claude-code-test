@@ -45,15 +45,14 @@ def _hextech_data_state(
 ) -> tuple[str, str, str, str, str, str]:
     """返回行级状态；旧 generation 才回退到聚合 health。"""
 
-    # ARAMKit 是当前主统计来源；Blitz 仅是无 ARAMKit 统计时的旧兼容回退，
-    # 不能因为 Blitz last-good 过期而污染仍可用的 ARAMKit 百分比。
+    # Historical Blitz artifacts remain readable, but are not runtime recommendations.
     source_name = ""
     source = None
     order = tuple(
         dict.fromkeys(
             candidate
-            for candidate in (preferred_source, "aramkit", "hextech", "blitz")
-            if candidate
+            for candidate in (preferred_source, "aramkit", "hextech")
+            if candidate and candidate != "blitz"
         )
     )
     for candidate in order:
@@ -255,6 +254,11 @@ class RecommendationService:
                         if identity and private_stats_enabled
                         else None
                     )
+                    if stats is not None and (
+                        str(stats.get("stats_source") or "") == "blitz"
+                        or (not _format_numeric_stats(stats) and _source_status(status, "blitz") is not None)
+                    ):
+                        stats = None
                     row["stats"] = stats or {}
                     if stats is None:
                         if not identity:
@@ -274,9 +278,6 @@ class RecommendationService:
                             "aramkit"
                             if _format_numeric_stats(stats)
                             and _source_status(status, "aramkit") is not None
-                            else "blitz"
-                            if str(stats.get("source_tier") or "").strip()
-                            and _source_status(status, "blitz") is not None
                             else "hextech"
                         )
                         (

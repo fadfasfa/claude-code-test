@@ -9,16 +9,17 @@ from pathlib import Path
 import time
 from typing import Any, Mapping
 
-from hextech.contracts import RefreshSourceState
+from hextech.contracts import RefreshSourceState, utc_now_iso
 from hextech.infrastructure.persistence.cohort_validation_receipt import write_validation_receipt
 from hextech.modules.data.freshness import parse_refresh_time
 from hextech.modules.data.generation import DataSnapshotClient
 from hextech.modules.data.catalog.versioned import sha256_file
 
 from .refresh_policy import checked_source_state
+from hextech.infrastructure.observability.refresh_attempts import record_refresh_attempt
 
 
-REFRESH_SOURCES = ("catalog", "aramkit", "blitz", "apex", "mayhem")
+REFRESH_SOURCES = ("catalog", "aramkit", "apex", "mayhem")
 _CHECK_EVIDENCE_FIELDS = (
     "check_status",
     "upstream_revision",
@@ -48,6 +49,13 @@ def _manifest_metadata(root: Path, pointer: Mapping[str, Any], source: str) -> d
 class RefreshScheduleMixin:
     """Mixin intentionally depends only on the coordinator's stable attributes."""
 
+    def _record_skipped_checks(self, result: Mapping[str, Any]) -> None:
+        with self._lock:
+            for source, outcome in result.get("source_outcomes", {}).items():
+                if outcome.get("state") == "not_due":
+                    record_refresh_attempt(self.root, source=source, checked_at=utc_now_iso(),
+                        error="", result=outcome, generation_id=self.publisher.current_generation_id())
+
     def _backoff_pending(self, source: str) -> bool:
         """Missing local data may bypass a normal check interval, not a retry deadline."""
         state = self.schedule_store.load().sources.get(source, RefreshSourceState())
@@ -59,7 +67,7 @@ class RefreshScheduleMixin:
             return False
         state = self.schedule_store.load().sources.get(source, RefreshSourceState())
         due = parse_refresh_time(state.next_due_at)
-        if source in {"blitz", "apex", "mayhem"} and source not in self._optional and state.state != "backoff":
+        if source in {"apex", "mayhem"} and source not in self._optional and state.state != "backoff":
             return True
         return force or due is None or due <= datetime.now(timezone.utc)
 
@@ -72,7 +80,7 @@ class RefreshScheduleMixin:
                 else parse_refresh_time(state.next_due_at)
             )
             for source, state in self.schedule_store.load().sources.items()
-            if not (
+            if source in REFRESH_SOURCES and not (
                 source in {"apex", "mayhem"}
                 and self._optional_thread is not None
                 and self._optional_thread.is_alive()
@@ -156,6 +164,9 @@ class RefreshScheduleMixin:
                 and self._last_candidate.generation_id == self.publisher.current_generation_id()
             ):
                 write_validation_receipt(self.root, self._last_candidate)
+            record_refresh_attempt(self.root, source=source, checked_at=now.isoformat(),
+                                   error=error, result=evidence,
+                                   generation_id=self.publisher.current_generation_id())
 
     def _published_source_status(self) -> dict[str, Mapping[str, Any]]:
         try:

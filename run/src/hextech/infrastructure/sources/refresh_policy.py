@@ -15,12 +15,14 @@ from hextech.infrastructure.transport.conditional_response import parse_retry_af
 def exception_source_result(exc: BaseException) -> dict[str, Any]:
     response = getattr(exc, "response", None)
     if response is None:
-        return {}
+        summary = getattr(exc, "http_summary", None)
+        return {"http_summary": summary} if isinstance(summary, Mapping) else {}
     failure = getattr(response, "failure_kind", None)
     failure_kind = str(getattr(failure, "value", failure) or getattr(exc, "reason", ""))
     retry_after = parse_retry_after_seconds(getattr(response, "response_headers", None))
     reason = str(getattr(exc, "reason", "") or "")
     return {
+        **({"http_summary": exc.http_summary} if hasattr(exc, "http_summary") else {}),
         "check_status": "unknown",
         "failure_stage": (
             "validation"

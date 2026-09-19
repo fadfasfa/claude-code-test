@@ -86,6 +86,7 @@ SynergyStatusCode = Literal[
     "READY",
     "SYNERGY_DEGRADED",
     "NO_MATCH",
+    "CONFIRMED_EMPTY",
     "CONTEXT_MISSING",
     "SOURCE_UNAVAILABLE",
     "GENERATION_MISMATCH",
@@ -572,6 +573,11 @@ def draw_overlay_frame(
     )
     metrics = canvas_text_metrics(canvas)
     size = max(8, int(30 * viewport_width / 2560 + .5))
+    metrics.bind_context((viewport_size, dpi_scale, expanded, repr(layout_transform),
+                          repr(display_geometry_metadata(viewport_size))))
+    measurement_start = metrics.measurement_seconds
+    hits_start, misses_start = metrics.hits, metrics.misses
+    layout_ready_at = time.perf_counter()
     typography["stats_pixel_size"] = size
     pad = max(2, int(6 * viewport_width / 2560 + .5))
     prepared_stats: list[StatPanelModel] = []
@@ -589,6 +595,7 @@ def draw_overlay_frame(
         prepared_stats.append(prepared)
     # 上限随视口放大：120px 旧上限在 1600p 下容不下放大后的三段文字。
     minimum_panel_height = typography["expanded_panel_min_px"]
+    stats_ready_at = time.perf_counter()
     proposed_synergy_rows = list(model["synergies"])
     synergy_rows = list(proposed_synergy_rows) if show_synergy else []
     suppression_reason = "" if show_synergy else "synergy_display_disabled"
@@ -613,6 +620,7 @@ def draw_overlay_frame(
         synergy_slots=[row["slot"] for row in synergy_rows],
         expanded=expanded,
     )
+    canvas_started_at = time.perf_counter()
     canvas.delete("all")
     def safe(box: tuple[int, int, int, int]) -> bool:
         x0, y0, x1, y1 = box
@@ -726,6 +734,15 @@ def draw_overlay_frame(
     ]
     if isinstance(perf_sink, dict):
         perf_sink["last_draw_ms"] = (time.perf_counter() - started_at) * 1000.0
+        perf_sink["draw_phases_ms"] = {
+            "layout": (layout_ready_at - started_at) * 1000,
+            "stats_layout": (stats_ready_at - layout_ready_at) * 1000,
+            "synergy_layout": (canvas_started_at - stats_ready_at) * 1000,
+            "canvas_update": (time.perf_counter() - canvas_started_at) * 1000,
+            "font_measurement_subset": (metrics.measurement_seconds - measurement_start) * 1000,
+            "font_cache_hits": metrics.hits - hits_start,
+            "font_cache_misses": metrics.misses - misses_start,
+        }
         perf_sink["typography"] = dict(typography)
         perf_sink["drawn_synergy_slots"] = drawn_synergy_slots
         perf_sink["panel_drawn_synergy_slots"] = panel_drawn_synergy_slots

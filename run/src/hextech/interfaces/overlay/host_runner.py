@@ -271,6 +271,7 @@ def _schedule_event_render(
                     visibility.pop(key, None)
             current_selection_key = selection_key(snapshot)
             shell_key = (current_selection_key, snapshot_slot_generations(snapshot))
+            shell_drawn = False
             if (should_show and visibility.get("render_full_overlay")
                 and event_source.get("selection_window_active") is True
                 and shell_key != visibility.get("prepared_shell_key")):
@@ -281,8 +282,7 @@ def _schedule_event_render(
                 _sync_event_visibility(root, config, visibility, snapshot,
                                        resolved_should_show=True, canvas=canvas)
                 schedule_render(fast_poll_ms)
-                success = True
-                return
+                shell_drawn = True
             request_key = None
             if should_show or str(event_source.get("session_id") or ""):
                 try:
@@ -298,12 +298,26 @@ def _schedule_event_render(
                         host_read_at=float(visibility["host_read_at"]),
                         viewport_size=request_viewport,
                         display_mode=str(visibility.get("display_mode") or "compact"),
+                        input_timing={
+                            **{name: float(visibility.get(name) or 0.0) for name in (
+                                "host_read_at", "event_read_started_at", "event_read_completed_at",
+                                "context_requested_at", "context_read_started_at", "context_read_completed_at",
+                                "context_gate_evaluated_at", "context_confirmed_at",
+                            )},
+                            "first_event_read_started_at": input_sample.first_event_read_started_at,
+                            "first_event_read_completed_at": input_sample.first_event_read_completed_at,
+                        },
                     )
             else:
                 preparation.invalidate()
                 idle_refresh = getattr(preparation, "request_idle_refresh", None)
                 if callable(idle_refresh):
                     idle_refresh()
+            if shell_drawn:
+                # The shell is mapped first. Queue cheap background work now, not
+                # one tick later, but never replace this shell in the same callback.
+                success = True
+                return
             visibility["data_preparation_status"] = preparation.status()
             preparation_status = visibility["data_preparation_status"]
             metadata = preparation_status.get("generation") or {}
@@ -469,6 +483,9 @@ def _schedule_event_render(
             session_state = prepared.state
             model = prepared.model
             visibility["render_event_host_read_at"] = prepared.host_read_at
+            visibility["render_event_input_timing"] = {
+                **dict(getattr(prepared, "input_timing", None) or {}), "preparation_consumed_at": time.time(),
+            }
             model = slot_render_cache.merge(
                 snapshot,
                 model,

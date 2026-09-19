@@ -116,6 +116,7 @@ def presentation_status(visibility: Mapping[str, Any]) -> dict[str, Any]:
         "presented_at": float(state.get("presented_at") or 0.0),
         "draw_completed_at": float(state.get("draw_completed_at") or 0.0),
         "bound_timing": dict(state.get("bound_timing") or {}),
+        "bound_draw_phases_ms": dict(state.get("bound_draw_phases_ms") or {}),
         "event_written_at": float(state.get("event_written_at") or 0.0),
         "event_session_id": str(state.get("event_session_id") or ""),
         "event_selection_epoch": int(state.get("event_selection_epoch") or 0),
@@ -175,9 +176,11 @@ def mark_canvas_drawn(
         "context_read_completed_at": float(visibility.get("context_read_completed_at") or 0.0),
         "context_gate_evaluated_at": float(visibility.get("context_gate_evaluated_at") or 0.0),
         "context_confirmed_at": float(visibility.get("context_confirmed_at") or 0.0),
+        **dict(visibility.pop("render_event_input_timing", None) or {}),
         "draw_started_at": float(visibility.get("draw_started_at") or 0.0),
         "draw_completed_at": observed_at,
     }
+    state["bound_draw_phases_ms"] = dict(visibility.get("draw_phases_ms") or {})
     visibility["draw_completed_at"] = observed_at
     visibility["last_presented_at"] = 0.0
     visibility["last_draw_ready_frame"] = bool(ready_frame)

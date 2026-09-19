@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 import unicodedata
 import weakref
+import time
 
 from hextech.modules.recommendation.display_summary import (
     DisplaySummaryCache,
@@ -30,6 +32,16 @@ class TextMetrics:
         # Canvas 已持有 metrics，反向强引用会把 Tcl 对象留进循环垃圾，可能被后台 GC。
         self.canvas = weakref.proxy(canvas) if hasattr(canvas, "tk") else canvas
         self._fonts: dict[tuple[int, bool], Any] = {}
+        self._widths: OrderedDict[tuple[str, int, bool], float] = OrderedDict()
+        self._context: object = None
+        self.measurement_seconds = 0.0
+        self.hits = 0
+        self.misses = 0
+
+    def bind_context(self, context: object) -> None:
+        if context != self._context:
+            self._widths.clear()
+            self._context = context
 
     def _font(self, size: int, bold: bool) -> Any:
         key = (max(1, int(size)), bold)
@@ -46,8 +58,20 @@ class TextMetrics:
         return self._fonts[key]
 
     def width(self, text: str, size: int, bold: bool = False) -> float:
+        key = (text, max(1, int(size)), bold)
+        if key in self._widths:
+            self.hits += 1
+            self._widths.move_to_end(key)
+            return self._widths[key]
+        self.misses += 1
+        started = time.perf_counter()
         font = self._font(size, bold)
-        return float(font.measure(text) if hasattr(font, "measure") else font.getlength(text))
+        value = float(font.measure(text) if hasattr(font, "measure") else font.getlength(text))
+        self.measurement_seconds += time.perf_counter() - started
+        self._widths[key] = value
+        if len(self._widths) > 2048:
+            self._widths.popitem(last=False)
+        return value
 
     def line_height(self, size: int, bold: bool = False) -> int:
         font = self._font(size, bold)

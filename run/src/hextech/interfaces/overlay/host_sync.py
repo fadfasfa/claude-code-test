@@ -651,6 +651,7 @@ def _write_overlay_session_report(
         "slots": safe_slots,
         "render": {
             "rows": safe_rows,
+            "draw_phases_ms": dict(visibility.get("presentation", {}).get("bound_draw_phases_ms") or {}),
             "stage_indicator": dict(model.get("stage_indicator") or {})
             if isinstance(model, Mapping) and isinstance(model.get("stage_indicator"), Mapping)
             else {},

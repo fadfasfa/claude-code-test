@@ -297,7 +297,7 @@ def test_generation_degraded_does_not_taint_fresh_hextech_rows() -> None:
     assert row["synergy_data_status"] == "degraded"
 
 
-def test_blitz_ranking_fallback_is_used_when_aramkit_has_no_numeric_stats() -> None:
+def test_retired_blitz_is_not_used_when_aramkit_has_no_numeric_stats() -> None:
     row = _recommend(
         _view(
             source_status={
@@ -308,9 +308,8 @@ def test_blitz_ranking_fallback_is_used_when_aramkit_has_no_numeric_stats() -> N
         )
     )
 
-    assert row["status_code"] == "READY"
-    assert row["source_run_id"] == "blitz-new"
-    assert row["stats"]["source_tier"] == 3
+    assert row["status_code"] == "SOURCE_STAT_MISSING"
+    assert not row["stats"]
 
 
 def test_hextech_last_good_marks_only_numeric_stats_degraded() -> None:

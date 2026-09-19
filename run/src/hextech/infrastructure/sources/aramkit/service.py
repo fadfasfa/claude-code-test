@@ -10,7 +10,6 @@ import hashlib
 import json
 import threading
 import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -43,10 +42,11 @@ from .schema import (
     version_marker,
 )
 from .reuse import load_reusable_current
-from .http_response import _Response, _coerce_response
+from .http_response import _Response, _coerce_response, _DetailResult
 from .failure import duplicate_validation_result, failure_fields, validation_input_fingerprint
 from .download_budget import ByteBudget as _ByteBudget
 from .conditional import with_conditional_versions
+from .http_metrics import measure_http
 from .catalog_binding import (
     AramkitRefreshError,
     CatalogBinding,
@@ -65,22 +65,6 @@ MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 
 Fetcher = Callable[..., object]
-
-@dataclass(frozen=True)
-class _DetailResult:
-    champion_id: str
-    response: _Response | None
-    normalized: Mapping[str, Any] | None = None
-    reason: str = ""
-
-    @property
-    def success(self) -> bool:
-        return self.normalized is not None and not self.reason
-
-    @property
-    def retryable(self) -> bool:
-        return self.response is not None and self.response.retryable
-
 
 def _default_fetcher(
     url: str,
@@ -137,6 +121,7 @@ def _version_payload(fetcher: Fetcher, budget: _ByteBudget) -> dict[str, Any]:
     return resolve_version(_require_json_response(fetcher, VERSIONS_URL, budget, context="versions"))
 
 
+@measure_http(_default_fetcher)
 def probe_aramkit_upstream_marker(
     *,
     fetcher: Fetcher | None = None,
@@ -456,6 +441,7 @@ def _write_failure(
     return report
 
 
+@measure_http(_default_fetcher)
 def refresh_aramkit(
     *,
     force: bool = False,
@@ -539,6 +525,9 @@ def refresh_aramkit(
                 except RawResponseIntegrityError:
                     body = None
                 if body is not None:
+                    record_hit = getattr(fetcher, "record_cache_hit", None)
+                    if callable(record_hit):
+                        record_hit()
                     return _Response(
                         url,
                         body,

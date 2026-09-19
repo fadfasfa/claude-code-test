@@ -43,7 +43,7 @@ MAYHEM_STALE_SECONDS = 4 * 60 * 60
 MAYHEM_FAILURE_RETRY_SECONDS = 30 * 60
 MAYHEM_FAILURE_RETRY_JITTER_SECONDS = 5 * 60
 MAYHEM_REPEAT_INVALID_RETRY_SECONDS = 6 * 60 * 60
-MAYHEM_PROJECTION_REVISION = "mayhem-projection-v2"
+MAYHEM_PROJECTION_REVISION = "mayhem-projection-v3"
 MAYHEM_RAW_CACHE_FILENAME = "mayhem_combos.raw.json"
 MAYHEM_REFRESH_STATUS_FILENAME = "mayhem_refresh_status.json"
 
@@ -241,10 +241,13 @@ def _merge_candidate(
     core_path = catalog_root / "英雄目录.v1.json"
     if merge is None:
         from hextech.modules.acquisition.mayhem.merge import merge_mayhem_payloads
+        from hextech.modules.data.catalog.version_catalog import (
+            load_augment_manifest_entries, load_champion_core_data,
+        )
 
-        manifest_payload = json.loads(augment_path.read_text(encoding="utf-8"))
-        core_payload = json.loads(core_path.read_text(encoding="utf-8"))
-        if not isinstance(manifest_payload, list) or not isinstance(core_payload, dict):
+        manifest_payload = load_augment_manifest_entries(catalog_root)
+        core_payload = load_champion_core_data(catalog_root)
+        if not manifest_payload or not core_payload:
             raise ValueError("Mayhem Catalog 投影输入无效")
         return dict(merge_mayhem_payloads(
             apex_payload={},
@@ -459,7 +462,16 @@ def run_mayhem_refresh(
                 extra={**failure_identity, "previous_items": previous_count},
             )
 
-        summary = _merge_candidate(raw_payload, catalog_root=catalog.root, merge=merge)
+        try:
+            summary = _merge_candidate(raw_payload, catalog_root=catalog.root, merge=merge)
+        except (ValueError, KeyError, TypeError) as exc:
+            return _failure_status(
+                reason=f"projection_invalid: {type(exc).__name__}: {exc}",
+                raw_items=raw_items, now=current,
+                extra={**failure_identity, "failure_stage": "validation",
+                       "failure_kind": "validation",
+                       "retry_after_seconds": _retry_after(transport, MAYHEM_REPEAT_INVALID_RETRY_SECONDS)},
+            )
         added_items = int(summary.get("added_items") or 0)
         if int(summary.get("mayhem_valid_items") or 0) <= 0:
             return _failure_status(

@@ -110,7 +110,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                         descriptor = components.get("champions", {}).get(hero_id, {})
                         if not units or not descriptor or descriptor.get("run_id") == item.run_id:
                             self._heroes[hero_id] = pointer
-                elif item.source in {"blitz", "apex", "mayhem"}:
+                elif item.source in {"apex", "mayhem"}:
                     self._optional[item.source] = pointer
         except (OSError, ValueError, RuntimeError):
             # Existing current remains untouched; a refresh must validate a new candidate.
@@ -138,7 +138,9 @@ class IncrementalRefreshService(RefreshScheduleMixin):
     def _upstream_changed(self) -> bool | None:
         if self.marker_probe is None:
             return None
-        marker = version_marker(self.marker_probe())
+        probe = self.marker_probe()
+        marker = version_marker(probe)
+        self._source_results["aramkit"] = {"http_summary": probe.get("http_summary")}
         if not marker["dataPath"] or not marker["version"]:
             raise ValueError("aramkit_marker_unavailable")
         self._last_upstream_marker = marker
@@ -308,7 +310,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
             accepted_sources = {item.source for item in build.source_files}
             if set(self._optional) - accepted_sources:
                 raise ValueError("optional_candidate_rejected")
-            degraded = [source for source in ("blitz", "apex", "mayhem") if source not in accepted_sources]
+            degraded = [source for source in ("apex", "mayhem") if source not in accepted_sources]
             unchanged = self.publisher.matching_current_manifest(build.payloads, source_files=build.source_files,
                 components=build.components, source_status=build.source_status,
                 health="degraded" if degraded else "healthy", degraded_sources=degraded)
@@ -320,7 +322,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
             try:
                 self.promotion.record_target("catalog", self._recognition or self._catalog)
                 self.promotion.record_target("aramkit", self._ranking)
-                for source in ("blitz", "apex", "mayhem"):
+                for source in ("apex", "mayhem"):
                     self.promotion.record_target(source, self._optional.get(source, {}))
                 self.promotion.promote_dependencies()
                 if self._stop.is_set():
@@ -352,6 +354,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
     def _run(self, source: str, work: Path, *, force: bool = False) -> dict[str, Any]:
         work.mkdir(parents=True, exist_ok=True)
         with self._lock:
+            probe_http = self._source_results.get(source, {}).get("http_summary") if source == "aramkit" else None
             self._source_results.pop(source, None)
         pointer, result, cancel = (work / name for name in ("pointer.json", "result.json", "cancel"))
         command = ([sys.executable, "--acquisition-worker"] if getattr(sys, "frozen", False)
@@ -364,8 +367,6 @@ class IncrementalRefreshService(RefreshScheduleMixin):
             catalog_path = work / "catalog.json"
             atomic_write_json(catalog_path, self._catalog, indent=2)
             command += ["--catalog-pointer", str(catalog_path)]
-        if source == "blitz":
-            command += ["--coverage-policy", "active_partial"]
         observed: set[tuple[str, str]] = set()
         observed_heroes: set[str] = set()
         observer_errors: dict[tuple[str, str], str] = {}
@@ -480,6 +481,12 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                 self._source_results[source] = (
                     dict(source_result) if isinstance(source_result, Mapping) else {}
                 )
+                worker_http = self._source_results[source].get("http_summary")
+                if source == "aramkit" and isinstance(probe_http, Mapping) and isinstance(worker_http, Mapping):
+                    self._source_results[source]["http_summary"] = {
+                        key: int(probe_http.get(key, 0)) + int(worker_http.get(key, 0))
+                        for key in set(probe_http) | set(worker_http)
+                    }
             if self._stop.is_set():
                 raise RuntimeError("shutdown_requested")
             if source == "catalog" and execution.returncode == 0 and outcome.get("state") == "deferred":
@@ -514,6 +521,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
             self._last_refresh_error = None
         try:
             result = self._refresh_once(force=force, scope=scope)
+            self._record_skipped_checks(result)
         except Exception as exc:
             with self._refresh_condition:
                 self._last_refresh_error = exc
@@ -584,7 +592,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
             with self._lock:
                 self._optional_force_requested = True
         self._start_optional()
-        for source in ("aramkit", "blitz"):
+        for source in ("aramkit",):
             if self._stop.is_set():
                 break
             if not force and self._backoff_pending(source):
@@ -603,6 +611,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                 if source == "aramkit" and upstream_changed is False and self._ranking:
                     marker = dict(self._last_upstream_marker)
                     evidence = {
+                        **self._source_results.get(source, {}),
                         "check_status": "up_to_date",
                         "upstream_revision": str(marker.get("dataPath") or ""),
                         "applied_revision": str(marker.get("dataPath") or ""),
@@ -612,7 +621,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                     if core_complete and not missing_priority:
                         self._mark_source(source, result=evidence)
                         continue
-                pointer = self._run(source, work / source, force=source == "aramkit")
+                self._run(source, work / source, force=source == "aramkit")
                 if source == "aramkit" and upstream_changed is False:
                     marker = dict(self._last_upstream_marker)
                     worker_result = self._source_results.get(source, {})
@@ -626,18 +635,6 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                             "applied_revision": probe_revision,
                             "upstream_marker": marker,
                         }
-                if source != "aramkit":
-                    with self._lock:
-                        previous = self._optional.get(source)
-                        self._optional[source] = pointer
-                        try:
-                            self._publish()
-                        except Exception:
-                            if previous is None:
-                                self._optional.pop(source, None)
-                            else:
-                                self._optional[source] = previous
-                            raise
                 self._mark_source(source)
             except (OSError, ValueError, RuntimeError) as exc:
                 errors[source] = str(exc)

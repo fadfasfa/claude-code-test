@@ -2,6 +2,18 @@
 
 本文是 Hextech Overlay、Vision Sidecar、会话诊断、打包部署和真机验收的长期事实源。处理游戏内显示、识别抖动、无数据、旧包误测或发布问题时必须先读本文；数据目录细节仍见 [data-layout.md](data-layout.md)，系统依赖关系见 [system-design.md](system-design.md)。
 
+## 2026-09-19 统一修复（候选，不代表正式部署）
+
+后续时序／留存修复：shell先绘制并排入映射，同Tk回合同步只提交轻量后台请求，下一回合才消费结果；不再人为多等一轮。`first_event_read_*` 绑定event publication，普通read/TTL仍按原合同。prepared携带输入计时及准备请求／开始／完成／消费时钟，实际draw冻结该版本，不混用后续tick。正常重随边界不再单独升级为anomaly；真实异常floor及旧已持久化anomaly保持原等级，不能用最终稀疏READY帧反推旧异常是假警报。旧满额存量不自动清空，清理另行确认。详见[后续修复与独立审查记录](followup-repair-20260919.md)。
+
+- 当前运行统计只使用已验证 ARAMKit；同英雄 Stage→all→明确缺失，不再消费 Blitz tier。新增量快照、刷新调度及健康判定不依赖 Blitz；历史 source/seed/快照闭包验证继续保留，不删除历史数据。ARAMGG 未接入。
+- Mayhem 使用真实统一 Catalog 的 entries 与英雄 ID 投影，处理版本升为 `mayhem-projection-v3`；投影错误明确 validation，失败保留 last-good。
+- 字体宽度使用每 Canvas 最多 2048 项缓存，布局、尺寸、DPI、模式变化失效。session report 可选 `render.draw_phases_ms` 绑定实际绘制事件；字体耗时是阶段耗时的子集，不能重复相加。
+- `state/refresh_attempts.v1.json` 在既有诊断留存中最多 200 条／128 KiB，记录真实逻辑检查与跳过。ARAMKit HTTP evidence 区分请求、失败、失败后重试、304 与 raw-cache 命中；其他来源没有完整 HTTP 计数时明确 unknown，不推算请求失败率。
+- 选择缓存继续遵守 200 组／256 MiB、12 帧合并与优先级保护合同；状态补充容量、保护字节、未保存原因和计数。同类持久化错误每 60 秒最多一条日志，失败总数不丢失。不清空现存缓存。
+- 联动状态区分 `SOURCE_UNAVAILABLE`、`CONFIRMED_EMPTY` 和 `NO_MATCH`；绘制状态仍由原有 `synergy_render` 记录。
+- 回归、隔离网络验证及 Tk 对照结果见 [统一修复验证记录](unified-repair-20260919.md)。隐藏 Tk 和 packaged smoke 均不替代真实五局验收。
+
 2026-09-10 r12 桌面改为原生owner=0的独立Tk面板，按统一可信RCLIENT主窗选择结果视觉跟随；条件置顶、失败原因和冻结桌面呈现门按[桌面专项合同](desktop-stable28.md)执行。禁止重新引入跨进程owner绑定。旧r11游戏内行为保留；桌面测试不证明真实游戏定位或识别通过。
 
 2026-09-10 r11 深度增量见 [overlay-r11-deep-repair.md](overlay-r11-deep-repair.md)：桌面改为仅客户端前台持有条件置顶，游戏内增加先于身份的碎片否定与同帧两阶段反馈，显式有界诊断默认关闭。位置校准仍须同规格真实证据，不能由新包smoke代验。

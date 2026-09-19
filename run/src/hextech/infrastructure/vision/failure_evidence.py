@@ -157,6 +157,9 @@ class FailureEvidenceWriter:
         self._failed_count = 0
         self._last_error = ""
         self._saved_count = 0
+        self._last_reported_error = ""
+        self._last_error_report_at = 0.0
+        self._suppressed_errors = 0
         self._cache_status: dict[str, Any] = {"root": str(self.cache_root)}
 
     def start(self) -> None:
@@ -236,6 +239,8 @@ class FailureEvidenceWriter:
                         self._cache_status["last_diagnostic_id"] = draft.diagnostic_id
                         self._cache_status["last_manual_save"] = draft.manual
                         self._cache_status["last_manual_diagnostic_id"] = draft.diagnostic_id if draft.manual else manual_id
+                        self._cache_status["save_state"] = "saved"
+                        self._last_error = ""
                         self._saved_count += 1
                 elif self._persist(draft):
                     with self._condition:
@@ -244,9 +249,17 @@ class FailureEvidenceWriter:
                 detail = (str(exc) if isinstance(draft, SelectionCaptureDraft) and isinstance(exc, ValueError)
                           and str(exc).startswith("selection_cache_") else exc.__class__.__name__)
                 with self._condition:
-                    self._journal.append(_journal(draft.slot_key, detail))
+                    observed = time.monotonic()
+                    if detail != self._last_reported_error or observed - self._last_error_report_at >= 60:
+                        self._journal.append(_journal(draft.slot_key, detail))
+                        self._last_reported_error = detail
+                        self._last_error_report_at = observed
+                    else:
+                        self._suppressed_errors += 1
                     self._failed_count += 1
                     self._last_error = detail
+                    self._cache_status.update(save_state="not_saved", reason=detail,
+                                              unsaved_count=self._failed_count)
             finally:
                 with self._condition:
                     self._completed_count += 1
@@ -364,6 +377,7 @@ class FailureEvidenceWriter:
                 "dropped": self._dropped_count,
                 "failed": self._failed_count,
                 "last_error": self._last_error,
+                "suppressed_error_logs": self._suppressed_errors,
                 "selection_cache": dict(self._cache_status),
             }
 

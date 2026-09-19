@@ -79,6 +79,7 @@ class DisplayModel:
     phase: Literal["hints_ready", "ready"]
     timings: Mapping[str, float]
     host_read_at: float
+    input_timing: Mapping[str, float] | None = None
 
 
 # 保留既有调用名，不再建立第二份结构/状态源。
@@ -158,6 +159,7 @@ class OverlayDataPreparation:
         completed: int | None, host_read_at: float,
         viewport_size: tuple[int, int] = (1920, 1080),
         display_mode: str = "compact",
+        input_timing: Mapping[str, float] | None = None,
     ) -> tuple[Any, ...] | None:
         # 在 GUI 请求入口只记录截止位，不读数据；不能让慢 open/合并队列漏掉首场景。
         raw_source = event.get("source") if isinstance(event.get("source"), Mapping) else {}
@@ -202,6 +204,7 @@ class OverlayDataPreparation:
                 host_read_at,
                 (int(viewport_size[0]), int(viewport_size[1])),
                 "expanded" if str(display_mode) == "expanded" else "compact",
+                {**dict(input_timing or {}), "preparation_requested_at": time.time()},
             )
             self._latest_request = self._pending
             if self._thread is None:
@@ -361,8 +364,10 @@ class OverlayDataPreparation:
         self, version: int, key: tuple[Any, ...], event: Mapping[str, Any],
         context: Mapping[str, Any], completed: int | None, host_read_at: float,
         viewport_size: tuple[int, int], display_mode: str,
+        input_timing: Mapping[str, float] | None = None,
     ) -> None:
         started = time.perf_counter()
+        input_timing = {**dict(input_timing or {}), "preparation_started_at": time.time()}
         if key[:2] != self._game_identity:
             self._generation.reset()
             self._scope.reset()
@@ -405,6 +410,7 @@ class OverlayDataPreparation:
             self._publish(version, PreparedOverlayData(
                 key, event, model, projected, generation, scope, scope_key, content_key, phase,
                 {**timings, "prepared_ms": (time.perf_counter() - started) * 1000.0}, host_read_at,
+                {**input_timing, "preparation_completed_at": time.time()},
             ))
 
         preliminary = prepare_synergy_display_summaries(

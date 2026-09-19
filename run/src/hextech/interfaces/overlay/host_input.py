@@ -38,6 +38,8 @@ class HostInputSnapshot:
     context_game_instance_id: str = ""
     context_observed_at: float = 0.0
     context_age_seconds: float | None = None
+    first_event_read_started_at: float = 0.0
+    first_event_read_completed_at: float = 0.0
 
 
 def _unavailable(reason: str) -> HostInputSnapshot:
@@ -106,6 +108,9 @@ class HostInputObserver:
         self._publication_observed_at = 0.0
         self._retired_publishers: set[str] = set()
         self._legacy_observed_at: float | None = None
+        self._event_publication_key: tuple[Any, ...] | None = None
+        self._first_event_read_started_at = 0.0
+        self._first_event_read_completed_at = 0.0
 
     def start(self) -> None:
         with self._condition:
@@ -204,6 +209,17 @@ class HostInputObserver:
             if self._closed:
                 return
             self._current_identity = identity
+            timing = event.get("timing") if isinstance(event.get("timing"), Mapping) else {}
+            source = event.get("source") if isinstance(event.get("source"), Mapping) else {}
+            written = timing.get("event_written_at")
+            publication = (
+                identity, event.get("build_id"), source.get("sidecar_instance_id"),
+                source.get("selection_epoch"), source.get("selection_revision"), written,
+            ) if isinstance(written, (int, float)) and not isinstance(written, bool) and math.isfinite(written) and written > 0 else None
+            if publication is None or publication != self._event_publication_key:
+                self._event_publication_key = publication
+                self._first_event_read_started_at = event_read_started_at
+                self._first_event_read_completed_at = event_read_completed_at
             if identity is None:
                 self._context_request_identity = None
             else:
@@ -256,6 +272,8 @@ class HostInputObserver:
                 context_game_instance_id=identity[0] if identity is not None else "",
                 context_observed_at=context_observed_at,
                 context_age_seconds=context_age_seconds,
+                first_event_read_started_at=self._first_event_read_started_at,
+                first_event_read_completed_at=self._first_event_read_completed_at,
             )
             self._condition.notify_all()
 
@@ -384,6 +402,8 @@ class HostInputObserver:
                 context_game_instance_id=identity[0],
                 context_observed_at=context_observed_at,
                 context_age_seconds=max(0.0, self._now() - context_observed_at),
+                first_event_read_started_at=current.first_event_read_started_at,
+                first_event_read_completed_at=current.first_event_read_completed_at,
             )
 
     def _run_context(self) -> None:

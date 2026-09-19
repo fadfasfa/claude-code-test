@@ -341,6 +341,7 @@ def collect_diagnostic_items(runtime_root: str | Path | None = None) -> dict[str
             state,
             (
                 "overlay_vision_trace*.json",
+                "refresh_attempts.v1.json",
                 "runtime_events.v1.jsonl*",
                 "overlay_sidecar.*.bootstrap.json",
                 "overlay_sidecar.*.ready.json",

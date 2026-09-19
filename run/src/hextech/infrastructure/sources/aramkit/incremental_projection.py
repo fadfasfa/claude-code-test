@@ -227,7 +227,7 @@ class IncrementalProjection:
             "checked_at": utc_now_iso(), "freshness": "fresh", "data_status": "fresh",
             "manifest_sha256": self.catalog.manifest_sha256}}
         optional = {}
-        for source, role in (("blitz", "augment_ranking"), ("apex", "synergy"), ("mayhem", "combos")):
+        for source, role in (("apex", "synergy"), ("mayhem", "combos")):
             candidate = optional_pointers.get(source)
             if not candidate:
                 source_status[source] = {"catalog_id": self.catalog.generation_id, "data_status": "pending",
@@ -246,7 +246,6 @@ class IncrementalProjection:
         if "mayhem" in optional:
             synergy = merge_mayhem_payloads(apex_payload=synergy, mayhem_payload=optional["mayhem"].payload,
                 manifest_payload=self.augments, core_payload=self.champions)["merged_payload"]
-        fallback = optional["blitz"].details if "blitz" in optional else {}
         details = {}
         complete_count = 0
         for champion in champions:
@@ -255,7 +254,7 @@ class IncrementalProjection:
             complete = False
             run_id = ""
             hero_source_version = source_version
-            detail = deepcopy((fallback or {}).get(name))
+            detail = None
             if pointer:
                 unit = self._load("aramkit", pointer, "scoped_stats")
                 if hero_id not in {str(item["champion_id"]) for item in unit.payload["files"]}:
@@ -277,8 +276,6 @@ class IncrementalProjection:
                     sources.append(unit.provenance)
             if detail:
                 detail["data_status"] = "data_stale" if complete and hero_source_version != source_version else "fresh"
-                if not complete:
-                    detail["data_reason"] = "blitz_ranking_only"
                 detail["synergy"] = deepcopy(synergy.get(hero_id) or synergy.get(name) or {})
             else:
                 detail = {"hero_id": hero_id, "augments": [], "data_status": "pending", "synergy": {}}

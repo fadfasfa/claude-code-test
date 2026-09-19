@@ -205,20 +205,23 @@ def _allows_periodic_snapshot(metadata: Mapping[str, Any]) -> bool:
 
 
 def _retention_class(draft: SelectionCaptureDraft) -> str:
-    if draft.manual:
+    return classify_selection_evidence([frame.metadata for frame in draft.frames], draft.terminal, manual=draft.manual)
+
+
+def classify_selection_evidence(frames: list[Mapping[str, Any]], terminal: Mapping[str, Any],
+                                *, manual: bool = False) -> str:
+    """A normal reroll boundary is evidence, not a recognition failure by itself."""
+    if manual:
         return "manual"
-    terminal_reason = str(draft.terminal.get("reason") or draft.terminal.get("capture_reason") or "")
+    terminal_reason = str(terminal.get("reason") or terminal.get("capture_reason") or "")
     anomalous_reasons = {
-        "scene_type_conflict", "evidence_starved", "slot_generation_changed", "reroll_completed",
+        "scene_type_conflict", "evidence_starved",
         "reroll_unconfirmed", "slow_confirmation", "capture_binding_changed",
     }
-    success = terminal_reason == "selection_completed"
-    reroll_origin = draft.terminal.get("group_origin") == "slot_generation_changed"
-    for frame in draft.frames:
-        raw = frame.metadata.get("raw_scene_evidence") if isinstance(
-            frame.metadata.get("raw_scene_evidence"), Mapping) else {}
-        final = frame.metadata.get("final_classification") if isinstance(
-            frame.metadata.get("final_classification"), Mapping) else {}
+    success = terminal_reason in {"selection_completed", "reroll_completed"}
+    for frame in frames:
+        raw = frame.get("raw_scene_evidence") if isinstance(frame.get("raw_scene_evidence"), Mapping) else {}
+        final = frame.get("final_classification") if isinstance(frame.get("final_classification"), Mapping) else {}
         final_reason = str(final.get("reason") or "")
         if final.get("generation_binding") == "mismatch":
             return "anomaly"
@@ -239,8 +242,8 @@ def _retention_class(draft: SelectionCaptureDraft) -> str:
         if isinstance(elapsed, (int, float)) and elapsed >= SLOW_CONFIRMATION_SECONDS * 1000:
             return "anomaly"
         success = success or any(slot.get("state") == "ready" for slot in final_slots)
-    if reroll_origin and not success:
-        return "anomaly"
+    # Pending rerolls may later confirm normally. Their first provisional snapshot
+    # must not latch an irreversible anomaly floor before any failure is observed.
     return "success" if success else "weak"
 
 
