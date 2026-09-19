@@ -33,9 +33,18 @@
 
 正式安装、`.previous`、共享运行态、人工图像与标注、source/generation以及旧异常缓存保持保护。旧缓存的已存等级不能安全推断为误报，因此新代码只阻止继续误标；满额存量的清理需精确授权。
 
-## 旧包候选清单（预览，尚未删除）
+## 正式交付结果
 
-以下路径相对仓库根。仅在新正式安装核验通过、旧测试入口引用已处理且用户确认精确清单后删除；不处理父目录及旁边的appdata、测试证据或isolated runtime。
+- 单行修复及部署工具补丁已在main提交并推送：`57586c00e2a4e3c7b8fc478f816112fc5c319162`。
+- 重新构建`HextechCompanion-20260919-final-r2`，Build为`20260919T150911Z-d4ae99da77f1`，源码fingerprint为`d4ae99da77f19bca02939f40e4153dcb491b1228cffc7bd859559a70ff209ab5`，与该提交源码一致。
+- clean、stale_sidecar、populated_runtime三种冻结启动／呈现smoke均通过；使用原部署器替换`C:\HextechCompanion`成功。Desktop、DataService、Supervisor、Overlay Host、Vision Sidecar五角色均来自正式目录并通过Build、协议和cohort验收。
+- 正式EXE与候选SHA-256一致：`5CA389EB775533C5E4349A39649976E9193C5B550892143F01899634F6E7907E`。正式快捷方式四字段已复核；`.previous`保留部署前正式Build `20260917T105006Z-b7edf06c5960`。
+- 部署后观察ARAMKit/Apex/Mayhem均为`up_to_date`；没有通过改写失败状态冒充成功。真实游戏的新Build P95／五局仍未验收，不能以部署成功替代。
+- 本地证据：`.artifacts/repair-20260919/single-line-build.log`、`single-line-deploy.log`、`cleanup-result.json`，以及仅截取自建Tk画布的`single-line-preview.png`。共享运行数据、原图、人工标注和旧异常缓存未清理。
+
+## 已执行的旧包清单
+
+以下路径相对仓库根，已在新正式安装核验通过、旧测试入口引用解除及用户确认后永久删除；未删除父目录及旁边的appdata、测试证据或isolated runtime。
 
 | 路径 | 预览字节数 |
 | --- | ---: |
@@ -46,4 +55,4 @@
 | `run/.artifacts/fix19-package/releases/HextechCompanion-20260919-repair.zip` | 150618776 |
 | `run/.artifacts/fix19-smoke/HextechCompanion-20260919-repair-183906/` | 357049862 |
 
-当前桌面“Hextech 测试版 20260919.lnk”仍指向第四项，故该目录目前仍在用并受保护。以上合计约1.61GiB；预览不代表已经释放空间。执行前需重新核对路径、重解析点、引用、进程和包身份。
+旧桌面“Hextech 测试版 20260919.lnk”已由部署器移除。六项合计1,728,836,943字节（约1.61GiB），永久删除不进入回收站；C盘可用空间在清理测量期间净增1,759,301,632字节（约1.64GiB，包含并发变化）。包内旧smoke小型stdout日志已另存并核验哈希，位于上述证据目录的`retained-smoke-logs/`。此次只执行确认的六项，本轮其它失败／验收资料未扩展删除。
