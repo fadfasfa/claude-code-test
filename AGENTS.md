@@ -10,13 +10,11 @@
 - 通用需求澄清、编码纪律和自检由模型与本文件直接完成；仓库不建立通用流程 Skill、bridge、wrapper 或第二事实源。
 - 不读取或修改凭据、token、auth、cookie、API key、proxy secret、`.env`、`auth.json`、`local.yaml`、`proxies.json`、`accounts.json`。
 - 不把 Codex 出口、代理、账号池或路由维护混入普通仓库实现任务；本文件不保存 live proxy 细节、端口策略或维护步骤。
-- 不覆盖、不回滚、不清理与当前任务无关的脏树改动；commit 前只允许 `git add` 本轮修改文件，禁止 `git add .`。
-- 未获明确授权时，不主动 push、创建/更新 PR、merge、删除远端分支、丢弃未合并成果或执行难恢复 Git 操作。
-- 用户明确授权 push、PR、merge、新建 worktree 或清理指定 branch/worktree 时，agent 必须自行执行必要命令并验证结果，不退回给用户手工输入。
+- 不覆盖、不回滚、不清理与当前任务无关的脏树改动。
+- Codex 的普通分支、工作树、提交与普通推送授权语义以用户级 `AGENTS.md` 为准；本仓只在 `docs/当前规则/20-Git与高危操作.md` 维护保护资产、工作树路径、PR 修复、清理边界和提交格式。Claude Code 继续使用自己的用户级授权规则。
 - 用户当前轮明确要求修复已有开放 PR（审查意见、requested changes、CI failure 等闭环）时，任务默认包含验证、必要 commit 和普通 `git push` 到当前 PR 分支。
 - PR 推送的前置校验、授权边界与停止条件以 `docs/当前规则/20-Git与高危操作.md` 的「PR 修复后的推送规则」为准；该授权不含 merge、tag、release、force push、rebase、历史重写或远端分支删除。
 - 长任务按需要拆分阶段并逐段自检；不因任务规模自动派子智能体或设置 reviewer 门禁。
-- `force push`、`reset --hard`、删除/丢弃未合并成果、覆盖远端历史，必须被用户明确点名；一旦动作和目标明确，不额外增加业务层确认。
 - 不恢复 CC-CX guard、plan-gate、状态机、command、hook、memory、learning promotion、自动 PR shipping、task resume 或高权限 worktree skill。Codex worker 已退役，不主动调用；`docs/历史归档/cc-worker/README.md` 仅供历史查阅，不是执行或恢复入口。
 - commit message 与 PR 标题/正文使用本仓约定的中文 conventional 格式；具体格式、例外和流程由 workflow 文档维护。
 

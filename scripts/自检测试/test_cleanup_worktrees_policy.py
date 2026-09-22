@@ -118,6 +118,32 @@ def remove_worktree(repo: Path, worktree: Path) -> None:
 
 
 class CleanupWorktreesPolicyTextTests(unittest.TestCase):
+    def test_codex_git_policy_uses_global_one_shot_authorization(self) -> None:
+        root_agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        entry = (REPO_ROOT / "docs" / "当前规则" / "00-入口总览.md").read_text(
+            encoding="utf-8"
+        )
+        git_policy = (REPO_ROOT / "docs" / "当前规则" / "20-Git与高危操作.md").read_text(
+            encoding="utf-8"
+        )
+        review_policy = (REPO_ROOT / "docs" / "当前规则" / "30-验证与审查.md").read_text(
+            encoding="utf-8"
+        )
+
+        for text in (root_agents, entry, git_policy, review_policy):
+            self.assertIn("用户级 `AGENTS.md`", text)
+
+        self.assertNotIn("禁止 `git add .`", entry)
+        self.assertIn("优先复用", git_policy)
+        self.assertIn("Codex 完成任务后不自动合并、删除分支或清理 worktree", git_policy)
+        for old_wording in (
+            "目标路径、目标分支或目标 worktree 已存在时停止",
+            "默认创建新分支，不在主工作树执行",
+            "新建分支后的首个 commit",
+            "中文别名",
+        ):
+            self.assertNotIn(old_wording, git_policy)
+
     def test_skill_text_keeps_squash_and_cleanup_safety_invariants(self) -> None:
         for path in SKILL_FILES:
             text = path.read_text(encoding="utf-8")

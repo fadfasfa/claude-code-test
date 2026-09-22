@@ -1,21 +1,12 @@
 # Git 与高危操作
 
-本文件合并 Git 策略、高危资产、高危操作、worktree 和发布边界。参考资料或历史材料中的授权表述不得扩展本文件与根 `AGENTS.md` 的授权范围；其中把一般计划批准等同于动作授权的旧表述不适用。
+本文件只维护 `claudecode` 仓库特有的保护资产、工作树路径、PR 修复、清理和发布边界。Codex 的普通分支、工作树、提交与普通推送授权语义以用户级 `AGENTS.md` 为唯一通用事实源；Claude Code 继续使用自己的用户级授权规则，本次 Codex 适配不扩大其权限。
 
-## 默认 Git 规则
+## 本仓 Git 基线
 
-- 默认允许 `git status`、`git diff`、`git log` 等只读命令。
-- 每次任务开始先运行 `git status --short`。
-- Git 写操作必须有当前任务的明确授权，或满足下文已有开放 PR 修复的授权例外；一般计划批准不替代动作授权。授权已经明确时，agent 直接执行并验证，不重复要求业务层确认。
-- commit 前只能暂存本轮修改文件，禁止 `git add .`。
-- 未获用户明确授权时，不主动执行 `push`、PR、merge、discard、`clean`、`reset`、`rebase`、`stash`、`switch`、`branch` 或 worktree 写入。
-- 不覆盖、不回滚、不清理与当前任务无关的脏树改动。
-
-## 明确授权
-
-commit、push、branch、checkout、switch、merge、rebase、reset、clean、restore、stash、tag、cherry-pick、revert、worktree、remote 或 PR 操作须在用户明确授权的动作与范围内执行。一般计划批准不构成这些动作的独立授权；已有开放 PR 修复仅适用下一节列明的例外。
-
-commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不隐含其他清理动作。用户明确授权 push、PR、merge 或 discard 后，agent 必须按确认范围自行完整执行并验证结果，不得退回为“请你在本机终端执行命令”。
+- 开始任务、保护无关脏改、精确暂存和完成后复核分别由根 `AGENTS.md` 与 `docs/当前规则/30-验证与审查.md` 约束，本文件不复述。
+- 普通推送授权不包含 PR、merge、tag、release、force push、rebase、历史重写、remote 变更、远端分支删除或任何清理动作。
+- 已登记的本地私有工作区与分支不得因普通提交或推送授权进入 public remote。
 
 ## PR 修复后的推送规则
 
@@ -36,35 +27,35 @@ commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不
 - `heybox/**` 业务工作区内未授权修改。
 - `subtitle_extractor/**` 业务工作区内未授权修改。
 - `QuantProject/**` 本地私有工作区，默认不发布到 public remote。
+- `docs/当前规则/10-工作区登记.md` 中登记的其他本地私有工作区、分支和长期工作树；包括象棋 `codex/feat/xiangqi-local` 与 detached `xiangqi-screen-review`，默认不发布、不合并、不清理。
 - 任何业务工作区内未授权修改。
 - `auth.json`、token、cookie、API key、`.env`、`local.yaml`、`proxies.json`。
 - 用户级 `.claude`、`.codex` 和 KB 仓库，除非用户明确纳入范围。
 
-## 高危操作
+## 需要单独授权的高危操作
 
-- `git push`、PR、merge、amend、tag、release。
+- PR 创建或更新、merge、amend、tag、release、force push、remote 变更、远端分支删除和历史重写；普通 `git push` 按用户级 `AGENTS.md` 的一次授权语义执行。
 - discard / 清理类操作：`git reset --hard`、`git clean -fdx`、`git restore`、覆盖式 checkout、批量删除、批量移动、不可逆清理。
 - 跨工作区重构、批量格式化、迁移生成物或删除运行态目录。
 - 修改凭据、登录态、proxy、账号池或全局配置。
 
 ## 执行规则
 
-- 破坏性命令必须由用户当前轮明确点名动作与目标；一般计划批准不替代该授权。授权已经明确时，agent 按范围执行并验证，不重复要求业务层确认。
+- 破坏性命令必须由用户当前轮明确点名动作与目标；授权已经明确时按范围执行并验证，不再增加业务层确认。
 - 删除、覆盖、移动前必须确认目标路径。
 - 需要备份时，先确认备份成功；备份失败即停止。
 - 不通过修改 ACL、绕过沙箱或写入未授权路径来补救失败备份。
 - 即使人工选择高权限 profile，也不得绕过本仓高危资产规则。
 
-## Worktree 边界
+## Worktree 路径与 Codex 使用边界
 
-- 不自动创建长期 worktree。
-- 用户明确要求新建 worktree 时，默认使用 `codex/` 分支前缀和 managed root。
-- Codex worktree root：`C:\Users\apple\worktrees\codex`。
+- Codex 通过命令行新建的 worktree 使用 `C:\Users\apple\worktrees\codex`，目录名包含仓库名与任务主题；新分支沿用用户级 `AGENTS.md` 的 `codex/` 命名。
 - Claude Code worktree root：`C:\Users\apple\_worktrees\cc`。
 - cleanup-only legacy worktree root：`C:\Users\apple\worktrees\claudecode-*`。该 root 只用于清理历史平铺 worktree，不作为新建 worktree 目标。
-- 默认创建新分支，不在主工作树执行 `checkout` / `switch`。
-- 目标路径、目标分支或目标 worktree 已存在时停止，不覆盖。
-- 清理、移除、强制覆盖或修改受管 metadata 必须有用户当前轮单独点名授权。
+- Codex App 已创建的 worktree 保持原路径并优先复用，不为了统一目录而移动或重建。已有分支若绑定工作树，Codex 直接进入该工作树；没有绑定时可安全签出，不创建替代分支。
+- Codex 发现同一任务已有分支或 worktree 且身份吻合时优先复用；自动命名碰撞时选择安全替代名称，用户指定目标与现有内容冲突时才停止询问，不覆盖。
+- Codex 新建的 worktree 默认基于已提交内容，不默默迁移未提交改动、运行数据、依赖目录或凭据；任务依赖这些内容时明确报告缺口。
+- Codex 完成任务后不自动合并、删除分支或清理 worktree。短期分支不设强制寿命；登记为本地私有或长期保留的分支和 worktree 不进入普通收尾清理。
 
 ## cleanup-worktrees 边界
 
@@ -83,9 +74,6 @@ commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不
 - scope 可选；优先用中文模块名，原始目录名或包名可读性更高时保留英文。
 - 首行不超过 72 字符，结尾不加句号。
 - 正文与首行之间空一行；正文使用陈述句，必要时分行列出关键事实，不使用 emoji。
-- 新建分支后的首个 commit，正文必须包含独立一行：`分支: <英文分支名>（<中文别名>）`。
-- 英文分支名沿用 `cc/<type>/<slug>` 或 `codex/<type>/<slug>`，不变；中文别名格式为 `<中文type>-<中文 scope 或主题>`。
-- 同一分支的后续 commit 不必重复中文别名行。
 - PR 标题与该 PR 主 commit 首行一致，即中文 conventional 格式。
 - PR 正文使用三段中文小标题，顺序固定：`## 总结`、`## 验证`、`## 剩余风险`。
 - 三段内容均使用陈述短句；无内容时写“无”，不留空标题。
