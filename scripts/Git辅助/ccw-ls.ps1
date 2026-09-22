@@ -16,7 +16,7 @@ $ErrorActionPreference = "Stop"
 # 解析当前 Git 仓库根目录，失败时立即终止。
 function Resolve-RepoRoot {
   $root = git rev-parse --show-toplevel 2>$null
-  if (-not $root) {
+  if ($LASTEXITCODE -ne 0 -or -not $root) {
     throw "未在 Git 仓库内，无法解析 repo root。"
   }
   return (Resolve-Path $root).Path
@@ -46,6 +46,7 @@ function Test-UnderRoot {
 function Parse-WorktreeList {
   param([string]$RepoRoot)
   $raw = git -C $RepoRoot worktree list --porcelain
+  if ($LASTEXITCODE -ne 0) { throw "无法读取 worktree 列表。" }
   $result = @()
   $entry = $null
 
@@ -71,6 +72,7 @@ function Parse-WorktreeList {
 function Get-DirtyFlag {
   param([string]$Path)
   $status = git -C $Path status --porcelain 2>$null
+  if ($LASTEXITCODE -ne 0) { throw "无法确认工作树状态：$Path" }
   return [bool]($status | Where-Object { $_ -match '\S' })
 }
 

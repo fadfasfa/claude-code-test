@@ -5,6 +5,7 @@
 import os
 import sys
 import argparse
+import tempfile
 from pathlib import Path
 from moviepy import VideoFileClip
 from faster_whisper import WhisperModel
@@ -12,14 +13,17 @@ from faster_whisper import WhisperModel
 
 def extract_audio_from_video(video_path, audio_path):
     # 提取视频音频。
+    video = None
     try:
         video = VideoFileClip(video_path)
         video.audio.write_audiofile(audio_path, logger=None)
-        video.close()
         return True
     except Exception as e:
         print(f"从 {video_path} 提取音频失败：{e}")
         return False
+    finally:
+        if video is not None:
+            video.close()
 
 
 def transcribe_audio(audio_path, model_size="base", device="cpu"):
@@ -62,41 +66,31 @@ def format_timestamp(seconds):
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
 
 
-def process_video_file(video_path, output_dir, model_size="base", device="cpu"):
+def process_video_file(video_path, output_dir, model_size="base", device="cpu", *, output_name=None):
     # 处理单个视频文件。
     print(f"正在处理：{video_path}")
 
-    # 创建临时音频文件。
-    audio_path = output_dir / f"{video_path.stem}_temp.wav"
-    md_path = output_dir / f"{video_path.stem}.md"
-
-    # 提取音频。
-    if not extract_audio_from_video(str(video_path), str(audio_path)):
-        print(f"从 {video_path} 提取音频失败")
-        return
-
-    # 转录音频。
-    segments = transcribe_audio(str(audio_path), model_size, device)
-
-    if not segments:
-        print(f"音频转写失败：{video_path}")
-        # 清理临时音频文件。
-        if audio_path.exists():
-            audio_path.unlink()
-        return
-
-    # 生成 Markdown。
-    markdown_content = segments_to_markdown(segments)
-
-    # 写入 Markdown 文件。
-    with open(md_path, 'w', encoding='utf-8') as f:
-        f.write(markdown_content)
-
-    # 清理临时音频文件。
-    if audio_path.exists():
-        audio_path.unlink()
-
+    output_dir.mkdir(parents=True, exist_ok=True)
+    md_path = output_dir / f"{output_name or video_path.stem}.md"
+    # 唯一临时目录只承载本次生成的音频；绝不覆盖或清理用户同名 WAV。
+    with tempfile.TemporaryDirectory(prefix=".subtitle-audio-", dir=output_dir) as temporary:
+        audio_path = Path(temporary) / "audio.wav"
+        try:
+            if not extract_audio_from_video(str(video_path), str(audio_path)):
+                print(f"从 {video_path} 提取音频失败")
+                return False
+            segments = transcribe_audio(str(audio_path), model_size, device)
+            if not segments:
+                print(f"音频转写失败：{video_path}")
+                return False
+            markdown_content = segments_to_markdown(segments)
+            with open(md_path, 'w', encoding='utf-8') as f:
+                f.write(markdown_content)
+        except Exception as e:
+            print(f"处理失败：{video_path}，原因：{e}")
+            return False
     print(f"处理成功：{video_path} -> {md_path}")
+    return True
 
 
 def process_directory(input_dir, output_dir, model_size="base", device="cpu", extensions=None):
@@ -108,20 +102,34 @@ def process_directory(input_dir, output_dir, model_size="base", device="cpu", ex
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # 收集视频文件。
-    video_files = []
-    for ext in extensions:
-        video_files.extend(input_dir.rglob(f"*{ext}"))
-        video_files.extend(input_dir.rglob(f"*{ext.upper()}"))
+    allowed_extensions = {ext.lower() for ext in extensions}
+    video_files = sorted(
+        (path for path in input_dir.rglob("*") if path.is_file() and path.suffix.lower() in allowed_extensions),
+        key=lambda path: path.relative_to(input_dir).as_posix().casefold(),
+    )
 
     if not video_files:
         print(f"未在 {input_dir} 中找到视频文件")
-        return
+        return True
 
     print(f"找到 {len(video_files)} 个视频文件待处理")
 
-    # 逐个处理视频文件。
+    # 逐个处理并汇总，单个失败不能跳过后续输入，也不能被最终退出码掩盖。
+    failed_count = 0
     for video_file in video_files:
-        process_video_file(video_file, output_dir, model_size, device)
+        relative = video_file.relative_to(input_dir)
+        try:
+            success = process_video_file(
+                video_file, output_dir / relative.parent, model_size, device,
+                output_name=video_file.name,
+            )
+        except Exception as e:
+            print(f"处理失败：{video_file}，原因：{e}")
+            success = False
+        if not success:
+            failed_count += 1
+    print(f"批次完成：成功 {len(video_files) - failed_count}，失败 {failed_count}")
+    return failed_count == 0
 
 
 def main():
@@ -146,11 +154,12 @@ def main():
     if input_path.is_file():
         # 处理单个文件。
         output_path.mkdir(parents=True, exist_ok=True)
-        process_video_file(input_path, output_path, args.model, args.device)
+        success = process_video_file(input_path, output_path, args.model, args.device)
     else:
         # 处理目录。
-        process_directory(input_path, output_path, args.model, args.device)
+        success = process_directory(input_path, output_path, args.model, args.device)
+    return 0 if success else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

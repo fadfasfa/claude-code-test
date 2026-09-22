@@ -302,6 +302,42 @@ def test_unchanged_publish_preserves_previous_and_recovery_previous(runtime, mon
     assert DataSnapshotClient(root / "snapshots").open_view().is_champion_complete("1")
 
 
+@pytest.mark.parametrize("fail_after_stage", [False, True])
+def test_repair_publication_keeps_verified_previous_in_recovery_and_rollback(runtime, monkeypatch, fail_after_stage):
+    root, _, binding = runtime
+    service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)
+    ranking, hero = _units(binding, root / "units")
+    service._ranking = ranking
+    first = service._publish()
+    service._heroes = {"1": hero}
+    broken = service._publish()
+    atomic_write_json(root / "snapshots/generations" / broken / "champions.json", [])
+    previous_path = root / "snapshots/previous.v2.json"
+    current_path = root / "snapshots/current.v2.json"
+    recovery_path = root / "state/data-service/cohort_recovery_point.v1.json"
+    before = {path: path.read_bytes() for path in (previous_path, current_path, recovery_path)}
+    service._heroes = {}
+    if fail_after_stage:
+        stage = service.promotion.stage_generation_state
+        def fail_stage(**kwargs):
+            stage(**kwargs)
+            raise OSError("repair stage interrupted")
+        monkeypatch.setattr(service.promotion, "stage_generation_state", fail_stage)
+        with pytest.raises(OSError, match="repair stage interrupted"):
+            service._publish()
+        assert {path: path.read_bytes() for path in before} == before
+        assert DataSnapshotClient(root / "snapshots").open_view().manifest.generation_id == first
+    else:
+        repaired = service._publish()
+        assert repaired not in {first, broken}
+        assert json.loads(previous_path.read_bytes())["generation_id"] == first
+        point = json.loads(recovery_path.read_bytes())
+        assert point["generation_id"] == repaired
+        assert point["pointers"]["generation"]["previous"]["generation_id"] == first
+        assert not DataSnapshotClient(root / "snapshots").open_view().degraded
+    assert not service.promotion.journal_path.exists()
+
+
 def test_postcommit_retention_waits_for_core_optional_and_process_workers(runtime, monkeypatch):
     root, _, _ = runtime
     service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)

@@ -277,7 +277,7 @@ class CohortPromotionStore:
             journal = self.load()
             if journal is None:
                 return
-            for role in COHORT_ROLES:
+            for role in self._journal_roles(journal):
                 self._write_role(role, journal.old_pointers[role])
             self.journal_path.unlink(missing_ok=True)
         finally:
@@ -290,17 +290,24 @@ class CohortPromotionStore:
             if journal is None:
                 return "clean"
             if journal.phase in {PromotionJournalPhase.GENERATION_PROMOTED, PromotionJournalPhase.COMMITTED}:
-                for role in COHORT_ROLES:
+                for role in self._journal_roles(journal):
                     self._write_role(role, journal.target_pointers[role])
                 result = "rolled_forward"
             else:
-                for role in COHORT_ROLES:
+                for role in self._journal_roles(journal):
                     self._write_role(role, journal.old_pointers[role])
                 result = "rolled_back"
             self.journal_path.unlink(missing_ok=True)
             return result
         finally:
             self._transaction_lock.release()
+
+    @staticmethod
+    def _journal_roles(journal: PromotionJournalV1) -> tuple[str, ...]:
+        # DTO validation admits legacy five-role journals. Restore only their
+        # own pointers, never invent/delete newer roles; generation commits last.
+        return tuple(role for role in ("catalog", "hextech", "aramkit", "blitz", "apex", "mayhem", "generation")
+                     if role in journal.old_pointers)
 
     def consistent_pointers(self) -> dict[str, dict[str, Any]]:
         journal = self.load()

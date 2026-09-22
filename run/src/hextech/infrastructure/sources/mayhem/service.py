@@ -34,6 +34,7 @@ from hextech.modules.data.source_runs import (
 )
 from hextech.modules.acquisition.common.contracts import utc_now_iso
 from hextech.modules.acquisition.mayhem.diagnostics import summarize_rejects
+from hextech.modules.acquisition.mayhem.validation import validate_mayhem_run
 from hextech.infrastructure.sources.mayhem.publisher import publish_mayhem_run
 from hextech.modules.data.catalog.versioned import load_active_catalog
 
@@ -389,27 +390,6 @@ def run_mayhem_refresh(
                 },
             )
 
-        if (
-            projection_matches
-            and upstream_revision
-            and upstream_revision == str(current_metadata.get("upstream_revision") or "")
-        ):
-            return write_mayhem_refresh_status(
-                result="success",
-                reason="not_stale",
-                raw_items=raw_items,
-                now=current,
-                extra={
-                    "success": True,
-                    "transport": transport,
-                    **_result_fields(
-                        check_status="up_to_date",
-                        upstream_revision=upstream_revision,
-                        applied_revision=current_applied,
-                    ),
-                },
-            )
-
         previous_status = load_mayhem_refresh_status()
         known_failure = previous_failure_fingerprint or str(
             previous_status.get("failure_fingerprint") or ""
@@ -452,13 +432,33 @@ def run_mayhem_refresh(
                 extra={**failure_identity, "reject_ratio": reject_ratio, "reject_report": reject_report},
             )
 
+        # A business-row hash intentionally ignores rejects/page metadata. Both
+        # reuse paths still have to establish this check's complete raw input.
+        page = raw_payload.get("page") if isinstance(raw_payload.get("page"), Mapping) else {}
+        if (raw_payload.get("max_pages", 0) != 0
+                or type(page.get("total")) is not int or page["total"] <= 0
+                or type(page.get("selected")) is not int
+                or page["selected"] != page["total"]
+                or page["selected"] != raw_items + reject_report["count"]
+                or page.get("pagination_complete") is not True):
+            return _failure_status(reason="pagination_incomplete", raw_items=raw_items, now=current,
+                extra={**failure_identity, "failure_stage": "validation", "failure_kind": "validation",
+                       "retry_after_seconds": _retry_after(transport, MAYHEM_REPEAT_INVALID_RETRY_SECONDS)})
+
+        if (projection_matches and upstream_revision
+                and upstream_revision == str(current_metadata.get("upstream_revision") or "")):
+            return write_mayhem_refresh_status(
+                result="success", reason="not_stale", raw_items=raw_items, now=current,
+                extra={"success": True, "transport": transport,
+                       **_result_fields(check_status="up_to_date", upstream_revision=upstream_revision,
+                                        applied_revision=current_applied)},
+            )
+
         previous_descriptor = ArtifactDescriptor.from_mapping(pointer["artifact"]) if pointer else None
         previous_count = previous_descriptor.record_count if previous_descriptor is not None else 0
         if previous_count and raw_items < max(1, previous_count // 2):
             return _failure_status(
-                reason="scale_regression",
-                raw_items=raw_items,
-                now=current,
+                reason="scale_regression", raw_items=raw_items, now=current,
                 extra={**failure_identity, "previous_items": previous_count},
             )
 
@@ -482,7 +482,6 @@ def run_mayhem_refresh(
                 extra={**failure_identity, "summary": summary},
             )
 
-        page = raw_payload.get("page") if isinstance(raw_payload.get("page"), Mapping) else {}
         normalized_payload = {
             "schema_version": 2,
             "source": "arammayhem",
@@ -491,23 +490,6 @@ def run_mayhem_refresh(
             "items": list(summary.get("normalized_items") or []),
         }
         applied_revision = _semantic_revision(normalized_payload)
-        if projection_matches and current_applied and applied_revision == current_applied:
-            return write_mayhem_refresh_status(
-                result="success",
-                reason="not_stale",
-                raw_items=raw_items,
-                added_items=added_items,
-                now=current,
-                extra={
-                    "success": True,
-                    "transport": transport,
-                    **_result_fields(
-                        check_status="up_to_date",
-                        upstream_revision=upstream_revision,
-                        applied_revision=applied_revision,
-                    ),
-                },
-            )
         normalized_rejects = [
             {"reason_code": str(item.get("reason") or "unknown"), **dict(item)}
             for item in (list(raw_payload.get("rejects") or []) + list(summary.get("clean_rejects") or []))
@@ -526,6 +508,19 @@ def run_mayhem_refresh(
             "pagination_complete": page.get("pagination_complete") is True,
             "merge_dry_run": {key: value for key, value in summary.items() if key not in {"merged_payload", "normalized_items"}},
         }
+        try:
+            validate_mayhem_run(normalized_payload, validation_report)
+        except ValueError as exc:
+            return _failure_status(reason=f"projection_invalid: {exc}", raw_items=raw_items, now=current,
+                extra={**failure_identity, "failure_stage": "validation", "failure_kind": "validation",
+                       "retry_after_seconds": _retry_after(transport, MAYHEM_REPEAT_INVALID_RETRY_SECONDS)})
+        if projection_matches and current_applied and applied_revision == current_applied:
+            return write_mayhem_refresh_status(
+                result="success", reason="not_stale", raw_items=raw_items, added_items=added_items, now=current,
+                extra={"success": True, "transport": transport,
+                       **_result_fields(check_status="up_to_date", upstream_revision=upstream_revision,
+                                        applied_revision=applied_revision)},
+            )
         source_data_at = (
             str(current_metadata.get("data_at") or "")
             if upstream_revision == str(current_metadata.get("upstream_revision") or "")

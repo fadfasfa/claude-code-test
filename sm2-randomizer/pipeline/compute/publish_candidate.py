@@ -619,6 +619,9 @@ def apply_candidate(
 ) -> dict[str, str]:
     candidate_root = candidate_dir or PIPELINE_TMP_PUBLISH_DIR
     app_root = target_dir or APP_DATA_DIR
+    for filename in RUNTIME_FILES:
+        if not (candidate_root / filename).is_file():
+            raise FileNotFoundError(f"Missing candidate runtime file: {candidate_root / filename}")
     candidate_meta = read_json(candidate_root / "meta.json", {})
     alignment = _version_alignment(candidate_meta)
     if alignment["aligned"] is False and not accept_version_mismatch:
@@ -632,6 +635,9 @@ def apply_candidate(
             "Hard wiki degradation detected: "
             f"{', '.join(hard_reasons)}；修复 wiki 抓取后重试，或显式带 --accept-hard-degradation 应用。"
         )
+    validation = validate_runtime_data(candidate_root, candidate_root / "runtime_validation.json")
+    if validation["summary"]["issue_count"]:
+        raise RuntimeError("Candidate validation failed; refusing to apply or clean.")
     app_root.mkdir(parents=True, exist_ok=True)
     for filename in RUNTIME_FILES:
         source = candidate_root / filename

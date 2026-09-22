@@ -157,3 +157,47 @@ def test_generation_state_rolls_back_schedule_and_recovery_before_phase_commit(t
     assert CohortPromotionStore(tmp_path).recover() == "rolled_back"
     assert _read(tmp_path / "state/data-service/refresh_schedule.v1.json") == old_schedule
     assert _read(tmp_path / "state/data-service/cohort_recovery_point.v1.json") == old_recovery
+
+
+@pytest.mark.parametrize("legacy_source", ["aramkit", "hextech"])
+@pytest.mark.parametrize("phase", ["prepared", "dependencies_promoted", "generation_promoted", "committed"])
+@pytest.mark.parametrize("operation", ["recover", "rollback"])
+def test_legacy_journal_restores_actual_roles_generation_last(
+    tmp_path: Path, monkeypatch, legacy_source: str, phase: str, operation: str,
+) -> None:
+    from hextech.contracts import PromotionJournalPhase, PromotionJournalV1
+
+    store = _write_initial_pointers(tmp_path)
+    roles = ("catalog", legacy_source, "apex", "mayhem", "generation")
+    # JSON object order must not determine dependency/commit order.
+    def pointers(label):
+        return {role: ({"current": {"current_generation_id": label}, "previous": {}}
+                       if role == "generation" else _pointer(f"{label}-{role}"))
+                for role in reversed(roles)}
+    journal = PromotionJournalV1(
+        transaction_id="legacy-promotion", phase=PromotionJournalPhase(phase),
+        created_at="2026-09-20T00:00:00Z", old_pointers=pointers("old"), target_pointers=pointers("new"),
+    )
+    atomic_write_json(store.journal_path, journal.to_dict())
+    extra_roles = set(DEPENDENCIES) - set(roles)
+    extra_bytes = {role: store.pointer_path(role).read_bytes() for role in extra_roles}
+    written = []
+    write_role = store._write_role
+    def recording_write(role, value):
+        written.append(role)
+        write_role(role, value)
+    monkeypatch.setattr(store, "_write_role", recording_write)
+
+    if operation == "rollback":
+        with store.exclusive():
+            store.rollback()
+    else:
+        assert store.recover() == ("rolled_forward" if phase in {"generation_promoted", "committed"} else "rolled_back")
+
+    expected = journal.target_pointers if operation == "recover" and phase in {"generation_promoted", "committed"} else journal.old_pointers
+    assert written == list(roles)
+    for role in roles[:-1]:
+        assert _read(store.pointer_path(role)) == expected[role]
+    assert _read(store.pointer_path("generation")) == expected["generation"]["current"]
+    assert not store.journal_path.exists()
+    assert {role: store.pointer_path(role).read_bytes() for role in extra_roles} == extra_bytes

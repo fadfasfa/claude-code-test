@@ -347,6 +347,8 @@ def _legacy_generation_ids(root: Path) -> set[str]:
     for path in generations_root.iterdir():
         if not path.is_dir():
             continue
+        if not _safe_tree(root, path):
+            raise RetentionSafetyError(f"unsafe removal tree: {path}")
         manifest = _read_object(path / "manifest.json")
         source_files = manifest.get("source_files")
         if isinstance(source_files, list) and any(
@@ -502,8 +504,37 @@ def _planned_removals(
             (category, path)
             for path in directory.iterdir()
             if path.is_dir() and path.name not in keep_names and now - _mtime(path) > minimum_age
+            and (category == "staging" or _owned_generation_manifest(root, path, category))
         )
     return planned
+
+
+def _owned_generation_manifest(root: Path, path: Path, category: str) -> bool:
+    """Age/unreachability is not ownership: unknown immutable manifests stay pinned.
+
+    Parse the persisted contract and bind its identity to the directory before
+    admitting a deletion candidate. This is not a claim that its data is usable.
+    Protected closures and reparse checks remain separate hard gates.
+    """
+    from hextech.contracts import CatalogManifestV2, DataSnapshotManifestV2
+
+    # Ownership must not be inferred by following a junction or manifest link.
+    # The pre-delete gate is repeated later to guard changes during planning.
+    if not _safe_tree(root, path):
+        raise RetentionSafetyError(f"unsafe removal tree: {path}")
+    payload = _read_object(path / "manifest.json")
+    try:
+        if type(payload.get("schema_version")) is not int:
+            return False
+        if category == "catalog_generations":
+            manifest = CatalogManifestV2.from_mapping(payload)
+            return manifest.catalog_generation_id == path.name
+        snapshot = DataSnapshotManifestV2.from_mapping(payload)
+        roles = {item.role for item in snapshot.files}
+        return (snapshot.generation_id == path.name and len(snapshot.files) == 4
+                and roles == {"champions", "champion_hextech", "overlay_hints", "identities"})
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return False
 
 
 def _empty_result(disposition: str, reason: str = "") -> dict[str, int | str]:

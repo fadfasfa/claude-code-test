@@ -1209,8 +1209,8 @@ class RefreshModeTest(unittest.TestCase):
             slow.release_all()
             slow.wait_for_finished(1)
 
-    def test_poll_sources_retries_after_pending_round_limit(self):
-        """永久不返回的来源达到挂起轮次上限后，应允许 fresh poll 重试。"""
+    def test_poll_sources_keeps_same_running_worker_after_round_limit(self):
+        """达到警告轮次也不能并发重试同源，原任务结束后才能继续。"""
 
         monitor = SmsMonitor.__new__(SmsMonitor)
         monitor._pending_polls = []
@@ -1227,11 +1227,12 @@ class RefreshModeTest(unittest.TestCase):
             self.assertTrue(slow.wait_for_calls(1))
 
             self.assertEqual(monitor.poll_sources(), [])
-            self.assertTrue(slow.wait_for_calls(2))
-            self.assertIsNot(slow.session, original_session)
+            self.assertEqual(slow.calls, 1)
+            self.assertIs(slow.session, original_session)
+            self.assertEqual(len(monitor._pending_polls), 1)
         finally:
             slow.release_all()
-            slow.wait_for_finished(2)
+            slow.wait_for_finished(1)
             monitor._reconcile_pending_polls()
 
     def test_refresh_mode_defaults_and_active_window(self):
@@ -3212,6 +3213,150 @@ class MsgNestSourceTest(unittest.TestCase):
         self.assertEqual(ms._normalize_phone("+15551234567"), "5551234567")
         self.assertEqual(ms._normalize_phone("15551234567"), "5551234567")
         self.assertEqual(ms._normalize_phone("5551234567"), "5551234567")
+
+
+class AuditRepairRegressionTest(unittest.TestCase):
+    """只使用内存配置与假会话，不接触本机账户、网络或剪贴板。"""
+
+    def _account_config(self):
+        cfg = monitor.default_config()
+        cfg["accounts"] = [{
+            "label": "synthetic", "login_email": "test@example.invalid",
+            "password": "synthetic-password", "totp_secret": "JBSWY3DPEHPK3PXP",
+            "phone": "5551234567", "phone_source_label": "old-source",
+            "email": "mail@example.invalid", "note": "keep-note",
+        }]
+        return cfg
+
+    def test_partial_account_update_preserves_unspecified_fields(self):
+        cfg = self._account_config()
+        before = dict(cfg["accounts"][0])
+        with patch("monitor.read_config_file", return_value=cfg), patch("monitor.write_config_file_atomic") as write:
+            run_config_command([
+                "upsert-account", "--label", "synthetic", "--login-email", "test@example.invalid",
+                "--phone-source-label", "new-source",
+            ], env={})
+        saved = write.call_args.args[1]["accounts"][0]
+        self.assertEqual(saved, {**before, "phone_source_label": "new-source"})
+
+    def test_account_explicit_clear_is_distinct_from_omission(self):
+        cfg = self._account_config()
+        with patch("monitor.read_config_file", return_value=cfg), patch("monitor.write_config_file_atomic") as write:
+            run_config_command([
+                "upsert-account", "--label", "synthetic", "--login-email", "test@example.invalid",
+                "--clear-password", "--clear-totp-secret", "--phone", "", "--email", "",
+            ], env={})
+        saved = write.call_args.args[1]["accounts"][0]
+        for field in ("password", "totp_secret", "phone", "email"):
+            self.assertEqual(saved[field], "")
+        self.assertEqual(saved["note"], "keep-note")
+        self.assertEqual(saved["phone_source_label"], "old-source")
+
+    def test_timeouts_do_not_disable_fixed_or_email_sources(self):
+        for source in (
+            FixedUrlSource({"label": "fake", "phone": "5551234567", "url": "https://example.invalid"},
+                           FixedReadySession(exc=monitor.requests.Timeout("synthetic"))),
+            EmailSource({"label": "fake", "email": "test@example.invalid", "provider": "icloud", "base_url": "https://example.invalid"},
+                        EmailReadySession(exc=monitor.requests.Timeout("synthetic"))),
+        ):
+            with self.subTest(kind=source.kind):
+                source.consecutive_hard_failures = 4
+                for _ in range(6):
+                    source.poll()
+                self.assertFalse(source.disabled_reason)
+                self.assertEqual(source.consecutive_hard_failures, 0)
+
+    def test_permanent_http_failures_still_disable_sources(self):
+        for source in (
+            FixedUrlSource({"label": "fake", "phone": "5551234567", "url": "https://example.invalid"},
+                           FixedReadySession(FakeTextResponse("denied", 403))),
+            EmailSource({"label": "fake", "email": "test@example.invalid", "provider": "icloud", "base_url": "https://example.invalid"},
+                        EmailReadySession(FakeJsonResponse({}, 403))),
+        ):
+            for _ in range(5):
+                source.poll()
+            self.assertTrue(source.disabled_reason)
+
+    def test_new_account_omitted_optional_fields_still_get_defaults(self):
+        with patch("monitor.read_config_file", return_value=monitor.default_config()), patch("monitor.write_config_file_atomic") as write:
+            run_config_command(["upsert-account", "--label", "new", "--login-email", "new@example.invalid"], env={})
+        saved = write.call_args.args[1]["accounts"][0]
+        for field in ("password", "totp_secret", "phone", "phone_source_label", "email", "note"):
+            self.assertEqual(saved[field], "")
+
+    def test_manual_change_waits_for_running_poll(self):
+        from concurrent.futures import Future
+        from unittest.mock import Mock
+        cfg = monitor.default_config()
+        instance = SmsMonitor(cfg)
+        source = Mock(label="fake", last_code="", history=[])
+        future = Future()
+        future.set_running_or_notify_cancel()
+        instance._pending_polls = [(source, future, instance._snapshot_source_state(source), 0)]
+        with patch.object(instance, "default_changeable_source", return_value=source), patch.object(instance, "render"), patch("monitor.msvcrt", FakeKeyboard(["n"])):
+            instance.handle_keys()
+        source.change_number.assert_not_called()
+        future.set_result(None)
+        instance._reconcile_pending_polls()
+        with patch.object(instance, "default_changeable_source", return_value=source), patch.object(instance, "render"), patch("monitor.msvcrt", FakeKeyboard(["n"])):
+            instance.handle_keys()
+        source.change_number.assert_called_once()
+
+    def test_running_poll_remains_tracked_after_round_limit(self):
+        from concurrent.futures import Future
+        source = FixedUrlSource(
+            {"label": "fake", "phone": "5551234567", "url": "https://example.invalid"},
+            FixedReadySession(FakeTextResponse("code 123456")),
+        )
+        instance = SmsMonitor.__new__(SmsMonitor)
+        instance.pending_poll_max_rounds = 1
+        instance.poll_round_timeout = 0.01
+        future = Future()
+        future.set_running_or_notify_cancel()
+        original_session = source.session
+        instance._pending_polls = [(source, future, instance._snapshot_source_state(source), 0)]
+        for _ in range(4):
+            skip, codes = instance._reconcile_pending_polls()
+            self.assertEqual(skip, {id(source)})
+            self.assertEqual(codes, [])
+            self.assertEqual(len(instance._pending_polls), 1)
+            self.assertIs(source.session, original_session)
+        future.set_result(source.poll())
+        _, codes = instance._reconcile_pending_polls()
+        self.assertEqual(codes, [("fake", "123456")])
+        self.assertEqual(instance._pending_polls, [])
+
+    def test_msgnest_change_refreshes_phone_before_reporting_success(self):
+        session = MsgNestFakeSession()
+        session.queue_redeem({"allocation": {"id": "new-id", "phone": "+15559876543"}, "claimToken": "new-fake"})
+        session.queue_allocation({"id": "new-id", "phone": "+15559876543"})
+        original_post = session.post
+
+        def post(url, **kwargs):
+            if url.endswith("/replace-number"):
+                return MsgNestResponse({})
+            return original_post(url, **kwargs)
+
+        session.post = post
+        source = MsgNestSource({"label": "fake", "cdk": "FAKE", "alloc_id": "old-id",
+                                "claim_token": "old-fake", "phone": "5551234567"}, session)
+        source.change_number()
+        self.assertEqual(source.copy_number, "5559876543")
+        self.assertEqual(source.alloc_id, "new-id")
+        self.assertEqual(source.claim_token, "new-fake")
+        self.assertEqual(source.status, "已换号")
+
+    def test_msgnest_successful_replace_with_failed_refresh_hides_old_phone(self):
+        class Session:
+            def post(self, url, **kwargs):
+                return MsgNestResponse({}, 200 if url.endswith("/replace-number") else 503)
+
+        source = MsgNestSource({"label": "fake", "cdk": "FAKE", "alloc_id": "old-id",
+                                "claim_token": "old-fake", "phone": "5551234567"}, Session())
+        source.change_number()
+        self.assertEqual(source.copy_number, "")
+        self.assertEqual(source.claim_token, "")
+        self.assertNotEqual(source.status, "已换号")
 
 
 if __name__ == "__main__":

@@ -293,6 +293,39 @@ class FandomRevisionIncrementalTests(unittest.TestCase):
 
 
 class WikiRunAssetSelectionTests(unittest.TestCase):
+    def test_placeholder_reuse_preserves_manual_action_until_real_recovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            entry = {'icon_path': 'talents/test/c1r1_example.png', 'grid_label': '1/1',
+                     'class_name': '战术兵', 'talent_name_raw': 'Example',
+                     'source_page': 'https://example.test', 'icon_url': 'https://example.test/icon.png'}
+            with patch.object(scrape_perks, 'APP_ASSETS_DIR', root), \
+                 patch.object(scrape_perks, 'download_file', return_value=(False, 'offline', 3)):
+                first_actions = []
+                scrape_perks.reuse_or_download_talent(None, dict(entry), force_download=False, manual_actions=first_actions)
+                self.assertEqual(len(first_actions), 1)
+                retry_actions = []
+                retry = scrape_perks.reuse_or_download_talent(None, dict(entry), force_download=False, manual_actions=retry_actions)
+                self.assertEqual(len(retry_actions), 1)
+                self.assertTrue(retry['manual_action_required'])
+                merged = scrape_perks.merge_manual_action_items(first_actions, retry_actions, requested_class_titles=['Tactical'])
+                self.assertEqual(len(merged), 1)
+                svg_path = (root / entry['icon_path']).with_suffix('.svg')
+                svg_path.write_text(svg_path.read_text(encoding='utf-8').replace(' data-sm2-placeholder="true"', ''), encoding='utf-8')
+                self.assertTrue(scrape_perks.is_placeholder_icon(svg_path))
+                svg_path.write_text('<svg xmlns="http://www.w3.org/2000/svg"><path d="M1 1L2 2"/></svg>', encoding='utf-8')
+                real_svg_actions = []
+                real_svg = scrape_perks.reuse_or_download_talent(None, dict(entry), force_download=False, manual_actions=real_svg_actions)
+                self.assertEqual(real_svg['download_status'], 'reused-local')
+                self.assertFalse(real_svg_actions)
+            # The successfully supplied PNG is a real local recovery, not a placeholder.
+            (root / entry['icon_path']).write_bytes(b'local PNG fixture')
+            with patch.object(scrape_perks, 'APP_ASSETS_DIR', root):
+                recovered_actions = []
+                result = scrape_perks.reuse_or_download_talent(None, dict(entry), force_download=False, manual_actions=recovered_actions)
+                self.assertEqual(result['download_status'], 'reused-local')
+                self.assertFalse(recovered_actions)
+
     def namespace(self, **overrides: object) -> argparse.Namespace:
         values = {
             "skip_structure": False,

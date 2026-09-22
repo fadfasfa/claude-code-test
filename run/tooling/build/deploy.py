@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import time
 from dataclasses import dataclass
@@ -157,7 +158,21 @@ def validate_install_dir(install_dir: Path) -> Path:
     raw = Path(install_dir).expanduser()
     if not raw.is_absolute():
         raise DeploymentError("部署目录必须是绝对路径")
-    target = raw.resolve(strict=False)
+    # resolve() 会丢失原路径的链接身份；lstat 也能识别目标已不存在的链接。
+    # 允许创建不存在的普通目录，但任何无法核验的现有路径都必须失败闭合。
+    for component in (raw, *raw.parents):
+        try:
+            metadata = component.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise DeploymentError(f"无法核验部署路径：{component}") from exc
+        if stat.S_ISLNK(metadata.st_mode) or getattr(metadata, "st_file_attributes", 0) & 0x400:
+            raise DeploymentError(f"部署路径不得包含符号链接或 reparse point：{component}")
+    try:
+        target = raw.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise DeploymentError(f"无法核验部署路径：{raw}") from exc
     if target.name.casefold() != STABLE_INSTALL_NAME.casefold():
         raise DeploymentError(f"稳定部署目录名必须是 {STABLE_INSTALL_NAME}")
     if target == Path(target.anchor):
@@ -1258,6 +1273,7 @@ def deploy_release(
     rollback = target.with_name(f".{target.name}.rollback-{os.getpid()}-{stamp}")
     previous = target.with_name(f"{target.name}.previous")
     previous_backup = target.with_name(f".{target.name}.previous-backup-{os.getpid()}-{stamp}")
+    preserve_recovery_state = False
     try:
         lock = FileLock(str(lock_file), timeout=0)
         with lock:
@@ -1346,7 +1362,14 @@ def deploy_release(
                     try:
                         shutdown_existing_install(target / APP_EXE_NAME, timeout=3.0)
                     except Exception as cleanup_exc:
-                        rollback_errors.append(f"关闭新版本失败：{cleanup_exc}")
+                        # 新进程可能仍在写共享运行态。此时不能删目录、恢复指针/
+                        # 诊断设置或重启旧版；连 finally 清理也必须保留恢复现场。
+                        preserve_recovery_state = True
+                        raise DeploymentError(
+                            f"部署失败且回滚已停止：deploy={exc}; 关闭新版本失败：{cleanup_exc}; "
+                            f"恢复现场已保留：target={target}; rollback={rollback}; "
+                            f"previous={previous}; previous_backup={previous_backup}"
+                        ) from exc
                     try:
                         _remove_tree_for_rollback(target)
                     except Exception as cleanup_exc:
@@ -1438,7 +1461,8 @@ def deploy_release(
     except Timeout as exc:
         raise DeploymentError(f"已有部署任务持有锁：{lock_file}") from exc
     finally:
-        _remove_tree(candidate)
+        if not preserve_recovery_state:
+            _remove_tree(candidate)
 
 
 def main(argv: list[str] | None = None) -> int:

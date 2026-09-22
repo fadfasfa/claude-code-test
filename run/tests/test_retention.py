@@ -31,6 +31,25 @@ def _directory(path: Path, *, modified_at: datetime = OLD) -> Path:
     return path
 
 
+def _owned_manifest(directory: Path, *, catalog: bool = False) -> None:
+    """Contract-shaped ownership evidence for deletion-policy-only fixtures."""
+    if catalog:
+        payload = {"schema_version": 2, "catalog_generation_id": directory.name,
+            "created_at": OLD.isoformat(), "content_sha256": "a" * 64,
+            "files": [{"role": role, "relative_path": filename, "sha256": "b" * 64,
+                       "record_count": 1, "content_schema_version": 2, "size": 1}
+                      for role, filename in (("champions", "英雄目录.v1.json"),
+                                             ("augments", "海克斯资源目录.v1.json"), ("versions", "hero_version.txt"))]}
+    else:
+        payload = {"schema_version": 2, "generation_id": directory.name,
+            "created_at": OLD.isoformat(), "content_fingerprint": "a" * 64,
+            "source_files": [], "champion_count": 1, "augment_count": 1, "stat_record_count": 1,
+            "files": [{"role": role, "relative_path": role + ".json", "sha256": "b" * 64, "size": 1}
+                      for role in ("champions", "champion_hextech", "overlay_hints", "identities")]}
+    _write_json(directory / "manifest.json", payload)
+    os.utime(directory, (OLD.timestamp(), OLD.timestamp()))
+
+
 def _source_run(root: Path, source: str, run_id: str, *, success: bool) -> Path:
     path = _directory(root / "sources" / source / "runs" / run_id)
     _write_json(
@@ -261,7 +280,7 @@ def test_retention_protects_recovery_point_generation_and_direct_dependencies(tm
 def test_retention_removes_only_expired_unprotected_catalog_generation_and_staging(tmp_path: Path) -> None:
     _write_json(tmp_path / "catalog" / "current.v2.json", {"catalog_generation_id": "catalog-current"})
     _directory(tmp_path / "catalog" / "generations" / "catalog-current")
-    _directory(tmp_path / "catalog" / "generations" / "catalog-old")
+    _owned_manifest(_directory(tmp_path / "catalog" / "generations" / "catalog-old"), catalog=True)
     recent_catalog = _directory(tmp_path / "catalog" / "generations" / "catalog-recent")
     recent_timestamp = (NOW - timedelta(days=2)).timestamp()
     os.utime(recent_catalog, (recent_timestamp, recent_timestamp))
@@ -370,7 +389,7 @@ def test_retention_fails_closed_for_malformed_protected_source_manifest(tmp_path
 def test_postcommit_retention_protects_all_live_generations_and_removes_orphan(tmp_path: Path) -> None:
     for generation_id in ("current", "previous", "recovery", "host-session", "orphan"):
         directory = _directory(tmp_path / "snapshots" / "generations" / generation_id)
-        _write_json(directory / "manifest.json", {"source_files": []})
+        _owned_manifest(directory)
         os.utime(directory, (OLD.timestamp(), OLD.timestamp()))
     _write_json(tmp_path / "snapshots" / "current.v2.json", {"current_generation_id": "current"})
     _write_json(tmp_path / "snapshots" / "previous.v2.json", {"generation_id": "previous"})
@@ -419,7 +438,7 @@ def test_retention_protects_unpublished_staging_unit_and_never_scans_raw_cache(t
 
 def test_retention_refuses_reparse_or_junction_removal_target(monkeypatch, tmp_path: Path) -> None:
     orphan = _directory(tmp_path / "snapshots" / "generations" / "unsafe-orphan")
-    _write_json(orphan / "manifest.json", {"source_files": []})
+    _owned_manifest(orphan)
     os.utime(orphan, (OLD.timestamp(), OLD.timestamp()))
     original = retention._path_has_reparse
     monkeypatch.setattr(
@@ -452,7 +471,7 @@ def test_current_source_pointer_protects_its_bound_catalog(tmp_path: Path) -> No
 
 def test_retention_reports_delete_failure_without_claiming_completion(monkeypatch, tmp_path: Path) -> None:
     orphan = _directory(tmp_path / "snapshots" / "generations" / "orphan")
-    _write_json(orphan / "manifest.json", {"source_files": []})
+    _owned_manifest(orphan)
     os.utime(orphan, (OLD.timestamp(), OLD.timestamp()))
     monkeypatch.setattr(retention.shutil, "rmtree", lambda _path: (_ for _ in ()).throw(OSError("disk busy")))
 
@@ -461,3 +480,61 @@ def test_retention_reports_delete_failure_without_claiming_completion(monkeypatc
     assert result["disposition"] == "failed"
     assert result["reason"] == "disk busy"
     assert orphan.is_dir()
+
+
+@pytest.mark.parametrize("category", ["snapshots", "catalog"])
+@pytest.mark.parametrize("bad_manifest", ["missing", "invalid_json", "array", "empty", "unknown_schema", "wrong_identity"])
+def test_retention_preserves_unidentified_manifest_but_collects_owned_history(tmp_path, category, bad_manifest):
+    from hextech.modules.data.generation import DataSnapshotPublisher
+    from test_snapshot_v3 import _payload
+    from test_cohort_seed import _write_catalog
+
+    if category == "snapshots":
+        publisher = DataSnapshotPublisher(tmp_path / category)
+        old = publisher.publish(_payload())
+        valid = tmp_path / category / "generations" / old.generation_id
+        publisher.current_path.unlink()
+    else:
+        valid, _, _ = _write_catalog(tmp_path)
+        (tmp_path / category / "current.v2.json").unlink()
+    manifest_payload = json.loads((valid / "manifest.json").read_text(encoding="utf-8"))
+    unknown = _directory(tmp_path / category / "generations" / "unknown-history")
+    if bad_manifest == "invalid_json":
+        (unknown / "manifest.json").write_text("{", encoding="utf-8")
+    elif bad_manifest != "missing":
+        payload = [] if bad_manifest == "array" else {} if bad_manifest == "empty" else manifest_payload
+        if bad_manifest == "unknown_schema":
+            payload = {**manifest_payload, "schema_version": 999}
+        _write_json(unknown / "manifest.json", payload)
+    for directory in (valid, unknown):
+        os.utime(directory, (OLD.timestamp(), OLD.timestamp()))
+    before = {path.name: path.read_bytes() for path in unknown.iterdir() if path.is_file()}
+
+    result = apply_cohort_retention(tmp_path, workers_idle=True, now=NOW)
+
+    assert result["disposition"] == "completed"
+    assert not valid.exists()
+    assert unknown.is_dir()
+    assert {path.name: path.read_bytes() for path in unknown.iterdir() if path.is_file()} == before
+
+
+@pytest.mark.parametrize("category", ["snapshots", "catalog"])
+@pytest.mark.parametrize("link_location", ["directory", "manifest"])
+def test_retention_rejects_reparse_before_reading_ownership_manifest(tmp_path, monkeypatch, category, link_location):
+    directory = _directory(tmp_path / category / "generations" / "unsafe-orphan")
+    _owned_manifest(directory, catalog=category == "catalog")
+    manifest = directory / "manifest.json"
+    link = directory if link_location == "directory" else manifest
+    original_reparse = retention._path_has_reparse
+    monkeypatch.setattr(retention, "_path_has_reparse", lambda path: path == link or original_reparse(path))
+    read_text = Path.read_text
+    def guarded_read(path, *args, **kwargs):
+        if path == manifest:
+            pytest.fail("unsafe manifest was read before the reparse gate")
+        return read_text(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", guarded_read)
+
+    result = apply_cohort_retention(tmp_path, workers_idle=True, now=NOW)
+
+    assert result["disposition"] == "skipped_unsafe_state"
+    assert directory.is_dir()

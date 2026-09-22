@@ -6,6 +6,7 @@
 import os
 import sys
 import argparse
+import re
 import tempfile
 from pathlib import Path
 
@@ -33,7 +34,7 @@ def download_subtitles_from_url(url, output_dir, languages=None):
         'skip_download': True,
         'writesubtitles': True,
         'subtitleslangs': languages,
-        'subtitlesformat': 'srt/best',
+        'subtitlesformat': 'srt/vtt/best',
         'outtmpl': str(output_dir / '%(title)s.%(ext)s'),
         'quiet': True,
         'no_warnings': True,
@@ -61,31 +62,37 @@ def download_subtitles_from_url(url, output_dir, languages=None):
 
 
 def convert_srt_to_markdown(srt_path):
-    # 将 SRT 转为 Markdown。
+    # 支持 SRT 和 WebVTT；未知格式或无有效正文不得作为成功结果。
     try:
-        with open(srt_path, 'r', encoding='utf-8') as f:
+        if Path(srt_path).suffix.lower() not in {".srt", ".vtt"}:
+            return None
+        with open(srt_path, 'r', encoding='utf-8-sig') as f:
             content = f.read()
-
-        markdown_content = "# 视频字幕\n\n"
-
-        # 解析 SRT。
-        blocks = content.strip().split('\n\n')
+        content = content.replace('\r\n', '\n').replace('\r', '\n')
+        paragraphs = []
+        stamp = r"(?:\d{2,}:)?\d{2}:\d{2}[.,]\d{3}"
+        timing = re.compile(rf"^({stamp})\s+-->\s+({stamp})(?:\s+.*)?$")
+        blocks = re.split(r'\n\s*\n', content.strip())
         for block in blocks:
             lines = block.strip().split('\n')
-            if len(lines) >= 3:
-                timestamp_line = lines[1]
-                if ' --> ' in timestamp_line:
-                    start_time, end_time = timestamp_line.split(' --> ')
-                    start_formatted = convert_srt_timestamp(start_time)
-                    end_formatted = convert_srt_timestamp(end_time)
-
-                    text_lines = lines[2:]
-                    text = ' '.join(text_lines).strip()
-
-                    if text:
-                        markdown_content += f"## [{start_formatted} - {end_formatted}]\n\n{text}\n\n"
-
-        return markdown_content
+            if not block.strip():
+                continue
+            if Path(srt_path).suffix.lower() == ".vtt" and (
+                re.match(r"^(?:WEBVTT|NOTE)(?:\s|$)", lines[0]) or lines[0] in {"STYLE", "REGION"}
+            ):
+                continue
+            # WebVTT 的 cue id 可省略；SRT 的序号在时间行之前。
+            time_index = 0 if "-->" in lines[0] else 1
+            if time_index >= len(lines):
+                return None
+            match = timing.fullmatch(lines[time_index].strip())
+            if not match:
+                return None
+            text = ' '.join(lines[time_index + 1:]).strip()
+            if text:
+                start, end = (convert_srt_timestamp(value) for value in match.groups())
+                paragraphs.append(f"## [{start} - {end}]\n\n{text}\n\n")
+        return "# 视频字幕\n\n" + ''.join(paragraphs) if paragraphs else None
 
     except Exception as e:
         print(f"将 SRT 转换为 Markdown 时出错： {e}")
@@ -94,9 +101,8 @@ def convert_srt_to_markdown(srt_path):
 
 def convert_srt_timestamp(srt_time):
     # 将 SRT 时间戳转为统一格式。
-    if ',' in srt_time:
-        return srt_time.replace(',', '.')
-    return srt_time
+    stamp = srt_time.replace(',', '.')
+    return f"00:{stamp}" if stamp.count(':') == 1 else stamp
 
 
 def download_audio_from_url(url, output_dir):
@@ -166,37 +172,30 @@ def process_online_video(url, output_dir, model_size="base", device="cpu", langu
         print(f"未找到官方字幕：{result}")
         print("正在下载音频流以进行转写...")
 
-        # 下载音频流。
-        success, result = download_audio_from_url(url, output_dir)
-        if not success:
-            print(f"音频下载失败：{result}")
-            return False
-
-        audio_path = result
-        print(f"音频已下载：{audio_path}")
-
-        # 使用 faster-whisper 转录。
-        transcribe_audio, segments_to_markdown = load_transcription_helpers()
-        segments = transcribe_audio(audio_path, model_size, device)
-
-        if not segments:
-            print("音频转写失败")
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
-            return False
-
-        # 生成 Markdown。
-        markdown_content = segments_to_markdown(segments)
-
-        md_filename = Path(audio_path).stem + '.md'
-        md_path = output_dir / md_filename
-
-        with open(md_path, 'w', encoding='utf-8') as f:
-            f.write(markdown_content)
-
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
-
+        # 下载及转写失败也只清理本次唯一目录，不覆盖/删除输出目录既有音频。
+        with tempfile.TemporaryDirectory(prefix=".subtitle-audio-", dir=output_dir) as temporary:
+            try:
+                success, result = download_audio_from_url(url, Path(temporary))
+                if not success:
+                    print(f"音频下载失败：{result}")
+                    return False
+                audio_path = Path(result)
+                if not audio_path.resolve().is_relative_to(Path(temporary).resolve()):
+                    print("音频下载结果不在本次临时目录，已停止处理")
+                    return False
+                print(f"音频已下载：{audio_path}")
+                transcribe_audio, segments_to_markdown = load_transcription_helpers()
+                segments = transcribe_audio(str(audio_path), model_size, device)
+                if not segments:
+                    print("音频转写失败")
+                    return False
+                markdown_content = segments_to_markdown(segments)
+                md_path = output_dir / (audio_path.stem + '.md')
+                with open(md_path, 'w', encoding='utf-8') as f:
+                    f.write(markdown_content)
+            except Exception as e:
+                print(f"音频处理失败：{e}")
+                return False
         print(f"处理成功：{url} -> {md_path}")
         return True
 

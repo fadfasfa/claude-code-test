@@ -20,7 +20,7 @@ $ErrorActionPreference = "Stop"
 # 解析当前 Git 仓库根目录，失败时立即终止。
 function Resolve-RepoRoot {
   $root = git rev-parse --show-toplevel 2>$null
-  if (-not $root) {
+  if ($LASTEXITCODE -ne 0 -or -not $root) {
     throw "未在 Git 仓库内，无法解析 repo root。"
   }
   return (Resolve-Path $root).Path
@@ -58,7 +58,7 @@ function Get-DefaultBase {
     return ($current -replace '^refs/heads/','').Trim()
   }
   $hash = git -C $RepoRoot rev-parse --short HEAD 2>$null
-  if (-not [string]::IsNullOrWhiteSpace($hash)) {
+  if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($hash)) {
     return $hash.Trim()
   }
   throw "无法解析默认 base 分支，请通过 -Base 指定。"
@@ -68,13 +68,14 @@ function Get-DefaultBase {
 function Parse-WorktreeList {
   param([string]$RepoRoot)
   $raw = git -C $RepoRoot worktree list --porcelain
+  if ($LASTEXITCODE -ne 0) { throw "无法读取 worktree 列表。" }
   $result = @()
   $entry = $null
 
   foreach ($line in $raw) {
     if ($line -match '^worktree\s+(?<path>.+)$') {
       if ($entry) { $result += $entry }
-      $entry = @{ Path = $matches.path.Trim(); Branch = $null; Detached = $false }
+      $entry = @{ Path = $matches.path.Trim(); Branch = $null; Detached = $false; Protected = $false }
       continue
     }
     if (-not $entry) { continue }
@@ -84,6 +85,7 @@ function Parse-WorktreeList {
     if ($line -match '^detached$') {
       $entry.Detached = $true
     }
+    if ($line -match '^(locked(?:\s|$)|bare$)') { $entry.Protected = $true }
   }
   if ($entry) { $result += $entry }
   return $result
@@ -92,15 +94,60 @@ function Parse-WorktreeList {
 # 确认工作树无未提交修改，避免误删在途工作。
 function Test-Clean {
   param([string]$Path)
-  $status = git -C $Path status --porcelain 2>$null
+  $status = git -C $Path status --porcelain --untracked-files=all 2>$null
+  if ($LASTEXITCODE -ne 0) { throw "无法确认工作树状态：$Path" }
   $items = @($status | Where-Object { $_ -match '\S' })
   return ($items.Count -eq 0)
+}
+
+# 只枚举文件名；用原始 stdout 保留 NUL 和合法文件名中的空白。
+function Test-SensitiveIgnored {
+  param([string]$Path)
+  $process = [Diagnostics.Process]::new()
+  $process.StartInfo.FileName = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  $process.StartInfo.Arguments = 'ls-files --others --ignored --exclude-standard -z'
+  $process.StartInfo.WorkingDirectory = $Path
+  $process.StartInfo.UseShellExecute = $false
+  $process.StartInfo.CreateNoWindow = $true
+  $process.StartInfo.RedirectStandardOutput = $true
+  $process.StartInfo.RedirectStandardError = $true
+  $process.StartInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false, $true)
+  try {
+    if (-not $process.Start()) { throw 'ignored-enumeration-failed' }
+    $outputTask = $process.StandardOutput.ReadToEndAsync()
+    $errorTask = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    $names = $outputTask.GetAwaiter().GetResult()
+    $null = $errorTask.GetAwaiter().GetResult()
+    if ($process.ExitCode -ne 0 -or ($names.Length -gt 0 -and -not $names.EndsWith([string][char]0))) {
+      throw 'ignored-enumeration-failed'
+    }
+    if ($names.Length -eq 0) { return $false }
+    foreach ($name in $names.Substring(0, $names.Length - 1).Split([char]0)) {
+      # Git 对嵌套仓库可能只返回目录项；不得递归补查或当作已列出全部叶文件。
+      if ($name.Length -eq 0 -or $name.EndsWith('/') -or $name.EndsWith('\')) {
+        throw 'ignored-enumeration-incomplete'
+      }
+      try { $item = Get-Item -LiteralPath (Join-Path $Path $name) -Force -ErrorAction Stop }
+      catch { throw 'ignored-enumeration-incomplete' }
+      if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'ignored-enumeration-incomplete'
+      }
+      if ($name -match '(?i)(^|/)(\.env(?:\.[^/]*)?|auth\.json|local\.yaml|proxies\.json|accounts\.json|\.git-credentials|\.?(?:credentials?|secrets?|tokens?|cookies?|api[-_]?keys?|access[-_]?tokens?|refresh[-_]?tokens?|login[-_]?state|storage[-_]?state)(?:[._-][^/]*)?|Login Data|Local State)(/|$)' -or
+          $name -match '(?i)(^|/)sms-monitor/(config\.json[^/]*|private-import\.txt[^/]*)$') {
+        return $true
+      }
+    }
+    return $false
+  }
+  finally { $process.Dispose() }
 }
 
 # 检查分支是否已被 base 包含，作为可清理前提。
 function Get-MergeState {
   param([string]$RepoRoot,[string]$Branch,[string]$Base)
   git -C $RepoRoot merge-base --is-ancestor $Branch $Base | Out-Null
+  if ($LASTEXITCODE -notin @(0, 1)) { throw "无法确认分支合并状态：$Branch" }
   return ($LASTEXITCODE -eq 0)
 }
 
@@ -125,6 +172,10 @@ try {
       $skips += [PSCustomObject]@{ Path = $wt.Path; Reason = "主工作树" }
       continue
     }
+    if ($wt.Protected) {
+      $skips += [PSCustomObject]@{ Path = $wt.Path; Reason = "locked/bare 工作树" }
+      continue
+    }
     if ($wt.Detached -or -not $wt.Branch) {
       $skips += [PSCustomObject]@{ Path = $wt.Path; Reason = "detached HEAD" }
       continue
@@ -132,6 +183,10 @@ try {
     $branch = ($wt.Branch -replace '^refs/heads/','').Trim()
     if ([string]::IsNullOrWhiteSpace($branch)) {
       $skips += [PSCustomObject]@{ Path = $wt.Path; Reason = "分支不可解析" }
+      continue
+    }
+    if ($branch -match '^(main|master|develop|dev|release/.*|hotfix/.*|prod/.*|codex/feat/xiangqi-local)$') {
+      $skips += [PSCustomObject]@{ Path = $wt.Path; Reason = "protected branch"; Branch = $branch }
       continue
     }
 
@@ -143,6 +198,10 @@ try {
 
     if (-not (Test-Clean -Path $wt.Path)) {
       $skips += [PSCustomObject]@{ Path = $wt.Path; Reason = "dirty"; Branch = $branch }
+      continue
+    }
+    if (Test-SensitiveIgnored -Path $wt.Path) {
+      $skips += [PSCustomObject]@{ Path = $wt.Path; Reason = "sensitive ignored path"; Branch = $branch }
       continue
     }
 
@@ -178,6 +237,12 @@ try {
   }
 
   foreach ($item in $candidates) {
+    $currentBranch = git -C $item.Path symbolic-ref -q HEAD
+    if ($LASTEXITCODE -ne 0 -or $currentBranch -ne "refs/heads/$($item.Branch)" -or
+        -not (Test-Clean -Path $item.Path) -or (Test-SensitiveIgnored -Path $item.Path) -or
+        -not (Get-MergeState -RepoRoot $repoRoot -Branch $item.Branch -Base $baseRef)) {
+      throw "清理前状态发生变化，保留工作树：$($item.Path)"
+    }
     git -C $repoRoot worktree remove $item.Path
     if ($LASTEXITCODE -ne 0) {
       throw "工作树移除失败：$($item.Path)"
@@ -187,7 +252,6 @@ try {
       throw "分支删除失败：$($item.Branch)"
     }
   }
-  git -C $repoRoot worktree prune
   Write-Host "已执行清理：$($candidates.Count) 个 worktree 与分支。"
   git -C $repoRoot worktree list
 }

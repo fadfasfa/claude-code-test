@@ -1393,12 +1393,17 @@ def build_config_parser():
     add_common(account_parser)
     account_parser.add_argument("--label", required=True)
     account_parser.add_argument("--login-email", required=True)
-    account_parser.add_argument("--password-env")
-    account_parser.add_argument("--totp-secret-env")
-    account_parser.add_argument("--phone", default="")
-    account_parser.add_argument("--phone-source-label", default="")
-    account_parser.add_argument("--email", default="")
-    account_parser.add_argument("--note", default="")
+    password_input = account_parser.add_mutually_exclusive_group()
+    password_input.add_argument("--password-env")
+    password_input.add_argument("--clear-password", action="store_true", help="显式清空已保存密码")
+    totp_input = account_parser.add_mutually_exclusive_group()
+    totp_input.add_argument("--totp-secret-env")
+    totp_input.add_argument("--clear-totp-secret", action="store_true", help="显式清空已保存 TOTP 密钥")
+    # None 表示未提供，空字符串表示明确清空，不能把局部更新当成整项替换。
+    account_parser.add_argument("--phone")
+    account_parser.add_argument("--phone-source-label")
+    account_parser.add_argument("--email")
+    account_parser.add_argument("--note")
 
     import_parser = subparsers.add_parser("import-freeform")
     add_common(import_parser)
@@ -1584,21 +1589,25 @@ def run_config_command(
     if args.command == "upsert-account":
         cfg = read_config_file(args.config, allow_missing=True)
         cfg["accounts"] = normalize_accounts(cfg.get("accounts", []))
-        password = env_value(env, args.password_env, "账户密码") if args.password_env else ""
-        totp_secret = (
-            env_value(env, args.totp_secret_env, "TOTP secret") if args.totp_secret_env else ""
-        )
+        existing = next((item for item in cfg["accounts"] if item["label"] == args.label.strip()), {})
         item = {
+            **existing,
             "label": args.label.strip(),
             "login_email": args.login_email.strip(),
-            "password": password,
-            "totp_secret": totp_secret,
-            "phone": args.phone.strip(),
-            "phone_source_label": args.phone_source_label.strip(),
-            "email": args.email.strip(),
-            "note": args.note.strip(),
         }
-        normalize_accounts([item])
+        for field in ("phone", "phone_source_label", "email", "note"):
+            value = getattr(args, field)
+            if value is not None:
+                item[field] = value.strip()
+        if args.password_env:
+            item["password"] = env_value(env, args.password_env, "账户密码")
+        elif args.clear_password:
+            item["password"] = ""
+        if args.totp_secret_env:
+            item["totp_secret"] = env_value(env, args.totp_secret_env, "TOTP secret")
+        elif args.clear_totp_secret:
+            item["totp_secret"] = ""
+        item = normalize_accounts([item])[0]
         status = upsert_by_label(cfg["accounts"], item)
         write_config_file_atomic(args.config, cfg)
         return safe_result(args.label, "account", True, status, "账户档案已录入")
@@ -2635,8 +2644,24 @@ class MsgNestSource:
             self.note = f"换号失败：{e.safe_message}"
             return
         self.last_code = ""
-        self.status = "已换号"
-        self.note = "已换号（需重新兑换取号）"
+        # 服务端已经接受换号，旧号码不得继续展示或复制。清空旧绑定并重新兑换，
+        # 即使刷新失败，下轮 poll 的 ensure_token 也会继续取新绑定。
+        self.phone = ""
+        self.alloc_id = ""
+        self.claim_token = ""
+        self.expected_phone_tail = ""
+        self.expires_at = ""
+        self.status = "换号后等待刷新"
+        self._persist_state()
+        try:
+            self.verify()
+        except MsgNestApiError as e:
+            self.status = "换号后等待刷新"
+            self.note = f"换号请求已接受，号码刷新失败：{e.safe_message}"
+            return
+        self._persist_state()
+        self.status = "已换号" if self.phone else "换号后等待刷新"
+        self.note = "已换号" if self.phone else "换号请求已接受，尚未返回新号码"
 
     def expire_text(self):
         return str(self.expires_at)[:19] if self.expires_at else "-"
@@ -2703,6 +2728,12 @@ class FixedUrlSource:
                     # 5xx 或其他 4xx 视为临时，不累计
                     self.consecutive_hard_failures = 0
                 return
+        except requests.Timeout:
+            self.last_checked = now_hms()
+            self.status = "请求超时"
+            self.note = "稍后重试"
+            self.consecutive_hard_failures = 0
+            return
         except requests.RequestException as e:
             self.last_checked = now_hms()
             self.status = "网络异常"
@@ -2812,6 +2843,12 @@ class EmailSource:
                     self.consecutive_hard_failures = 0
                 return
             payload = resp.json()
+        except requests.Timeout:
+            self.last_checked = now_hms()
+            self.status = "请求超时"
+            self.note = "稍后重试"
+            self.consecutive_hard_failures = 0
+            return
         except requests.RequestException as e:
             self.last_checked = now_hms()
             self.status = "网络异常"
@@ -2960,7 +2997,7 @@ class SmsMonitor:
         self._digit_buffer = ""
         self._digit_deadline = 0.0
         # 上一轮超时、尚未完成的 worker：下一轮开始时结算，迟到的验证码补复制，
-        # 仍未完成的短期保留；超过保留轮次后允许 fresh retry，避免来源永久下线。
+        # 仍未完成的继续保留；运行中的任务不可取消，不得并发重试同一来源。
         self._pending_polls: list = []
         self.pending_poll_max_rounds = max(1, int(cfg.get("pending_poll_max_rounds", 3)))
         # 每个 pollable 持有独立 requests.Session，避免多 worker 并发复用同一
@@ -3209,6 +3246,10 @@ class SmsMonitor:
                     self.note = "当前没有可换号来源"
                     self.render()
                     continue
+                if any(record[0] is source for record in self._pending_polls):
+                    self.note = f"{source.label} 仍有轮询待完成或结算，请稍后再换号"
+                    self.render()
+                    continue
                 self.note = f"{source.label} 手动换号中..."
                 self.render()
                 source.change_number()
@@ -3372,7 +3413,7 @@ class SmsMonitor:
                 if future not in done:
                     future.cancel()
                     self.mark_poll_timeout(source)
-                    # 结转到下一轮结算；快照用于异常完成路径的回滚，轮次用于避免永久跳过。
+                    # 结转到下一轮结算；快照用于异常回滚，轮次只控制长时间等待提示。
                     self._pending_polls.append((source, future, snapshots[id(source)], 0))
                     continue
                 try:
@@ -3404,9 +3445,8 @@ class SmsMonitor:
         - 已完成的 worker 若拿到了新验证码，加入 ``late_codes`` 本轮补复制
           （其 ``last_code`` 已由 worker 正确写入，无需回滚）；
         - 已完成但未返回新码却改动了 ``last_code`` 的异常路径，回滚防污染；
-        - 仍未完成的 worker 不回滚，避免和仍在运行的线程并发改同一个
-          ``history``；短期内加入 ``skip_ids``，达到保留轮次上限后停止追踪并
-          允许本轮 fresh retry，避免单个挂死来源永久下线。
+        - 仍未完成的 worker 不回滚，持续加入 ``skip_ids``，避免同源并发写
+          ``history``；达到警告轮次后仍保留 future，迟到结果不能丢失。
         """
 
         pending = getattr(self, "_pending_polls", None) or []
@@ -3423,12 +3463,9 @@ class SmsMonitor:
             if not future.done():
                 next_rounds = pending_rounds + 1
                 if next_rounds >= max_rounds:
-                    future.cancel()
-                    self._refresh_poll_session(source)
                     self.mark_poll_timeout(source)
-                    source.note = f"轮询长时间未返回，已重试（>{max_rounds}轮）"
-                    continue
-                still_pending.append((source, future, snap, next_rounds))
+                    source.note = f"轮询长时间未返回，继续等待原任务（>={max_rounds}轮）"
+                still_pending.append((source, future, snap, min(next_rounds, max_rounds)))
                 skip_ids.add(id(source))
                 continue
             try:
@@ -3452,14 +3489,6 @@ class SmsMonitor:
             return source, future, snap, 0
         source, future, snap, pending_rounds = record
         return source, future, snap, int(pending_rounds)
-
-    @staticmethod
-    def _refresh_poll_session(source):
-        """为 fresh retry 换新 session；旧 worker 可能仍在跑，因此不主动关闭旧 session。"""
-
-        if not hasattr(source, "session"):
-            return
-        source.session = requests.Session()
 
     @staticmethod
     def _snapshot_source_state(source):

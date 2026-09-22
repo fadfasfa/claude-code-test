@@ -12,10 +12,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from pipeline.collect.excel.import_excel import _is_greyed_strategy_font, _is_stable_weapon_item
+from pipeline.collect.excel.import_excel import _is_greyed_strategy_font, _is_stable_weapon_item, _extract_workbook_versions
 from pipeline.compute.update_review import _render_markdown
 from pipeline.compute.publish_candidate import _extract_version_number, apply_candidate, build_diff_summary
-from pipeline.common import write_json
+from pipeline.common import APP_DATA_DIR, read_json, write_json
+from pipeline.compute import publish_candidate
 import build_release
 
 
@@ -31,9 +32,37 @@ class FakeColor:
 class PublishHardeningTests(unittest.TestCase):
     def write_runtime(self, root: Path, *, meta: dict | None = None) -> None:
         root.mkdir(parents=True, exist_ok=True)
-        write_json(root / "classes.json", {"classes": []})
-        write_json(root / "talents.json", {"classes": []})
-        write_json(root / "meta.json", meta or {"build": {"version": "13.2", "excel_version": "13.2"}})
+        for name in RUNTIME_FILES:
+            payload = read_json(APP_DATA_DIR / name, {})
+            if name == "meta.json" and meta is not None:
+                payload = {**payload, **meta, "build": {**payload.get("build", {}), **meta.get("build", {})}}
+            write_json(root / name, payload)
+
+    def test_apply_rejects_invalid_or_incomplete_candidate_before_writing(self):
+        for missing in (False, True):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temp:
+                candidate, target = Path(temp) / 'candidate', Path(temp) / 'target'
+                self.write_runtime(candidate)
+                self.write_runtime(target)
+                before = {name: (target / name).read_bytes() for name in RUNTIME_FILES}
+                if missing:
+                    changed_classes = read_json(candidate / 'classes.json', {})
+                    changed_classes['classes'][0]['name'] = 'changed fixture'
+                    write_json(candidate / 'classes.json', changed_classes)
+                    (candidate / 'talents.json').unlink()
+                else:
+                    write_json(candidate / 'classes.json', {'classes': []})
+                with patch('pipeline.compute.validate_runtime_data.ensure_directories', create=True):
+                    with self.assertRaises((RuntimeError, FileNotFoundError)):
+                        apply_candidate(candidate, target)
+                self.assertTrue(candidate.exists())
+                self.assertEqual(before, {name: (target / name).read_bytes() for name in RUNTIME_FILES})
+
+    def test_excel_multi_part_versions_remain_comparable(self):
+        versions = _extract_workbook_versions([{'sheet_name': '围攻与策略模式属性', 'rows': [['当前数据为13.2.1版本']]}])
+        self.assertEqual(versions, {'围攻与策略模式属性': '13.2.1'})
+        alignment = publish_candidate._version_alignment({'build': {'version': 'Hotfix 14.1', 'excel_version': versions['围攻与策略模式属性']}})
+        self.assertIs(alignment['aligned'], False)
 
     def test_apply_candidate_blocks_hard_degradation_until_explicit_acceptance(self):
         with tempfile.TemporaryDirectory() as temp:

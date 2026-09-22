@@ -13,6 +13,8 @@ const API_BASE = apiBase();
 let allChampions = [];
 let activeChampionIds = new Set();
 let wsController = null;
+let championLoadInFlight = false;
+let championReloadPending = false;
 
 const tierContainer = document.getElementById('tierContainer');
 const wsStatus = document.getElementById('wsStatus');
@@ -32,6 +34,11 @@ function renderView(champions) {
 }
 
 async function loadChampions() {
+    if (championLoadInFlight) {
+        championReloadPending = true;
+        return;
+    }
+    championLoadInFlight = true;
     try {
         const [championRes, aliasRes] = await Promise.all([
             fetch(`${API_BASE}/api/champions`),
@@ -59,6 +66,13 @@ async function loadChampions() {
         console.error('[ERROR] 加载英雄数据失败:', err);
         const unavailable = err && err.message === 'snapshot_unavailable';
         renderLoadFailure(tierContainer, unavailable);
+    } finally {
+        championLoadInFlight = false;
+        if (championReloadPending) {
+            // 订阅/发布发生在旧请求期间时，串行补读一次；不让旧响应覆盖新代。
+            championReloadPending = false;
+            loadChampions();
+        }
     }
 }
 
@@ -142,6 +156,8 @@ function connectWS() {
         onMessage: handleWsMessage,
         onOpen: () => {
             wsStatus.innerHTML = '<span class="w-2 h-2 bg-hx-win rounded-full animate-pulse"></span><span class="text-hx-win">已连接</span>';
+            // 弥补首请求至订阅之间、以及断线期间错过的 generation 通知。
+            loadChampions();
             // 首次握手成功展示一次新手引导气泡，之后不再打扰
             showOnboardingToastOnce();
         },

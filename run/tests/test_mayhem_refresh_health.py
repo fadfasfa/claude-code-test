@@ -156,8 +156,11 @@ def _mayhem_raw(*, revision="u" * 64, items=None, not_modified=False):
         "fetched_at": "2026-01-01T00:00:00+00:00",
         "items": items if items is not None else [{"champion_id": "24", "body": "测试"}],
         "rejects": [],
+        "max_pages": 0,
+        "page": {"parse_mode": "manifest", "selected": len(items) if items is not None else 1,
+                 "total": len(items) if items is not None else 1, "pagination_complete": True},
         "upstream_revision": revision,
-        "transport": {"not_modified": not_modified, "request_count": 2},
+        "transport": {"not_modified": not_modified, "request_count": 2, "check_complete": True},
     }
 
 
@@ -272,6 +275,51 @@ def test_mayhem_same_revision_skips_merge_and_publish(monkeypatch) -> None:
         assert result["check_status"] == "up_to_date"
         assert result["upstream_revision"] == result["applied_revision"] == "p" * 64
         assert result["representation_revision"] == "u" * 64
+
+
+@pytest.mark.parametrize("same_representation", [True, False])
+@pytest.mark.parametrize("defect", ["rejects", "pagination", "selected_count", "classification"])
+def test_mayhem_reuse_rejects_incomplete_current_check(tmp_path, monkeypatch, same_representation, defect):
+    from hextech.infrastructure.sources.mayhem import service
+
+    items = [{"champion_id": "24", "body": "测试"}]
+    raw = _mayhem_raw(items=items)
+    raw["page"] = {"parse_mode": "manifest", "total": 1, "selected": 1, "pagination_complete": True}
+    raw["transport"]["check_complete"] = True
+    if defect == "rejects":
+        raw["rejects"] = [{"reason": "missing_required_fields"}] * 99
+        raw["page"].update(total=100, selected=100)
+    elif defect == "pagination":
+        raw["page"]["pagination_complete"] = False
+    elif defect == "selected_count":
+        raw["page"].update(total=2, selected=2)
+    elif same_representation:
+        # Classification of the raw page must also conserve selected rows.
+        raw["page"]["selected"] = 2
+    applied = service._semantic_revision({"schema_version": 2, "source": "arammayhem",
+        "source_url": raw["source_url"], "items": items})
+    pointer = {"catalog_generation_id": "catalog", "catalog_sha256": "a" * 64,
+        "artifact": {"role": "combos", "relative_path": "combos.json", "sha256": "b" * 64,
+                     "record_count": 1, "content_schema_version": 1, "size": 1}}
+    monkeypatch.setattr(service, "load_active_catalog", lambda: SimpleNamespace(
+        generation_id="catalog", content_sha256="a" * 64, root=tmp_path))
+    monkeypatch.setattr(service, "_current_manifest", lambda: (pointer, {
+        "upstream_revision": raw["upstream_revision"] if same_representation else "old-representation",
+        "applied_revision": applied, "parser_revision": service.MAYHEM_PROJECTION_REVISION}))
+    previous = {"last_success_at": _iso(1000), "last_result": "success"}
+    monkeypatch.setattr(service, "load_mayhem_refresh_status", lambda: previous)
+    written = []
+    monkeypatch.setattr(service, "get_mayhem_refresh_status_path", lambda: "unused.json")
+    monkeypatch.setattr(service, "atomic_write_json", lambda _path, payload, **kw: written.append(payload))
+    monkeypatch.setattr(service, "publish_mayhem_run", lambda *a, **kw: pytest.fail("invalid check published"))
+    summary = {"added_items": 1, "mayhem_raw_items": 2 if defect == "classification" else 1,
+               "mayhem_valid_items": 1, "normalized_items": items, "clean_rejects": []}
+    result = service.run_mayhem_refresh(force=True, now=2000, scraper=lambda: raw, merge=lambda **kw: summary)
+    assert result["last_result"] == "failed"
+    assert result["success"] is False
+    assert result["check_status"] != "up_to_date"
+    assert result["last_success_at"] == _iso(1000)
+    assert written[-1]["last_success_at"] == _iso(1000)
 
 
 def test_mayhem_changed_revision_publishes_bound_metadata(tmp_path, monkeypatch) -> None:

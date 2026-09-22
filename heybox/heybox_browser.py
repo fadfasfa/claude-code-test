@@ -8,7 +8,7 @@
 import asyncio
 import json
 import logging
-import random
+import sys
 from pathlib import Path
 from playwright.async_api import async_playwright
 
@@ -16,21 +16,30 @@ from playwright.async_api import async_playwright
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
-# 确保数据目录存在。
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-# 日志输出到控制台和文件。
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(levelname)s] %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(DATA_DIR / 'browser_scraper.log', encoding='utf-8')
-    ]
-)
 logger = logging.getLogger("HeyboxBrowser")
 
+
+def configure_logging():
+    # 仅启动入口创建日志；导入模块不修改真实 data 目录。
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[%(levelname)s] %(message)s',
+        handlers=[logging.StreamHandler(), logging.FileHandler(DATA_DIR / 'browser_scraper.log', encoding='utf-8')],
+    )
+
+
+async def capture_diagnostic(page):
+    try:
+        screenshot_path = DATA_DIR / "debug_screenshot.png"
+        await page.screenshot(path=str(screenshot_path))
+        logger.info(f"[调试] 截图已保存到：{screenshot_path.relative_to(BASE_DIR)}")
+    except Exception as screenshot_error:
+        logger.warning(f"[警告] 诊断截图失败：{screenshot_error}")
+
+
 async def run_scraper():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as p:
         logger.info("[启动] 正在启动 Chromium（便携模式）...")
         browser = None
@@ -72,14 +81,17 @@ async def run_scraper():
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(output, f, indent=2, ensure_ascii=False)
                 logger.info(f"[成功] 数据已保存到：{output_file.relative_to(BASE_DIR)}")
+                return True
             else:
                 logger.warning("[警告] 未找到结构数据，正在截取诊断截图...")
-                screenshot_path = DATA_DIR / "debug_screenshot.png"
-                await page.screenshot(path=str(screenshot_path))
-                logger.info(f"[调试] 截图已保存到：{screenshot_path.relative_to(BASE_DIR)}")
+                await capture_diagnostic(page)
+                return False
 
         except Exception as e:
             logger.error(f"[致命] 运行时错误：{str(e)}", exc_info=True)
+            if page is not None:
+                await capture_diagnostic(page)
+            return False
         finally:
             if page:
                 try:
@@ -99,9 +111,18 @@ async def run_scraper():
             logger.info("[结束] 浏览器会话已关闭。")
 
 
-if __name__ == "__main__":
+def main():
+    configure_logging()
     logger.info("="*50)
     logger.info("小黑盒便携浏览器抓取器 V1.0")
     logger.info(f"执行根目录：{BASE_DIR}")
     logger.info("="*50)
-    asyncio.run(run_scraper())
+    try:
+        return 0 if asyncio.run(run_scraper()) else 1
+    except Exception as e:
+        logger.error(f"[致命] 浏览器运行环境启动失败：{e}", exc_info=True)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

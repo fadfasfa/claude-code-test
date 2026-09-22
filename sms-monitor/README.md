@@ -265,7 +265,7 @@ python monitor.py config ready-check  --all --json
 | `request_timeout` | 单个 HTTP 请求超时秒数（默认 3）；LuDan、固定链接和邮箱取件共用 |
 | `max_poll_workers` | 并发轮询 worker 数（默认 4）；来源多时避免串行等待 |
 | `poll_round_timeout` | 单轮并发轮询总等待预算秒数（默认 `request_timeout + 0.5`）；超时来源保留旧状态并显示提示 |
-| `pending_poll_max_rounds` | 迟到 worker 最多保留轮数（默认 3）；结算只检查已完成任务，不额外阻塞下一轮 |
+| `pending_poll_max_rounds` | 迟到 worker 的等待警告阈值（默认 3 轮）；运行中任务继续跟踪，同来源不并发重试，其他来源照常轮询；结算只检查已完成任务，不额外阻塞下一轮 |
 | `active_until_code` | 复制或手动换号后是否一直高频轮询到拿到新验证码（默认 `true`）；拿到验证码后自动回低频 |
 | `active_after_copy_seconds` | `active_until_code=false` 时的高频轮询秒数（默认 180） |
 | `auto_change_on_expire` | 号码过期时是否自动换号 |

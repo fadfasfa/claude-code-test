@@ -58,7 +58,7 @@ STRATEGY_GROUP_LABELS = {
     "negative": "负面词条",
     "positive": "正面词条",
 }
-VERSION_PATTERN = re.compile(r"当前数据为(?P<version>\d+(?:\.\d+)?)版本")
+VERSION_PATTERN = re.compile(r"当前数据为(?P<version>\d+(?:\.\d+)*)版本")
 DISPIMG_PATTERN = re.compile(r'=DISPIMG\("(?P<id>ID_[A-Z0-9]+)",\s*1\)', re.IGNORECASE)
 XML_NS = {
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",

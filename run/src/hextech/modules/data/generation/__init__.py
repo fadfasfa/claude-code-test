@@ -9,8 +9,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
+import tempfile
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass
@@ -29,7 +31,7 @@ from hextech.contracts import (
 )
 from hextech.modules.data.catalog.runtime_store import get_runtime_root_dir
 from hextech.modules.data.freshness import SOURCE_INTERVALS, parse_refresh_time
-from hextech.modules.data.ports.atomic import atomic_write_json
+from hextech.modules.data.ports.atomic import atomic_write_json, _replace_with_retry
 from .validation import (
     SNAPSHOT_ROLES,
     SnapshotValidationError,
@@ -164,6 +166,10 @@ class DataSnapshotPublisher:
             current = DataSnapshotClient(self.root).open_view()
         except SnapshotValidationError:
             return None
+        if current.degraded or current.failed_generation_id:
+            # open_view may have returned previous: that is recovery evidence,
+            # not proof that the on-disk current pointer needs no repair.
+            return None
         current_payload_hashes = {item.role: item.sha256 for item in current.manifest.files}
         if (
             current.manifest.schema_version == SNAPSHOT_SCHEMA_VERSION
@@ -221,6 +227,8 @@ class DataSnapshotPublisher:
         staging.mkdir(parents=True, exist_ok=False)
         promoted = False
         pointer_committed = False
+        previous_written = False
+        previous_bytes: bytes | None = None
         try:
             files: list[SnapshotFileDescriptor] = []
             for role in SNAPSHOT_ROLES:
@@ -262,14 +270,28 @@ class DataSnapshotPublisher:
             self.generations_dir.mkdir(parents=True, exist_ok=True)
             staging.replace(final)
             promoted = True
-            previous_id = self._current_generation_id()
+            client = DataSnapshotClient(self.root)
+            try:
+                # Validate current independently: open_view also parses previous,
+                # so a corrupt previous must not hide an otherwise usable current.
+                previous_id = client.open_generation(self._current_generation_id()).manifest.generation_id
+            except SnapshotValidationError:
+                try:
+                    previous_id = client.open_view().manifest.generation_id
+                except SnapshotValidationError:
+                    previous_id = ""
             if previous_id:
+                try:
+                    previous_bytes = self.previous_path.read_bytes()
+                except FileNotFoundError:
+                    previous_bytes = None
                 atomic_write_json(
                     self.previous_path,
                     DataSnapshotPreviousPointerV2(generation_id=previous_id).to_dict(),
                     ensure_ascii=False,
                     indent=2,
                 )
+                previous_written = True
             atomic_write_json(
                 self.current_path,
                 DataSnapshotCurrentPointerV2(current_generation_id=generation_id).to_dict(),
@@ -285,7 +307,24 @@ class DataSnapshotPublisher:
             shutil.rmtree(staging, ignore_errors=True)
             if promoted and not pointer_committed:
                 shutil.rmtree(final, ignore_errors=True)
+            if previous_written and not pointer_committed:
+                self._restore_previous_pointer(previous_bytes)
             raise
+
+    def _restore_previous_pointer(self, content: bytes | None) -> None:
+        """Undo a failed rollover byte-for-byte, including malformed UTF-8 JSON."""
+        if content is None:
+            self.previous_path.unlink(missing_ok=True)
+            return
+        fd, temporary = tempfile.mkstemp(prefix=".previous-restore-", suffix=".tmp", dir=self.root)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            _replace_with_retry(temporary, self.previous_path)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
 
     def current_generation_id(self) -> str:
         """返回已发布 current generation；不存在时返回空字符串。"""

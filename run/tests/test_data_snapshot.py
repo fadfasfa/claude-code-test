@@ -400,6 +400,76 @@ def test_pointer_write_failure_keeps_current_and_removes_unpublished_generation(
     assert [path.name for path in generation_dirs] == [first.generation_id]
 
 
+@pytest.mark.parametrize("fail_current", [False, True])
+def test_republish_fallback_repairs_current_and_keeps_valid_previous(tmp_path, monkeypatch, fail_current):
+    publisher = DataSnapshotPublisher(tmp_path)
+    first = _publish(publisher, _payload(marker="one"), "one")
+    broken = _publish(publisher, _payload(marker="two"), "two")
+    snapshot_module.atomic_write_json(tmp_path / "generations" / broken.generation_id / "champions.json", [])
+    before_previous = publisher.previous_path.read_bytes()
+    before_current = publisher.current_path.read_bytes()
+    real_write = snapshot_module.atomic_write_json
+    def writing(path, payload, **kwargs):
+        if fail_current and Path(path) == publisher.current_path:
+            raise OSError("repair pointer unavailable")
+        real_write(path, payload, **kwargs)
+    monkeypatch.setattr(snapshot_module, "atomic_write_json", writing)
+
+    if fail_current:
+        with pytest.raises(OSError, match="repair pointer unavailable"):
+            _publish(publisher, _payload(marker="one"), "one")
+        assert publisher.current_path.read_bytes() == before_current
+        view = DataSnapshotClient(tmp_path).open_view()
+        assert view.degraded and view.manifest.generation_id == first.generation_id
+    else:
+        repaired = _publish(publisher, _payload(marker="one"), "one")
+        assert repaired.generation_id not in {first.generation_id, broken.generation_id}
+        assert publisher.current_generation_id() == repaired.generation_id
+        assert publisher.last_promotion_disposition == "published"
+        assert not DataSnapshotClient(tmp_path).open_view().degraded
+    assert publisher.previous_path.read_bytes() == before_previous
+    assert DataSnapshotClient(tmp_path).open_generation(first.generation_id).get_champion(1)["name"] == "hero-one"
+
+
+@pytest.mark.parametrize("previous_state", ["invalid_id", "invalid_json", "invalid_utf8", "valid"])
+@pytest.mark.parametrize("failure", [None, "previous", "current"])
+def test_publish_valid_current_repairs_previous_without_losing_failure_atomicity(
+    tmp_path, monkeypatch, previous_state, failure,
+):
+    publisher = DataSnapshotPublisher(tmp_path)
+    first = _publish(publisher, _payload(marker="one"), "one")
+    current = _publish(publisher, _payload(marker="two"), "two")
+    damaged = {
+        "invalid_id": b'{"schema_version":2,"generation_id":"../invalid"}',
+        "invalid_json": b'{',
+        "invalid_utf8": b'\xff\xfe',
+    }
+    if previous_state in damaged:
+        publisher.previous_path.write_bytes(damaged[previous_state])
+    before = {path: path.read_bytes() for path in (publisher.current_path, publisher.previous_path)}
+    before_generations = set(publisher.generations_dir.iterdir())
+    write_json = snapshot_module.atomic_write_json
+    def writing(path, payload, **kwargs):
+        if failure and Path(path) == (publisher.previous_path if failure == "previous" else publisher.current_path):
+            raise OSError("injected rollover failure")
+        write_json(path, payload, **kwargs)
+    monkeypatch.setattr(snapshot_module, "atomic_write_json", writing)
+
+    if failure:
+        with pytest.raises(OSError, match="injected rollover failure"):
+            _publish(publisher, _payload(marker="three"), "three")
+        assert {path: path.read_bytes() for path in before} == before
+        assert set(publisher.generations_dir.iterdir()) == before_generations
+    else:
+        published = _publish(publisher, _payload(marker="three"), "three")
+        assert publisher.current_generation_id() == published.generation_id
+        assert json.loads(publisher.previous_path.read_bytes())["generation_id"] == current.generation_id
+        assert DataSnapshotClient(tmp_path).status()["state"] == "ready"
+        assert DataSnapshotClient(tmp_path).open_view().manifest.generation_id == published.generation_id
+    assert DataSnapshotClient(tmp_path).open_generation(current.generation_id).get_champion(1)["name"] == "hero-two"
+    assert DataSnapshotClient(tmp_path).open_generation(first.generation_id).get_champion(1)["name"] == "hero-one"
+
+
 def test_cleanup_failure_does_not_rollback_committed_pointer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

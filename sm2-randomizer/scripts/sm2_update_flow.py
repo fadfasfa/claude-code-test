@@ -68,8 +68,10 @@ def main() -> int:
         return 1
 
     # 4. 校验
-    if _step("校验候选", [py, "-m", "pipeline.compute.validate_runtime_data", "--target-dir", "pipeline/tmp_publish/"]) != 0:
-        return 1
+    validation_exit = _step("校验候选", [py, "-m", "pipeline.compute.validate_runtime_data", "--target-dir", "pipeline/tmp_publish/"])
+    # A contract failure (1) still needs the review report; unexpected CLI failures stop.
+    if validation_exit not in (0, 1):
+        return validation_exit
 
     # 5. diff
     if _step("生成 diff", [py, "-m", "pipeline.compute.publish_candidate", "diff-candidate", "--candidate-dir", "pipeline/tmp_publish/"]) != 0:
@@ -79,7 +81,7 @@ def main() -> int:
     print("\n=== 生成人审报告 ===")
     summary = build_update_review(wiki_skipped=args.skip_wiki)
     _print_terminal_summary(summary)
-    return 0 if summary.get("validation_issue_count", 0) == 0 else 1
+    return 0 if validation_exit == 0 and summary.get("validation_issue_count", 0) == 0 else 1
 
 
 def _print_terminal_summary(s: dict) -> None:

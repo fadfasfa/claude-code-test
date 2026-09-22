@@ -13,12 +13,12 @@ from hextech.interfaces.web.backend.lcu_runtime import manager
 async def csv_watcher_loop() -> None:
     """监视 DataService generation，并在整代切换后广播数据刷新事件。"""
 
-    previous_generation_id = ""
+    previous_generation_id: str | None = None
     while True:
         try:
             status = _snapshot_client.status()
             generation_id = str(status.get("generation_id") or "")
-            if generation_id and previous_generation_id and generation_id != previous_generation_id:
+            if generation_id and previous_generation_id is not None and generation_id != previous_generation_id:
                 logger.info("DataService generation 已切换：generation_id=%s", generation_id)
                 await manager.broadcast(
                     {
@@ -29,7 +29,8 @@ async def csv_watcher_loop() -> None:
                         "degraded_sources": list(status.get("degraded_sources") or []),
                     }
                 )
-            previous_generation_id = generation_id or previous_generation_id
+            # None 仅表示尚未观察；空字符串是真实 unavailable，恢复首代也要通知。
+            previous_generation_id = generation_id
         except Exception as exc:
             logger.warning("DataService generation 监视器错误：%s", exc)
         await asyncio.sleep(3)

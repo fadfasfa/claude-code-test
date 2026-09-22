@@ -16,22 +16,31 @@ do
     range="$remote_sha..$local_sha"
   fi
 
-  if git diff-tree --no-commit-id --name-status -r "$range" -- |
-    awk -v protected="$protected_path" '
-      $1 != "D" {
-        for (i = 2; i <= NF; i++) {
-          if (index($i, protected) == 1) {
-            found = 1
-          }
-        }
-      }
-      END { exit found ? 0 : 1 }
-    '
-  then
-    echo "Blocked: non-delete changes under $protected_path would be pushed."
-    echo "QuantProject is a local-private workspace; only deletion cleanup commits may touch it."
+  # 新 ref 保守检查全部可达历史；已有 ref 检查远端 tip 之后的全部提交。
+  # 不以最终净 diff 替代历史检查，也不依赖可能过时的 remote-tracking refs。
+  if ! commits=$(git rev-list "$range" --); then
+    echo "Blocked: unable to enumerate outgoing commits." >&2
     exit 1
   fi
+  for commit in $commits
+  do
+    # 路径过滤交给 Git，不解析可能含空白/换行/引号的文件名。
+    # --root 覆盖首提交，-m 覆盖 merge resolution，禁用 rename 确保移入被视为新增。
+    if git diff-tree --quiet --exit-code --root -m --no-renames \
+      --diff-filter=ACMRTUXB -r "$commit" -- "$protected_path"
+    then
+      continue
+    else
+      status=$?
+      if [ "$status" -eq 1 ]; then
+        echo "Blocked: non-delete changes under $protected_path would be pushed."
+        echo "QuantProject is a local-private workspace; only deletion cleanup commits may touch it."
+      else
+        echo "Blocked: unable to inspect outgoing commit $commit." >&2
+      fi
+      exit 1
+    fi
+  done
 done
 
 exit 0

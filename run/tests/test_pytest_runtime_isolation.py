@@ -48,3 +48,30 @@ def test_subprocess_keeps_supplied_pythonpath_after_project_paths(tmp_path: Path
 
     assert python_paths[:2] == [str(run_root / "src"), str(run_root)]
     assert str(supplied_path) in python_paths
+
+
+def test_runtime_isolation_preserves_popen_class_for_fresh_asyncio_import() -> None:
+    conftest = Path(__file__).with_name("conftest.py")
+    code = """
+import runpy
+import subprocess
+import sys
+runtime = runpy.run_path(sys.argv[1])
+try:
+    assert isinstance(subprocess.Popen, type), 'Popen must remain subclassable'
+    import asyncio
+    if sys.platform == 'win32':
+        from asyncio.windows_utils import Popen
+        assert issubclass(Popen, subprocess.Popen)
+    print('fresh-asyncio-ok')
+finally:
+    runtime['pytest_sessionfinish'](None, 0)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-B", "-c", code, str(conftest)],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "fresh-asyncio-ok" in completed.stdout

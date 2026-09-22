@@ -14,6 +14,8 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
+from urllib.parse import urlsplit
 from pathlib import Path
 
 from pipeline.common import PIPELINE_TMP_PUBLISH_DIR, VALIDATION_REPORT_FILE, read_json
@@ -80,7 +82,7 @@ def _assert_package_contract() -> None:
     # 空字段被打包（版本对齐复检依赖这两个字段）。
     package_meta = read_json(PACKAGE_DATA_DIR / "meta.json", {})
     package_build = package_meta.get("build", {}) if isinstance(package_meta.get("build"), dict) else {}
-    missing_build_fields = [name for name in ("version", "excel_version") if not str(package_build.get(name, "")).strip()]
+    missing_build_fields = [name for name in ("version", "excel_version") if not str(package_build.get(name) or "").strip()]
     if missing_build_fields:
         raise RuntimeError(f"meta.json.build 缺少版本字段: {', '.join(missing_build_fields)}")
 
@@ -113,7 +115,7 @@ def _packaged_main_script_url() -> str:
     return match.group(1).removeprefix("./")
 
 
-def _run_packaged_smoke_check() -> None:
+def _run_packaged_smoke_check(*, base_url: str | None = None, expected_instance: str | None = None) -> None:
     main_script_url = _packaged_main_script_url()
     probe_script = """
 import json
@@ -121,7 +123,8 @@ from pathlib import Path
 from urllib.parse import quote
 import urllib.request
 
-base = 'http://127.0.0.1:__PACKAGED_EXE_SMOKE_PORT__'
+base = __BASE_URL__
+expected_instance = __EXPECTED_INSTANCE__
 package_dir = Path(r'__PACKAGE_DIR__')
 
 def encoded_relative_path(path):
@@ -152,13 +155,15 @@ checks = {
 result = {}
 for path, markers in checks.items():
     with urllib.request.urlopen(base + path, timeout=5) as response:
+        if expected_instance is not None and response.headers.get('X-SM2-Instance') != expected_instance:
+            raise RuntimeError('response belongs to a different server instance')
         body = response.read().decode('utf-8', 'ignore')
         result[path] = response.status
         for marker in markers:
             if marker not in body:
                 raise RuntimeError(f'{path} missing expected marker: {marker}')
 print(json.dumps(result, ensure_ascii=False))
-""".strip().replace("__PACKAGE_DIR__", PACKAGE_DIR.as_posix()).replace("__MAIN_SCRIPT_URL__", main_script_url).replace("__PACKAGED_EXE_SMOKE_PORT__", PACKAGED_EXE_SMOKE_PORT)
+""".strip().replace("__PACKAGE_DIR__", PACKAGE_DIR.as_posix()).replace("__MAIN_SCRIPT_URL__", main_script_url).replace("__BASE_URL__", repr(base_url or f"http://127.0.0.1:{PACKAGED_EXE_SMOKE_PORT}")).replace("__EXPECTED_INSTANCE__", repr(expected_instance))
     exit_code = _run([sys.executable, "-c", probe_script])
     if exit_code != 0:
         raise RuntimeError("打包模式自检失败：首页或运行期 JSON 不可访问。")
@@ -369,11 +374,13 @@ def _cleanup_previous_launch_log() -> None:
         launch_log.unlink()
 
 
-def _wait_for_launch_log(timeout_seconds: float = 10.0) -> Path:
+def _wait_for_launch_log(timeout_seconds: float = 10.0, *, process=None) -> Path:
     launch_log = _launch_log_runtime_dir() / "sm2-randomizer-launch.log"
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
-        if launch_log.exists() and launch_log.stat().st_size:
+        if process is not None and process.poll() is not None:
+            raise RuntimeError("打包版在就绪前退出。")
+        if launch_log.exists() and re.search(r"^App URL:\s+http://", launch_log.read_text(encoding="utf-8"), re.M):
             return launch_log
         time.sleep(0.2)
     raise RuntimeError("等待打包版启动日志超时。")
@@ -384,10 +391,27 @@ def _run_packaged_exe_smoke_test() -> None:
     env = os.environ.copy()
     env["SM2_DEBUG_NO_BROWSER"] = "1"
     env["SM2_DEBUG_PORT"] = PACKAGED_EXE_SMOKE_PORT
+    env["SM2_DEBUG_HOST"] = "127.0.0.1"
+    # The one-file bootloader may spawn a child with a different PID.
+    # An inherited per-launch marker identifies this instance across both processes.
+    instance = uuid.uuid4().hex
+    env["SM2_SMOKE_INSTANCE"] = instance
     process = subprocess.Popen([str(PACKAGE_DIR / EXE_FILE_NAME)], cwd=PACKAGE_DIR, env=env)
     try:
-        launch_log = _wait_for_launch_log()
-        _run_packaged_smoke_check()
+        launch_log = _wait_for_launch_log(process=process)
+        match = re.search(r"^App URL:\s+(http://\S+)", launch_log.read_text(encoding="utf-8"), re.M)
+        if not match:
+            raise RuntimeError("启动日志缺少实际服务地址。")
+        address = urlsplit(match.group(1))
+        if address.hostname != "127.0.0.1" or not address.port:
+            raise RuntimeError("打包自检只允许连接本轮本机服务。")
+        base_url = f"http://127.0.0.1:{address.port}"
+        if process.poll() is not None:
+            raise RuntimeError("打包版在探针前退出。")
+        _run_packaged_smoke_check(base_url=base_url, expected_instance=instance)
+        _run_packaged_exe_endpoint_probe(base_url=base_url, expected_instance=instance)
+        if process.poll() is not None:
+            raise RuntimeError("打包版在探针期间退出。")
         print(f"[sm2-randomizer] Packaged smoke log: {launch_log}")
     finally:
         process.terminate()
@@ -444,14 +468,17 @@ finally:
         raise RuntimeError("源码 Python + SM2_WEB_ROOT 模拟打包模式时，/data/* 仍不可访问。")
 
 
-def _run_packaged_exe_endpoint_probe() -> None:
+def _run_packaged_exe_endpoint_probe(*, base_url: str | None = None, expected_instance: str | None = None) -> None:
     probe_script = """
 import urllib.request
-base = 'http://127.0.0.1:__PACKAGED_EXE_SMOKE_PORT__'
+base = __BASE_URL__
+expected_instance = __EXPECTED_INSTANCE__
 path = '/data/classes.json'
 with urllib.request.urlopen(base + path, timeout=5) as response:
+    if expected_instance is not None and response.headers.get('X-SM2-Instance') != expected_instance:
+        raise RuntimeError('response belongs to a different server instance')
     print(path, response.status)
-""".strip().replace("__PACKAGED_EXE_SMOKE_PORT__", PACKAGED_EXE_SMOKE_PORT)
+""".strip().replace("__BASE_URL__", repr(base_url or f"http://127.0.0.1:{PACKAGED_EXE_SMOKE_PORT}")).replace("__EXPECTED_INSTANCE__", repr(expected_instance))
     exit_code = _run([sys.executable, "-c", probe_script])
     if exit_code != 0:
         raise RuntimeError("exe 打包模式探测失败：/data/classes.json 仍无法返回 200。")
@@ -463,12 +490,7 @@ def _emit_packaged_exe_followup_note() -> None:
 
 def _run_packaged_mode_differential_check() -> None:
     _run_packaged_python_smoke_test()
-    try:
-        _run_packaged_exe_smoke_test()
-        _run_packaged_exe_endpoint_probe()
-    except RuntimeError as error:
-        print(f"[sm2-randomizer] Packaged exe differential check warning: {error}")
-        _emit_packaged_exe_followup_note()
+    _run_packaged_exe_smoke_test()
 
 
 def _verify_release_acceptance(with_exe: bool) -> None:

@@ -318,7 +318,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                 self.publisher.last_promotion_disposition = "unchanged"
                 self._progress = self._progress.advance(generation_id=unchanged.generation_id)
                 return unchanged.generation_id
-            journal = self.promotion.begin()
+            self.promotion.begin()
             try:
                 self.promotion.record_target("catalog", self._recognition or self._catalog)
                 self.promotion.record_target("aramkit", self._ranking)
@@ -332,9 +332,13 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                     health="degraded" if degraded else "healthy", degraded_sources=degraded,
                     require_complete_provenance=True)
                 candidate = validate_generation_cohort(self.root, manifest.generation_id)
-                old = journal.old_pointers.get("generation", {}).get("current", {}).get("current_generation_id", "")
+                previous = str(_object(self.publisher.previous_path).get("generation_id") or "")
+                if previous:
+                    # Publisher may have recovered from a damaged current. Bind
+                    # recovery to its actual verified fallback, not old current.
+                    DataSnapshotClient(self.publisher.root).open_generation(previous)
                 schedule = replace(self.schedule_store.load(), generation_id=manifest.generation_id)
-                recovery = build_recovery_point(candidate, previous_generation_id=str(old), schedule=schedule)
+                recovery = build_recovery_point(candidate, previous_generation_id=previous, schedule=schedule)
                 self.promotion.stage_generation_state(schedule=schedule.to_dict(), recovery_point=recovery.to_dict())
                 if self._stop.is_set():
                     raise RuntimeError("shutdown_requested")

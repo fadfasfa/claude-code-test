@@ -1514,21 +1514,26 @@ def test_deploy_release_rolls_back_when_restart_fails(tmp_path, monkeypatch):
     assert not (tmp_path / "HextechCompanion.previous").exists()
 
 
-def test_rollback_continues_after_new_install_shutdown_failure(tmp_path, monkeypatch):
+def test_rollback_preserves_every_recovery_asset_after_shutdown_failure(tmp_path, monkeypatch):
     from tooling.build import deploy
 
     source = _package(tmp_path / "release")
     target = tmp_path / "HextechCompanion"
     target.mkdir()
     (target / "old.txt").write_text("old", encoding="utf-8")
+    previous = tmp_path / "HextechCompanion.previous"
+    previous.mkdir()
+    (previous / "older.txt").write_text("older", encoding="utf-8")
     shutdown_calls = 0
     start_calls = 0
+    shutdown_failed = False
 
     def shutdown(*_args, **_kwargs):
-        nonlocal shutdown_calls
+        nonlocal shutdown_calls, shutdown_failed
         shutdown_calls += 1
         if shutdown_calls == 1:
             return True
+        shutdown_failed = True
         raise OSError("new install is busy")
 
     def start(executable: Path):
@@ -1541,15 +1546,97 @@ def test_rollback_continues_after_new_install_shutdown_failure(tmp_path, monkeyp
 
     monkeypatch.setattr(deploy, "shutdown_existing_install", shutdown)
     monkeypatch.setattr(deploy, "_start_install", start)
+    monkeypatch.setattr(deploy, "_expected_cohort", lambda _manifest: {"test": True})
+    monkeypatch.setattr(deploy, "_snapshot_runtime_cohort_state", lambda: (object(),))
+    monkeypatch.setattr(deploy, "_snapshot_diagnostic_settings", lambda: SimpleNamespace(path=tmp_path / "roi.json"))
+    monkeypatch.setattr(deploy, "set_roi_dump_mode", lambda *_a, **_k: None)
+    for name in ("_remove_tree", "_replace_for_rollback", "_restore_runtime_cohort_state", "_restore_diagnostic_settings"):
+        original = getattr(deploy, name)
+
+        def guarded(*args, _original=original, _name=name, **kwargs):
+            assert not shutdown_failed, f"{_name} modified recovery state after failed shutdown"
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(deploy, name, guarded)
 
     with pytest.raises(deploy.DeploymentError, match="关闭新版本失败") as raised:
-        deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+        deploy.deploy_release(source, target, roi_dump_mode="on", lock_path=tmp_path / "deploy.lock")
 
     assert isinstance(raised.value.__cause__, deploy.DeploymentError)
     assert "new start failed" in str(raised.value.__cause__)
-    assert (target / "old.txt").read_text(encoding="utf-8") == "old"
-    assert not (target / "Hextech伴生终端.exe").exists()
-    assert start_calls == 2
+    assert (target / "Hextech伴生终端.exe").read_text(encoding="utf-8") == "new"
+    assert (previous / "older.txt").read_text(encoding="utf-8") == "older"
+    rollback = list(tmp_path.glob(".HextechCompanion.rollback-*"))
+    backup = list(tmp_path.glob(".HextechCompanion.previous-backup-*"))
+    assert len(rollback) == len(backup) == 1
+    assert (rollback[0] / "old.txt").read_text(encoding="utf-8") == "old"
+    assert (backup[0] / "older.txt").read_text(encoding="utf-8") == "older"
+    assert start_calls == 1
+
+
+@pytest.mark.parametrize("at_parent", [False, True])
+@pytest.mark.parametrize("link_kind", ["symlink", "reparse"])
+def test_install_dir_rejects_raw_links_before_resolve(tmp_path, monkeypatch, at_parent, link_kind):
+    import stat
+    from tooling.build import deploy
+
+    target = tmp_path / "linked" / "HextechCompanion"
+    link = target.parent if at_parent else target
+    original_lstat = Path.lstat
+
+    def lstat(path, *args, **kwargs):
+        if path == link:
+            # lstat also exposes a broken link, unlike exists()/stat().
+            return SimpleNamespace(st_mode=stat.S_IFLNK if link_kind == "symlink" else stat.S_IFDIR,
+                                   st_file_attributes=0x400 if link_kind == "reparse" else 0)
+        return original_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    original_resolve = Path.resolve
+    monkeypatch.setattr(Path, "resolve", lambda path, *a, **k:
+                        pytest.fail("resolved unvalidated install link") if path == target
+                        else original_resolve(path, *a, **k))
+    with pytest.raises(deploy.DeploymentError, match="reparse point"):
+        deploy.validate_install_dir(target)
+
+
+def test_install_dir_rejects_unreadable_ancestor(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    target = tmp_path / "unreadable" / "HextechCompanion"
+    original_lstat = Path.lstat
+
+    def lstat(path, *args, **kwargs):
+        if path == target.parent:
+            raise PermissionError("access denied")
+        return original_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    with pytest.raises(deploy.DeploymentError, match="无法核验"):
+        deploy.validate_install_dir(target)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction contract")
+@pytest.mark.parametrize("at_parent", [False, True])
+@pytest.mark.parametrize("broken", [False, True])
+def test_install_dir_rejects_real_temporary_junction(tmp_path, at_parent, broken):
+    import _winapi
+    from tooling.build import deploy
+
+    destination = tmp_path / "protected" / "HextechCompanion"
+    destination.mkdir(parents=True)
+    sentinel = destination / "keep.txt"
+    link = tmp_path / "HextechCompanion"
+    _winapi.CreateJunction(str(destination), str(link))
+    if broken:
+        destination.rmdir()  # Only the empty fixture destination; leave the dangling junction.
+    else:
+        sentinel.write_text("protected", encoding="utf-8")
+    target = link / "HextechCompanion" if at_parent else link
+    with pytest.raises(deploy.DeploymentError, match="reparse point"):
+        deploy.validate_install_dir(target)
+    if not broken:
+        assert sentinel.read_text(encoding="utf-8") == "protected"
 
 
 def test_deploy_rejects_arbitrary_target_directory(tmp_path):

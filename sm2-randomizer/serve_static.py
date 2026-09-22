@@ -160,6 +160,19 @@ def rewrite_request_path(path: str, web_root: Path) -> str:
     return path_without_app
 
 
+def resolve_entry_redirect(path: str, web_root: Path) -> str | None:
+    """Keep relative HTML links anchored at the real static directory URL."""
+    parts = urlsplit(path)
+    stripped = decode_url_path(strip_base_path(parts.path))
+    stripped = strip_packaged_app_prefix(stripped, web_root)
+    start = resolve_start_path(web_root)
+    if stripped not in {"", "/", start.rstrip("/")}:
+        return None
+    base = resolve_base_path()
+    prefix = base if base and (parts.path == base or parts.path.startswith(base + "/")) else ""
+    return prefix + start + ("?" + parts.query if parts.query else "")
+
+
 def decode_url_path(path: str) -> str:
     if BAD_PERCENT_ESCAPE.search(path):
         raise ValueError(f"Request path contains invalid percent escape: {path}")
@@ -263,6 +276,13 @@ class DebugEntryHandler(SimpleHTTPRequestHandler):
             web_root = resolve_web_root()
             rewritten, local_path = resolve_http_debug_message(self.path, web_root)
             print(f"HTTP {method}: raw={self.path} rewritten={rewritten} local={local_path}")
+            redirect = resolve_entry_redirect(self.path, web_root)
+            if redirect:
+                self.send_response(307)
+                self.send_header("Location", redirect)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if local_path.is_dir():
                 index_path = local_path / "index.html"
                 if not index_path.exists():
@@ -278,6 +298,9 @@ class DebugEntryHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(stat_result.st_size))
             self.send_header("Cache-Control", "no-store")
+            instance = os.getenv("SM2_SMOKE_INSTANCE", "")
+            if instance:
+                self.send_header("X-SM2-Instance", instance)
             self.end_headers()
             if method == "HEAD":
                 return

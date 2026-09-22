@@ -33,7 +33,9 @@ description: Use when the user asks to run cleanup-worktrees, $cleanup-worktrees
 - 路径必须在允许 root 内，且非 locked、bare、protected/current worktree。
 - 先用 `git status --short --untracked-files=all` 判断硬干净状态；tracked、staged 或 `??` untracked 任一存在即阻断。
 - 再用 `git status --short --untracked-files=all --ignored=matching` 记录 ignored 摘要。普通 runtime/cache/log/data 的 `!!` 输出只报告，不单独阻断。
-- ignored 输出命中凭据或登录态名称时跳过，且不得读取内容。
+- 摘要会折叠整段 ignored 目录，不能用于证明目录内无凭据。必须在每个候选工作树执行 `git ls-files --others --ignored --exclude-standard -z`，按 NUL 分隔完整路径名（不得按行拆分或解释 Git 引号转义），仅检查名称与元数据，不读取文件内容。
+- `ls-files -z` 仍可能把嵌套 Git 仓库折叠成目录项。任一项带尾斜杠、为空、元数据显示为目录或重解析点，或无法确认是可访问的叶文件时，记为 `ignored-enumeration-incomplete` 并保留整个候选工作树和分支；只检查该项名称和元数据，不递归进入嵌套仓库补查，不以目录名称未命中敏感词为由放行。
+- 完整路径名命中凭据或登录态时跳过，包括嵌套目录中的 `.env` / `.env.*`、`auth.json`、`local.yaml`、`proxies.json`、`accounts.json`、credential/secret/token/cookie/storage-state 类文件，以及 `sms-monitor/config.json*`、`sms-monitor/private-import.txt*`。安全查询非零退出、NUL 输出无法完整解析或无法枚举时记为 `ignored-enumeration-failed`，保留候选；摘要没有命中不构成放行证据。
 - Skill 不自动丢弃 dirty 内容。只有用户当前轮精确授权具体路径后，才可丢弃该路径并从第一步重新完整审计。
 
 ## 默认清理

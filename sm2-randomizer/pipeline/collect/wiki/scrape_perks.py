@@ -417,10 +417,19 @@ def write_placeholder(output_path: Path, grid_label: str) -> Path:
     placeholder_path = output_path.with_suffix(".svg")
     placeholder_path.parent.mkdir(parents=True, exist_ok=True)
     placeholder_path.write_text(
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect width="96" height="96" rx="12" fill="#1c1b1b"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="24" fill="#ffb87b">{grid_label}</text></svg>',
+        f'<svg data-sm2-placeholder="true" xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect width="96" height="96" rx="12" fill="#1c1b1b"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="24" fill="#ffb87b">{grid_label}</text></svg>',
         encoding="utf-8",
     )
     return placeholder_path
+
+
+def is_placeholder_icon(path: Path) -> bool:
+    content = path.read_text(encoding="utf-8")
+    # Also recognize placeholders generated before the explicit marker existed.
+    return 'data-sm2-placeholder="true"' in content or (
+        '<rect width="96" height="96" rx="12" fill="#1c1b1b"/>' in content
+        and 'font-size="24" fill="#ffb87b">' in content
+    )
 
 
 def list_local_files(asset_dir: Path) -> list[str]:
@@ -578,8 +587,21 @@ def reuse_or_download_talent(
     existing_svg = output_path.with_suffix(".svg")
     if not force_download and existing_svg.exists():
         entry["icon_path"] = existing_svg.relative_to(APP_ASSETS_DIR).as_posix()
-        entry["download_status"] = "reused-local"
+        if not is_placeholder_icon(existing_svg):
+            entry["download_status"] = "reused-local"
+            entry["download_attempts"] = 0
+            return entry
+        # This SVG is the placeholder produced after a failed PNG download.
+        # Its presence is not evidence that the outstanding manual action is resolved.
+        entry["download_status"] = "failed-hard"
+        entry["manual_action_required"] = True
         entry["download_attempts"] = 0
+        entry["download_error"] = "Local placeholder still requires a real talent icon"
+        manual_actions.append(build_manual_action_item(
+            str(entry["class_name"]), str(entry["talent_name_raw"]), str(entry["grid_label"]),
+            entry["icon_path"], str(entry["source_page"]), str(entry.get("icon_url", "")),
+            entry["download_error"],
+        ))
         return entry
 
     icon_url = str(entry.get("icon_url", "")).strip()

@@ -10,7 +10,8 @@ import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
+from urllib.request import urlopen
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,40 @@ SERVE_STATIC = PROJECT_ROOT / "serve_static.py"
 
 
 class ServeStaticPathTests(unittest.TestCase):
+    def test_entry_aliases_redirect_to_working_relative_resources(self):
+        module, temp_dir = self.load_temp_module()
+        for packaged in (False, True):
+            root = self.make_packaged_root(temp_dir) if packaged else self.make_source_root(temp_dir)
+            static = root / 'static' if packaged else root / 'app' / 'static'
+            (static / 'index.html').write_text('<script src="./main.js"></script><link href="./styles.css">', encoding='utf-8')
+            (static / 'styles.css').write_text('body{}', encoding='utf-8')
+            data = static.parent / 'data'
+            data.mkdir(exist_ok=True)
+            (data / 'classes.json').write_text('{"classes":[]}', encoding='utf-8')
+            for prefix in ('/sm2-randomizer', '/custom-prefix'):
+                with patch.dict(os.environ, {'SM2_WEB_ROOT': str(root), 'SM2_BASE_PATH': prefix, 'SM2_SMOKE_INSTANCE': 'fixture-instance'}):
+                    server = module.ThreadingHTTPServer(('127.0.0.1', 0), module.DebugEntryHandler)
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    try:
+                        entry = '/static' if packaged else '/app/static'
+                        aliases = ['/', prefix, prefix+'/', entry, entry+'/', prefix+entry, prefix+entry+'/']
+                        if packaged:
+                            aliases.extend(['/app', '/app/', '/app/static', '/app/static/', prefix+'/app/static'])
+                        for alias in aliases:
+                            with self.subTest(packaged=packaged, prefix=prefix, alias=alias):
+                                with urlopen(f'http://127.0.0.1:{server.server_port}{alias}') as response:
+                                    document_url = response.url
+                                    self.assertEqual(response.status, 200)
+                                for relative in ('./main.js', './styles.css', '../data/classes.json'):
+                                    with urlopen(urljoin(document_url, relative)) as asset:
+                                        self.assertEqual(asset.status, 200)
+                                        self.assertEqual(asset.headers['X-SM2-Instance'], 'fixture-instance')
+                    finally:
+                        server.shutdown()
+                        thread.join(timeout=2)
+                        server.server_close()
+
     def load_temp_module(self):
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
@@ -34,6 +69,8 @@ class ServeStaticPathTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         try:
             spec.loader.exec_module(module)
+            module.print = lambda *args, **kwargs: None
+            module.DebugEntryHandler.log_message = lambda *args, **kwargs: None
         finally:
             if hasattr(module, "close_launch_logging"):
                 module.close_launch_logging()

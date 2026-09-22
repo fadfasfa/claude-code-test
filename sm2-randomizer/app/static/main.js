@@ -243,10 +243,9 @@
     }
 
     player.confirmed = true;
-    if (state.activeIndex < state.team.length - 1) {
-      state.activeIndex += 1;
-    } else {
-      state.squadCompleted = true;
+    state.squadCompleted = state.team.every((member) => member.confirmed);
+    if (!state.squadCompleted) {
+      state.activeIndex = state.team.findIndex((member) => !member.confirmed);
     }
     render();
   }
@@ -937,6 +936,7 @@
   }
 
   function renderModifiers() {
+    renderActionButtons();
     hideModifierTooltip();
     const feed = document.getElementById("modifier-feed");
     feed.innerHTML = state.modifierFeed.length
@@ -1088,9 +1088,10 @@
     }
 
     saveButton.disabled = !readyToSave;
-    saveButton.textContent = state.activeIndex === state.team.length - 1
+    const nextIndex = state.team.findIndex((member, index) => index !== state.activeIndex && !member.confirmed);
+    saveButton.textContent = nextIndex < 0
       ? "完成整队"
-      : `保存并切换到小队 ${state.activeIndex + 2}`;
+      : `保存并切换到小队 ${nextIndex + 1}`;
   }
 
   function render() {

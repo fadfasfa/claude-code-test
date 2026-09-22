@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from pipeline.common import APP_ASSETS_DIR, APP_DATA_DIR, MANUAL_SOURCE_FILE, TALENT_DESCRIPTION_SOURCE_OVERRIDES_FILE, VALIDATION_REPORT_FILE, WIKI_RAW_FILE, ensure_directories, read_json, write_json
+from pipeline.common import APP_ASSETS_DIR, APP_DATA_DIR, MANUAL_SOURCE_FILE, TALENT_DESCRIPTION_SOURCE_OVERRIDES_FILE, VALIDATION_REPORT_FILE, WIKI_RAW_FILE, read_json, write_json
 
 EXPECTED_CLASS_COUNT = 7
 EXPECTED_PRIMARY_COUNT = 17
@@ -180,7 +180,6 @@ def validate_runtime_data(
     report_path: Path | None = None,
     assets_dir: Path | None = None,
 ) -> dict:
-    ensure_directories()
     runtime_dir = target_dir or APP_DATA_DIR
     resolved_assets_dir = assets_dir or APP_ASSETS_DIR
     payloads = {name: read_json(runtime_dir / name, {}) for name in REQUIRED_RUNTIME_FILES}
@@ -302,6 +301,8 @@ def validate_runtime_data(
         if not class_slug or not class_name:
             structure_issues.append(_issue("error", "TALENT_CLASS_ENTRY", f"天赋职业缺少 class_slug/class_name：{entry}"))
             continue
+        if class_slug in talent_slugs:
+            structure_issues.append(_issue("error", "DUPLICATE_TALENT_CLASS", f"天赋职业重复：{class_slug}"))
         talent_slugs.add(class_slug)
         grid_spec = entry.get("grid_spec", {})
         if grid_spec != EXPECTED_TALENT_GRID:
@@ -313,6 +314,7 @@ def validate_runtime_data(
         if len(nodes) != EXPECTED_TALENT_NODE_COUNT:
             structure_issues.append(_issue("error", "TALENT_NODE_COUNT", f"{class_slug} 天赋节点数量应为 {EXPECTED_TALENT_NODE_COUNT}，当前为 {len(nodes)}"))
         seen_coords: set[tuple[int, int]] = set()
+        seen_talents: set[str] = set()
         for node in nodes:
             if not isinstance(node, dict):
                 structure_issues.append(_issue("error", "TALENT_NODE_ENTRY", f"{class_slug} 存在非对象天赋节点"))
@@ -321,10 +323,11 @@ def validate_runtime_data(
             if not talent_slug:
                 structure_issues.append(_issue("error", "TALENT_NODE_ENTRY", f"{class_slug} 存在缺少 talent_slug 的节点"))
                 continue
-            try:
-                col = int(node.get("col"))
-                row = int(node.get("row"))
-            except (TypeError, ValueError):
+            if talent_slug in seen_talents:
+                structure_issues.append(_issue("error", "DUPLICATE_TALENT_NODE", f"{class_slug} 天赋标识重复：{talent_slug}"))
+            seen_talents.add(talent_slug)
+            col, row = node.get("col"), node.get("row")
+            if type(col) is not int or type(row) is not int or not (1 <= col <= 8 and 1 <= row <= 3):
                 structure_issues.append(_issue("error", "TALENT_NODE_COORD", f"{class_slug}/{talent_slug} 缺少合法坐标"))
                 continue
             coord = (col, row)
@@ -370,6 +373,11 @@ def validate_runtime_data(
                         f"{class_slug}/{talent_slug} 的 description 数值与 Wiki 效果描述不一致：source={dict(source_numbers)} runtime={dict(runtime_numbers)}",
                     ))
 
+        if seen_coords != {(col, row) for col in range(1, 9) for row in range(1, 4)}:
+            structure_issues.append(_issue("error", "TALENT_GRID_COVERAGE", f"{class_slug} 未完整覆盖 8x3 天赋矩阵"))
+
+    if talent_slugs != class_slugs:
+        structure_issues.append(_issue("error", "TALENT_CLASS_LINK", "天赋职业集合与职业表不一致"))
     if len(talent_slugs) != EXPECTED_TALENT_CLASS_COUNT:
         structure_issues.append(_issue("error", "TALENT_CLASS_COUNT", f"天赋职业数量应为 {EXPECTED_TALENT_CLASS_COUNT}，当前为 {len(talent_slugs)}"))
 
@@ -478,10 +486,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-if __name__ == "__main__":
+def main() -> int:
     args = parse_args()
-    validate_runtime_data(
+    report = validate_runtime_data(
         target_dir=Path(args.target_dir).resolve(),
         report_path=Path(args.report_path).resolve(),
         assets_dir=Path(args.assets_dir).resolve(),
     )
+    return 1 if report["summary"]["issue_count"] else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

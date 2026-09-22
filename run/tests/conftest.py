@@ -52,31 +52,32 @@ _evict_runtime_path_modules()
 _ORIGINAL_POPEN = subprocess.Popen
 
 
-def _isolated_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[Any]:
-    """给测试子进程显式传递运行态根目录。
+class _IsolatedPopen(_ORIGINAL_POPEN):
+    """给测试子进程显式传递运行态根目录，并保留 Popen 的类接口。
 
     默认 `Popen` 虽会继承环境，但测试经常传入裁剪过的 `env`。这里把当前环境
     展开后再覆盖调用方给出的变量，确保普通子进程不会意外回落到真实 `run/var`；
     专门验证自定义 runtime 根的测试仍可显式覆盖 `HEXTECH_VAR_DIR`。
     """
 
-    env = dict(os.environ)
-    supplied = kwargs.get("env")
-    if supplied is not None:
-        env.update({str(key): str(value) for key, value in dict(supplied).items()})
-    env.setdefault("HEXTECH_VAR_DIR", str(PYTEST_HEXTECH_VAR_DIR))
-    # pytest 的 sys.path 不会自动进入 ``python -c`` 子进程；显式追加本地 src
-    # 才能同时验证子进程隔离和源码态导入，而不依赖真实 run/.venv 是否已安装。
-    project_paths = [str(RUN_DIR / "src"), str(RUN_DIR)]
-    # Preserve explicitly isolated test dependencies when a child narrows its source path.
-    inherited_paths = [part for value in (os.environ.get("PYTHONPATH", ""), env.get("PYTHONPATH", ""))
-                       for part in value.split(os.pathsep) if part]
-    env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys([*project_paths, *inherited_paths]))
-    kwargs["env"] = env
-    return _ORIGINAL_POPEN(*args, **kwargs)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        env = dict(os.environ)
+        supplied = kwargs.get("env")
+        if supplied is not None:
+            env.update({str(key): str(value) for key, value in dict(supplied).items()})
+        env.setdefault("HEXTECH_VAR_DIR", str(PYTEST_HEXTECH_VAR_DIR))
+        # pytest 的 sys.path 不会自动进入 ``python -c`` 子进程；显式追加本地 src
+        # 才能同时验证子进程隔离和源码态导入，而不依赖真实 run/.venv 是否已安装。
+        project_paths = [str(RUN_DIR / "src"), str(RUN_DIR)]
+        # 保留调用方隔离依赖；不能用函数替换类，否则 Windows asyncio 继承失败。
+        inherited_paths = [part for value in (os.environ.get("PYTHONPATH", ""), env.get("PYTHONPATH", ""))
+                           for part in value.split(os.pathsep) if part]
+        env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys([*project_paths, *inherited_paths]))
+        kwargs["env"] = env
+        super().__init__(*args, **kwargs)
 
 
-subprocess.Popen = _isolated_popen  # type: ignore[assignment]
+subprocess.Popen = _IsolatedPopen
 
 
 def pytest_sessionfinish(session, exitstatus) -> None:  # type: ignore[no-untyped-def]
