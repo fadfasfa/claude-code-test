@@ -739,6 +739,22 @@ class AccountSourceTest(unittest.TestCase):
         self.assertNotIn(mailbox, history)
         self.assertNotIn("SECRET_KEY", history)
 
+    def test_linked_phone_change_hides_stale_static_number_until_refresh(self):
+        account = AccountSource({
+            "label": "synthetic", "login_email": "test@example.invalid",
+            "phone": "+15550123456",
+        })
+        source = FixedUrlSource(
+            {"label": "linked", "phone": "+15550123456", "url": "https://example.invalid"},
+            FixedReadySession(FakeTextResponse("暂无短信")),
+        )
+        account.linked_phone_source = source
+        self.assertEqual(account.copy_fields()[-1], ("2", "手机号码", "5550123456"))
+        source.phone = ""
+        self.assertEqual(account.copy_fields(), [("1", "登录邮箱", "test@example.invalid")])
+        source.phone = "+15550987654"
+        self.assertEqual(account.copy_fields()[-1], ("2", "手机号码", "5550987654"))
+
     def test_songniqu_poll_falls_back_to_mail_code_then_body(self):
         base = {
             "label": "Songniqu",
@@ -3265,6 +3281,21 @@ class AuditRepairRegressionTest(unittest.TestCase):
                     source.poll()
                 self.assertFalse(source.disabled_reason)
                 self.assertEqual(source.consecutive_hard_failures, 0)
+
+    def test_real_requests_json_decode_error_is_temporary_for_email(self):
+        response = monitor.requests.Response()
+        response.status_code = 200
+        response._content = b"not json"
+        source = EmailSource(
+            {"label": "fake", "email": "test@example.invalid", "provider": "icloud",
+             "base_url": "https://example.invalid"},
+            EmailReadySession(response),
+        )
+        for _ in range(5):
+            self.assertIsNone(source.poll())
+            self.assertEqual(source.status, "返回非 JSON")
+            self.assertEqual(source.consecutive_hard_failures, 0)
+        self.assertFalse(source.disabled_reason)
 
     def test_permanent_http_failures_still_disable_sources(self):
         for source in (

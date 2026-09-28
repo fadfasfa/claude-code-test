@@ -6,8 +6,13 @@ from __future__ import annotations
 """
 
 import argparse
+from contextlib import contextmanager
+import hashlib
+import json
+import os
 import re
 import shutil
+import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,6 +27,217 @@ from pipeline.compute.validate_runtime_data import validate_runtime_data
 RUNTIME_FILES = ("classes.json", "talents.json", "meta.json")
 DIFF_JSON_NAME = "diff_summary.json"
 DIFF_MD_NAME = "diff_summary.md"
+TRANSACTION_NAME = ".publish-transaction"
+
+
+def _regular_hash(path: Path) -> str | None:
+    """Absence is a state; links, junctions and non-files are not runtime data."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+        raise RuntimeError(f"Refusing non-regular publish file: {path}")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@contextmanager
+def _writer_lock(root: Path):
+    root.mkdir(parents=True, exist_ok=True)
+    lock_path = root / '.publish.lock'
+    # The inode is permanent: unlinking it would allow two writers to lock
+    # different files with the same name. OS releases the lock on process exit.
+    if lock_path.exists() or lock_path.is_symlink():
+        info = lock_path.lstat()
+        if not stat.S_ISREG(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+            raise RuntimeError(f'Unsafe publish writer lock: {lock_path}')
+    with lock_path.open('a+b') as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b'0')
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == 'nt':
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            raise RuntimeError(f"Another publish writer holds {lock_path}") from error
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == 'nt':
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _target_identity(root: Path) -> dict[str, Any]:
+    info = root.stat()
+    return {'path': str(root.resolve()), 'device': info.st_dev, 'inode': info.st_ino}
+
+
+def _sync_bytes(path: Path, data: bytes) -> None:
+    with path.open('wb') as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _write_journal(txn: Path, record: dict) -> None:
+    _sync_bytes(txn.with_suffix('.next'), json.dumps(record, sort_keys=True).encode('utf-8'))
+    os.replace(txn.with_suffix('.next'), txn.with_suffix('.json'))
+
+
+def _transaction_files() -> set[str]:
+    return {'validation.json'} | {
+        f'{prefix}-{name}' for prefix in ('new', 'old', 'restore') for name in RUNTIME_FILES
+    }
+
+
+def _check_transaction_files(txn: Path) -> list[Path]:
+    if txn.is_symlink() or getattr(txn.lstat(), 'st_file_attributes', 0) & 0x400 or not txn.is_dir():
+        raise RuntimeError(f"Unsafe transaction directory: {txn}")
+    paths = list(txn.iterdir())
+    for path in paths:
+        if path.name not in _transaction_files():
+            raise RuntimeError(f"Unknown transaction file; preserving {path}")
+        _regular_hash(path)
+    return paths
+
+
+def _clean_transaction(txn: Path) -> None:
+    # The sibling journal survives even rmdir failure or interruption after
+    # rmdir. It is the last file removed; a missing journal is never guessed.
+    if txn.exists() or txn.is_symlink():
+        paths = _check_transaction_files(txn)
+        for path in paths:
+            _regular_hash(path)
+            path.unlink()
+        txn.rmdir()
+    for path in (txn.with_suffix('.next'), txn.with_suffix('.json')):
+        _regular_hash(path)
+        path.unlink(missing_ok=True)
+
+
+def _recover_transaction(root: Path) -> None:
+    txn = root / TRANSACTION_NAME
+    journal, pending = txn.with_suffix('.json'), txn.with_suffix('.next')
+    if not any(path.exists() or path.is_symlink() for path in (txn, journal, pending)):
+        return
+    try:
+        if txn.exists() or txn.is_symlink():
+            _check_transaction_files(txn)
+        _regular_hash(journal)
+        _regular_hash(pending)
+        record = json.loads(journal.read_text(encoding='utf-8'))
+        if (record.get('version') != 1 or record.get('target') != _target_identity(root)
+                or record.get('phase') not in ('publishing', 'committed', 'restored')
+                or set(record.get('files', {})) != set(RUNTIME_FILES)):
+            raise RuntimeError('Unknown transaction identity or phase')
+        if record['phase'] == 'publishing' and not txn.is_dir():
+            raise RuntimeError('Missing transaction backups directory')
+        files = record['files']
+        for name, entry in files.items():
+            if not isinstance(entry, dict) or set(entry) != {'old', 'new'}:
+                raise RuntimeError('Invalid transaction file record')
+            if not re.fullmatch('[0-9a-f]{64}', str(entry['new'])) or (
+                    entry['old'] is not None and not re.fullmatch('[0-9a-f]{64}', str(entry['old']))):
+                raise RuntimeError('Invalid transaction digest')
+        # Check *all* live files and backups before any restoration. A foreign
+        # writer or changed directory identity must never be overwritten.
+        for name, entry in files.items():
+            actual = _regular_hash(root / name)
+            expected = {entry['new']} if record['phase'] == 'committed' else {entry['old'], entry['new']}
+            if record['phase'] == 'restored':
+                expected = {entry['old']}
+            if actual not in expected:
+                raise RuntimeError(f'Unknown current content: {root / name}')
+            if record['phase'] == 'publishing' and entry['old'] is not None:
+                if _regular_hash(txn / f'old-{name}') != entry['old']:
+                    raise RuntimeError(f'Invalid recovery backup: {name}')
+        if record['phase'] == 'publishing':
+            for name, entry in files.items():
+                target = root / name
+                actual = _regular_hash(target)
+                if actual == entry['old']:
+                    continue
+                if actual != entry['new']:
+                    raise RuntimeError(f'Current content changed during recovery: {target}')
+                if entry['old'] is None:
+                    target.unlink()
+                else:
+                    restore = txn / f'restore-{name}'
+                    _sync_bytes(restore, (txn / f'old-{name}').read_bytes())
+                    if _regular_hash(restore) != entry['old']:
+                        raise RuntimeError(f'Backup changed during recovery: {name}')
+                    os.replace(restore, target)
+            if any(_regular_hash(root / name) != entry['old'] for name, entry in files.items()):
+                raise RuntimeError('Restored data hash mismatch')
+            record['phase'] = 'restored'
+            _write_journal(txn, record)
+        _clean_transaction(txn)
+    except Exception as error:
+        raise RuntimeError(f"Publish recovery failed; preserve and inspect {txn}: {error}") from error
+
+
+def _publish_group(candidate: Path, root: Path, candidate_hashes: dict[str, str]) -> None:
+    # File replacements are recoverable as a group, not an atomic snapshot
+    # for readers. Publishing while a running client reads is not supported.
+    txn = root / TRANSACTION_NAME
+    txn.mkdir()
+    record = {'version': 1, 'target': _target_identity(root), 'phase': 'publishing', 'files': {}}
+    try:
+        for name in RUNTIME_FILES:
+            new_path = txn / f'new-{name}'
+            _sync_bytes(new_path, (candidate / name).read_bytes())
+            if _regular_hash(new_path) != candidate_hashes[name]:
+                raise RuntimeError(f'Candidate changed after validation: {name}')
+            old_hash = _regular_hash(root / name)
+            if old_hash is not None:
+                old_path = txn / f'old-{name}'
+                _sync_bytes(old_path, (root / name).read_bytes())
+                if _regular_hash(old_path) != old_hash:
+                    raise RuntimeError(f'Backup failed verification: {name}')
+            record['files'][name] = {'old': old_hash, 'new': candidate_hashes[name]}
+        _write_journal(txn, record)
+    except Exception as error:
+        # No runtime replacement has started. Safe normal preparation failures
+        # are retryable; abrupt interruption leaves evidence and fails closed.
+        try:
+            _clean_transaction(txn)
+        except Exception as cleanup_error:
+            raise RuntimeError(f'Publish preparation failed ({error}); preserve {txn}: {cleanup_error}') from error
+        raise
+    try:
+        for name in RUNTIME_FILES:
+            if _regular_hash(root / name) != record['files'][name]['old']:
+                raise RuntimeError(f'Runtime changed before replacement: {name}')
+            os.replace(txn / f'new-{name}', root / name)
+        if any(_regular_hash(root / name) != candidate_hashes[name] for name in RUNTIME_FILES):
+            raise RuntimeError('Published data hash mismatch')
+        validation = validate_runtime_data(root, txn / 'validation.json')
+        if validation['summary']['issue_count']:
+            raise RuntimeError('Published runtime validation failed')
+        if any(_regular_hash(root / name) != candidate_hashes[name] for name in RUNTIME_FILES):
+            raise RuntimeError('Runtime changed during final validation')
+        record['phase'] = 'committed'
+        _write_journal(txn, record)
+    except Exception as error:
+        try:
+            _recover_transaction(root)
+        except Exception as recovery_error:
+            raise RuntimeError(f'Publish failed ({error}); recovery incomplete: {recovery_error}') from error
+        raise
+    # A committed transaction is never rolled back because cleanup failed.
+    try:
+        _clean_transaction(txn)
+    except Exception as error:
+        raise RuntimeError(f'Runtime committed; transaction cleanup failed; preserve {txn}: {error}') from error
 
 
 def _load_payloads(directory: Path) -> dict[str, Any]:
@@ -609,6 +825,12 @@ def should_keep_candidate(candidate_dir: Path | None = None, current_dir: Path |
     }
 
 
+def _check_publish_directories(candidate: Path, target: Path) -> None:
+    candidate_path, target_path = candidate.resolve(), target.resolve()
+    if candidate_path == target_path or candidate_path in target_path.parents or target_path in candidate_path.parents:
+        raise RuntimeError('Candidate and runtime directories must not overlap')
+
+
 def apply_candidate(
     candidate_dir: Path | None = None,
     target_dir: Path | None = None,
@@ -619,9 +841,21 @@ def apply_candidate(
 ) -> dict[str, str]:
     candidate_root = candidate_dir or PIPELINE_TMP_PUBLISH_DIR
     app_root = target_dir or APP_DATA_DIR
+    _check_publish_directories(candidate_root, app_root)
+    with _writer_lock(app_root):
+        _recover_transaction(app_root)
+        return _apply_candidate_locked(candidate_root, app_root, cleanup=cleanup,
+                                       accept_version_mismatch=accept_version_mismatch,
+                                       accept_hard_degradation=accept_hard_degradation)
+
+
+def _apply_candidate_locked(candidate_root: Path, app_root: Path, *, cleanup: bool = True,
+                            accept_version_mismatch: bool = False,
+                            accept_hard_degradation: bool = False) -> dict[str, str]:
     for filename in RUNTIME_FILES:
         if not (candidate_root / filename).is_file():
             raise FileNotFoundError(f"Missing candidate runtime file: {candidate_root / filename}")
+    candidate_hashes = {name: _regular_hash(candidate_root / name) for name in RUNTIME_FILES}
     candidate_meta = read_json(candidate_root / "meta.json", {})
     alignment = _version_alignment(candidate_meta)
     if alignment["aligned"] is False and not accept_version_mismatch:
@@ -638,14 +872,12 @@ def apply_candidate(
     validation = validate_runtime_data(candidate_root, candidate_root / "runtime_validation.json")
     if validation["summary"]["issue_count"]:
         raise RuntimeError("Candidate validation failed; refusing to apply or clean.")
-    app_root.mkdir(parents=True, exist_ok=True)
-    for filename in RUNTIME_FILES:
-        source = candidate_root / filename
-        if not source.exists():
-            raise FileNotFoundError(f"Missing candidate runtime file: {source}")
-        shutil.copy2(source, app_root / filename)
+    _publish_group(candidate_root, app_root, candidate_hashes)
     if cleanup:
-        clean_candidate(candidate_root)
+        try:
+            clean_candidate(candidate_root)
+        except Exception as error:
+            raise RuntimeError(f'Runtime committed; candidate cleanup failed: {candidate_root}') from error
     return {
         "candidate_dir": candidate_root.as_posix(),
         "target_dir": app_root.as_posix(),
@@ -678,17 +910,19 @@ def apply_or_clean_candidate(
 ) -> dict[str, str]:
     candidate_root = candidate_dir or PIPELINE_TMP_PUBLISH_DIR
     app_root = target_dir or APP_DATA_DIR
-    status = should_keep_candidate(candidate_root, app_root)
-    if status["validation_issue_count"] > 0:
-        raise RuntimeError("Candidate validation failed; refusing to apply or clean.")
-    if not status["has_diff"]:
-        return clean_candidate(candidate_root)
-    return apply_candidate(
-        candidate_root,
-        app_root,
-        accept_version_mismatch=accept_version_mismatch,
-        accept_hard_degradation=accept_hard_degradation,
-    )
+    _check_publish_directories(candidate_root, app_root)
+    with _writer_lock(app_root):
+        _recover_transaction(app_root)
+        status = should_keep_candidate(candidate_root, app_root)
+        if status["validation_issue_count"] > 0:
+            raise RuntimeError("Candidate validation failed; refusing to apply or clean.")
+        if not status["has_diff"]:
+            return clean_candidate(candidate_root)
+        return _apply_candidate_locked(
+            candidate_root, app_root,
+            accept_version_mismatch=accept_version_mismatch,
+            accept_hard_degradation=accept_hard_degradation,
+        )
 
 
 def parse_args() -> argparse.Namespace:

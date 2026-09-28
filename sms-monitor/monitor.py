@@ -2843,6 +2843,12 @@ class EmailSource:
                     self.consecutive_hard_failures = 0
                 return
             payload = resp.json()
+        except requests.exceptions.JSONDecodeError:
+            self.last_checked = now_hms()
+            self.status = "返回非 JSON"
+            self.note = "稍后重试"
+            self.consecutive_hard_failures = 0
+            return
         except requests.Timeout:
             self.last_checked = now_hms()
             self.status = "请求超时"
@@ -2961,7 +2967,7 @@ class AccountSource:
             phone_number = getattr(parts, "local_number", "") if parts is not None else ""
             if not phone_number:
                 phone_number = split_us_phone(getattr(self.linked_phone_source, "phone", "")).local_number
-        if not phone_number:
+        if self.linked_phone_source is None:
             phone_number = split_us_phone(self.phone).local_number
         candidates.append(("手机号码", phone_number))
 

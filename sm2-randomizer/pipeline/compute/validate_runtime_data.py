@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
+import stat
 import sys
 from typing import Any
 
@@ -56,8 +57,24 @@ def _issue(level: str, code: str, message: str) -> dict[str, str]:
 
 
 def _is_local_asset_path(value: Any) -> bool:
-    text = str(value or "").strip()
-    return bool(text) and not text.startswith("http://") and not text.startswith("https://")
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    # Stored paths are literal POSIX paths, never URLs or URL-encoded paths.
+    if any(char in value for char in '\\:%?#') or any(ord(char) < 32 for char in value):
+        return False
+    parts = value.split('/')
+    if any(part in ('', '.', '..') or part != part.strip() or part.endswith('.') for part in parts):
+        return False
+    return PurePosixPath(value).suffix.lower() in {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif'}
+
+
+def _is_asset_file(root: Path, value: str) -> bool:
+    try:
+        path = root / value
+        path.resolve(strict=True).relative_to(root.resolve(strict=True))
+        return stat.S_ISREG(path.stat().st_mode)
+    except (OSError, ValueError, RuntimeError):
+        return False
 
 
 def _walk(value: Any, path: str = "$"):
@@ -229,7 +246,7 @@ def validate_runtime_data(
         image_path = entry.get("image_path")
         if not _is_local_asset_path(image_path):
             structure_issues.append(_issue("error", "CLASS_IMAGE_PATH", f"{slug} 缺少合法本地职业图：{image_path}"))
-        elif not (resolved_assets_dir / str(image_path)).exists():
+        elif not _is_asset_file(resolved_assets_dir, image_path):
             structure_issues.append(_issue("error", "CLASS_IMAGE_FILE", f"{slug} 职业图文件不存在：{image_path}"))
 
         for forbidden in FORBIDDEN_CLASS_FIELDS:
@@ -242,10 +259,12 @@ def validate_runtime_data(
             continue
         seen_class_weapons: set[str] = set()
         for slot in ("primary", "secondary", "melee"):
-            items = pools.get(slot, [])
+            items = pools.get(slot)
             if not isinstance(items, list):
                 structure_issues.append(_issue("error", "LOADOUT_POOL_SLOT", f"{slug}.{slot} 必须为数组"))
                 continue
+            if not items and not (slot == 'primary' and slug in {'assault', 'bulwark'}):
+                structure_issues.append(_issue('error', 'LOADOUT_POOL_EMPTY', f'{slug}.{slot} 必须包含可抽取武器'))
             for item in items:
                 if not isinstance(item, dict):
                     structure_issues.append(_issue("error", "LOADOUT_POOL_ENTRY", f"{slug}.{slot} 存在非对象条目"))
@@ -260,7 +279,7 @@ def validate_runtime_data(
                 if not _is_local_asset_path(image_path):
                     structure_issues.append(_issue("error", "WEAPON_IMAGE_PATH", f"{slug}.{slot}.{weapon_slug} 缺少合法本地图标"))
                     continue
-                if not (resolved_assets_dir / str(image_path)).exists():
+                if not _is_asset_file(resolved_assets_dir, image_path):
                     structure_issues.append(_issue("error", "WEAPON_IMAGE_FILE", f"{weapon_slug} 图标文件不存在：{image_path}"))
                 if "original_name" in item:
                     structure_issues.append(_issue("error", "FORBIDDEN_WEAPON_FIELD", f"{slug}.{slot}.{weapon_slug} 不应包含字段：original_name"))
@@ -275,6 +294,8 @@ def validate_runtime_data(
 
     if len(class_slugs) != EXPECTED_CLASS_COUNT:
         structure_issues.append(_issue("error", "CLASS_COUNT", f"职业数量应为 {EXPECTED_CLASS_COUNT}，当前为 {len(class_slugs)}"))
+    if class_slugs != set(CLASS_SLUG_TO_ZH_NAME):
+        structure_issues.append(_issue('error', 'CLASS_SET', '职业集合必须为固定七职业'))
     if primary_count != EXPECTED_PRIMARY_COUNT:
         structure_issues.append(_issue("error", "PRIMARY_COUNT", f"主武器数量应为 {EXPECTED_PRIMARY_COUNT}，当前为 {primary_count}"))
     if secondary_count != EXPECTED_SECONDARY_COUNT:
@@ -346,7 +367,7 @@ def validate_runtime_data(
                 expected_prefix = f"talents/{expected_class_name}/"
                 if not normalized_icon_path.startswith(expected_prefix):
                     structure_issues.append(_issue("error", "TALENT_ICON_NAMING", f"{class_slug}/{talent_slug} 图标路径未落到中文目录：{icon_path}"))
-                if not (resolved_assets_dir / normalized_icon_path).exists():
+                if not _is_asset_file(resolved_assets_dir, normalized_icon_path):
                     structure_issues.append(_issue("error", "TALENT_ICON_FILE", f"{class_slug}/{talent_slug} 图标文件不存在：{icon_path}"))
             zh_name = str(node.get("talent_name_zh", "") or "").strip()
             en_name = str(node.get("talent_name_en", "") or "").strip()

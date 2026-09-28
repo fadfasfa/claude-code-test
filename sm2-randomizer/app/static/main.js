@@ -17,6 +17,8 @@
     "近战武器": "⚔"
   });
   const MODIFIER_CARD_REMOVE_ICON = "×";
+  const CLASS_SLUGS = new Set(['tactical', 'assault', 'vanguard', 'bulwark', 'sniper', 'heavy', 'techmarine']);
+  const OPTIONAL_PRIMARY_CLASSES = new Set(['assault', 'bulwark']);
 
   const state = {
     classes: [],
@@ -99,7 +101,10 @@
   }
 
   function resolveAssetPath(assetPath) {
-    return assetPath ? `${ASSET_BASE_PATH}/${assetPath}` : "";
+    if (typeof assetPath !== 'string' || /[\\:%?#\x00-\x1f]/.test(assetPath) ||
+        assetPath.split('/').some(part => !part || part === '.' || part === '..' || part !== part.trim() || part.endsWith('.')) ||
+        !/\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(assetPath)) return '';
+    return `${ASSET_BASE_PATH}/${assetPath}`;
   }
 
   function resolveClassImage(entry) {
@@ -122,6 +127,20 @@
       secondary: pickLoadout(pools.secondary),
       melee: pickLoadout(pools.melee)
     };
+  }
+
+  function hasCompleteLoadout(player) {
+    const entry = state.classLookup[player.classSlug];
+    if (!entry || entry.slug !== player.classSlug || !CLASS_SLUGS.has(entry.slug)) return false;
+    const pools = entry.loadout_pools || {};
+    return ['primary', 'secondary', 'melee'].every(slot => {
+      const items = pools[slot];
+      if (!Array.isArray(items)) return false;
+      if (!items.length) return slot === 'primary' && OPTIONAL_PRIMARY_CLASSES.has(entry.slug) && player[slot] == null;
+      const selected = player[slot];
+      return Boolean(selected && typeof selected.slug === 'string' && selected.slug.trim() &&
+        items.some(item => item && item.slug === selected.slug));
+    });
   }
 
   function drawTalents(classSlug) {
@@ -150,10 +169,10 @@
     if (!player.classSlug) {
       return "等待机魂锁定职业。";
     }
-    if (!player.hasDrawnLoadout && !player.hasDrawnTalents) {
+    if ((!player.hasDrawnLoadout || !hasCompleteLoadout(player)) && !player.hasDrawnTalents) {
       return "职业已锁定，待抽取军械与天赋。";
     }
-    if (!player.hasDrawnLoadout) {
+    if (!player.hasDrawnLoadout || !hasCompleteLoadout(player)) {
       return "职业已锁定，军械库待分配。";
     }
     if (!player.hasDrawnTalents) {
@@ -202,7 +221,7 @@
       secondary: next.secondary,
       melee: next.melee,
       confirmed: false,
-      hasDrawnLoadout: true
+      hasDrawnLoadout: hasCompleteLoadout({ ...next, classSlug: entry.slug })
     };
     invalidateSquadCompletion();
     render();
@@ -237,7 +256,7 @@
 
   function saveCurrentConfig() {
     const player = currentPlayer();
-    const readyToSave = player.classSlug && player.hasDrawnLoadout && player.hasDrawnTalents;
+    const readyToSave = player.classSlug && player.hasDrawnLoadout && hasCompleteLoadout(player) && player.hasDrawnTalents;
     if (!readyToSave || state.squadCompleted) {
       return;
     }
@@ -725,7 +744,7 @@
       
       let statusText = classEntry ? classEntry.name : "待分配";
       
-      const isReady = player.classSlug && player.hasDrawnLoadout && player.hasDrawnTalents;
+      const isReady = player.classSlug && player.hasDrawnLoadout && hasCompleteLoadout(player) && player.hasDrawnTalents;
       const confirmedClass = player.confirmed ? "confirmed" : "";
       const indicatorColor = isReady ? "#4ade80" : "#ef4444"; // 绿色 (三件全抽) / 红色 (未全抽)
 
@@ -1049,7 +1068,7 @@
   function renderFooter() {
     const player = currentPlayer();
     const saveButton = document.getElementById("save-config-button");
-    const readyToSave = player.classSlug && player.hasDrawnLoadout && player.hasDrawnTalents && !player.confirmed;
+    const readyToSave = player.classSlug && player.hasDrawnLoadout && hasCompleteLoadout(player) && player.hasDrawnTalents && !player.confirmed;
 
     let statusText = buildPlayerStatus(player);
     if (state.squadCompleted) {
@@ -1069,7 +1088,7 @@
       return;
     }
 
-    if (!player.hasDrawnLoadout) {
+    if (!player.hasDrawnLoadout || !hasCompleteLoadout(player)) {
       saveButton.textContent = "待抽武器";
       saveButton.disabled = true;
       return;

@@ -43,28 +43,133 @@ class ExtractorRegressionTest(unittest.TestCase):
     def test_invalid_subtitles_are_not_success_or_deleted(self):
         source = self.output / "bad.srt"
         source.write_text("not a subtitle", encoding="utf-8")
-        with patch.object(online, "download_subtitles_from_url", return_value=(True, str(source))):
+        with patch.object(online, "download_subtitles_from_url", return_value=(True, [str(source)])):
             result = online.process_online_video("https://example.invalid", self.output)
         self.assertFalse(result)
         self.assertTrue(source.exists())
         self.assertFalse((self.output / "bad.md").exists())
 
-    def test_vtt_pipeline_writes_body_before_removing_source(self):
+    def test_vtt_pipeline_writes_body_and_preserves_external_source(self):
         source = self.output / "fake.en.vtt"
         source.write_text("WEBVTT\n\nNOTE synthetic\n\ncue-1\n00:00:00.000 --> 00:00:01.000\nfirst\n\n00:01.000 --> 00:02.000\nsecond\n", encoding="utf-8")
-        with patch.object(online, "download_subtitles_from_url", return_value=(True, str(source))):
+        with patch.object(online, "download_subtitles_from_url", return_value=(True, [str(source)])):
             self.assertTrue(online.process_online_video("https://example.invalid", self.output))
         output = (self.output / "fake.en.md").read_text(encoding="utf-8")
         self.assertIn("first", output)
         self.assertIn("second", output)
-        self.assertFalse(source.exists())
+        self.assertTrue(source.exists())
 
     def test_unknown_subtitle_format_is_preserved(self):
         source = self.output / "fake.ass"
         source.write_text("synthetic unsupported subtitle", encoding="utf-8")
-        with patch.object(online, "download_subtitles_from_url", return_value=(True, str(source))):
+        with patch.object(online, "download_subtitles_from_url", return_value=(True, [str(source)])):
             self.assertFalse(online.process_online_video("https://example.invalid", self.output))
         self.assertTrue(source.exists())
+
+    def test_download_returns_unique_existing_candidates_in_language_order(self):
+        en = self.root / "fake.en.vtt"
+        zh = self.root / "fake.zh.srt"
+        en.write_text("WEBVTT", encoding="utf-8")
+        zh.write_text("synthetic", encoding="utf-8")
+        class FakeYoutubeDL:
+            def __init__(self, options):
+                self.options = options
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def extract_info(self, url, download):
+                return {"requested_subtitles": {
+                    "en": {"filepath": str(en)}, "zh": {"filepath": str(zh)},
+                    "zh-Hans": {"filepath": str(zh)}, "fr": {"filepath": str(en)},
+                }}
+        with patch.object(online, "load_yt_dlp", return_value=types.SimpleNamespace(YoutubeDL=FakeYoutubeDL)):
+            success, candidates = online.download_subtitles_from_url(
+                "https://example.invalid", self.output, ["zh", "en"]
+            )
+        self.assertTrue(success)
+        self.assertEqual(candidates, [str(zh), str(en)])
+
+    def test_subtitle_candidates_continue_after_invalid_or_unreadable_file(self):
+        invalid = self.root / "invalid.zh.srt"
+        unreadable = self.root / "missing.zh.vtt"
+        valid = self.root / "valid.en.vtt"
+        invalid.write_text("not a subtitle", encoding="utf-8")
+        valid.write_text("WEBVTT\n\n00:00.000 --> 00:01.000\nEnglish fallback\n", encoding="utf-8")
+        with patch.object(online, "download_subtitles_from_url", return_value=(True, [str(invalid), str(unreadable), str(valid)])), patch.object(online, "download_audio_from_url") as audio:
+            self.assertTrue(online.process_online_video("https://example.invalid", self.output))
+        audio.assert_not_called()
+        self.assertIn("English fallback", (self.output / "valid.en.md").read_text(encoding="utf-8"))
+        self.assertTrue(invalid.exists())
+
+    def test_reported_missing_subtitle_does_not_trigger_audio_fallback(self):
+        class FakeYoutubeDL:
+            def __init__(self, options):
+                self.folder = Path(options['outtmpl']).parent
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def extract_info(self, url, download):
+                return {'requested_subtitles': {'zh': {'filepath': str(self.folder / 'missing.zh.srt')}}}
+        with patch.object(online, 'load_yt_dlp', return_value=types.SimpleNamespace(YoutubeDL=FakeYoutubeDL)), patch.object(online, 'download_audio_from_url', return_value=(False, 'not expected')) as audio:
+            self.assertFalse(online.process_online_video('https://example.invalid', self.output))
+        audio.assert_not_called()
+
+    def test_audio_fallback_does_not_overwrite_existing_markdown(self):
+        existing = self.output / 'video.md'
+        existing.write_bytes(b'user-owned')
+        def download(url, folder):
+            audio = folder / 'video.wav'
+            audio.write_bytes(b'synthetic')
+            return True, str(audio)
+        with patch.object(online, 'download_subtitles_from_url', return_value=(False, 'none')), patch.object(online, 'download_audio_from_url', side_effect=download), patch.object(online, 'load_transcription_helpers', return_value=(lambda *args: [object()], lambda segments: 'new text')):
+            self.assertFalse(online.process_online_video('https://example.invalid', self.output))
+        self.assertEqual(existing.read_bytes(), b'user-owned')
+
+    def test_all_invalid_subtitles_fail_without_audio_fallback_and_keep_sources(self):
+        created = []
+        def download(url, folder, languages):
+            invalid = folder / "invalid.zh.srt"
+            invalid.write_text("not a subtitle", encoding="utf-8")
+            created.append(invalid)
+            return True, [str(invalid)]
+        with patch.object(online, "download_subtitles_from_url", side_effect=download), patch.object(online, "download_audio_from_url") as audio:
+            self.assertFalse(online.process_online_video("https://example.invalid", self.output))
+        audio.assert_not_called()
+        self.assertTrue(created[0].exists())
+
+    def test_success_cleans_only_own_subtitle_directory_and_stops_at_first_valid(self):
+        existing = self.output / "fake.zh.srt"
+        existing.write_bytes(b"user-owned")
+        created = []
+        def download(url, folder, languages):
+            first = folder / "fake.zh.srt"
+            second = folder / "fake.en.vtt"
+            first.write_text("1\n00:00:00,000 --> 00:00:01,000\nfirst\n", encoding="utf-8")
+            second.write_text("WEBVTT\n\n00:00.000 --> 00:01.000\nsecond\n", encoding="utf-8")
+            created.extend([first, second])
+            return True, [str(first), str(second)]
+        with patch.object(online, "download_subtitles_from_url", side_effect=download):
+            self.assertTrue(online.process_online_video("https://example.invalid", self.output))
+        self.assertEqual(existing.read_bytes(), b"user-owned")
+        self.assertIn("first", (self.output / "fake.zh.md").read_text(encoding="utf-8"))
+        self.assertFalse((self.output / "fake.en.md").exists())
+        self.assertFalse(created[0].parent.exists())
+
+    def test_existing_markdown_is_preserved_and_failed_source_retained(self):
+        existing = self.output / "fake.zh.md"
+        existing.write_text("user-owned", encoding="utf-8")
+        created = []
+        def download(url, folder, languages):
+            source = folder / "fake.zh.srt"
+            source.write_text("1\n00:00:00,000 --> 00:00:01,000\nfirst\n", encoding="utf-8")
+            created.append(source)
+            return True, [str(source)]
+        with patch.object(online, "download_subtitles_from_url", side_effect=download):
+            self.assertFalse(online.process_online_video("https://example.invalid", self.output))
+        self.assertEqual(existing.read_text(encoding="utf-8"), "user-owned")
+        self.assertTrue(created[0].exists())
 
     def test_directory_preserves_relative_paths_and_extensions_without_duplicates(self):
         inputs = self.root / "inputs"

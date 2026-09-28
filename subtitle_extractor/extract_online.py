@@ -7,6 +7,7 @@ import os
 import sys
 import argparse
 import re
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -47,12 +48,25 @@ def download_subtitles_from_url(url, output_dir, languages=None):
 
             # 检查字幕下载结果。
             if 'requested_subtitles' in info and info['requested_subtitles']:
-                for lang, sub_info in info['requested_subtitles'].items():
-                    if 'filepath' in sub_info:
-                        subtitle_file = sub_info['filepath']
-                        if os.path.exists(subtitle_file):
-                            return True, subtitle_file
-
+                requested = info['requested_subtitles']
+                candidates = []
+                seen = set()
+                ordered_languages = list(languages) + [
+                    lang for lang in requested if lang not in languages
+                ]
+                for lang in ordered_languages:
+                    sub_info = requested.get(lang) or {}
+                    subtitle_file = sub_info.get('filepath')
+                    # A reported download is still a candidate if it becomes
+                    # unreadable; conversion failure must not start Whisper.
+                    if not subtitle_file:
+                        continue
+                    identity = os.path.normcase(os.path.abspath(subtitle_file))
+                    if identity not in seen:
+                        seen.add(identity)
+                        candidates.append(subtitle_file)
+                if candidates:
+                    return True, candidates
                 return False, "未找到指定语言的字幕"
             else:
                 return False, "该视频没有可用字幕"
@@ -148,27 +162,33 @@ def process_online_video(url, output_dir, model_size="base", device="cpu", langu
 
     # 先尝试官方字幕。
     print("正在检查官方字幕...")
-    success, result = download_subtitles_from_url(url, output_dir, languages)
+    subtitle_dir = Path(tempfile.mkdtemp(prefix=".subtitle-files-", dir=output_dir))
+    success, result = download_subtitles_from_url(url, subtitle_dir, languages)
 
     if success:
-        print(f"官方字幕已下载：{result}")
-        # 转换为 Markdown。
-        markdown_content = convert_srt_to_markdown(result)
-        if markdown_content:
-            md_filename = Path(result).stem + '.md'
+        for subtitle_file in result:
+            print(f"官方字幕已下载：{subtitle_file}")
+            markdown_content = convert_srt_to_markdown(subtitle_file)
+            if not markdown_content:
+                continue
+            md_filename = Path(subtitle_file).stem + '.md'
             md_path = output_dir / md_filename
-
-            with open(md_path, 'w', encoding='utf-8') as f:
-                f.write(markdown_content)
-
-            os.remove(result)
-
+            try:
+                with open(md_path, 'x', encoding='utf-8') as f:
+                    f.write(markdown_content)
+            except OSError as e:
+                print(f"写入 Markdown 失败，原始字幕文件已保留：{e}")
+                return False
+            shutil.rmtree(subtitle_dir)
             print(f"处理成功：{url} -> {md_path}")
             return True
-        else:
-            print(f"字幕转换为 Markdown 失败，原始字幕文件已保留：{result}")
-            return False
+        if not any(subtitle_dir.iterdir()):
+            subtitle_dir.rmdir()
+        print(f"字幕转换为 Markdown 失败，原始字幕文件已保留：{result}")
+        return False
     else:
+        if not any(subtitle_dir.iterdir()):
+            subtitle_dir.rmdir()
         print(f"未找到官方字幕：{result}")
         print("正在下载音频流以进行转写...")
 
@@ -191,7 +211,7 @@ def process_online_video(url, output_dir, model_size="base", device="cpu", langu
                     return False
                 markdown_content = segments_to_markdown(segments)
                 md_path = output_dir / (audio_path.stem + '.md')
-                with open(md_path, 'w', encoding='utf-8') as f:
+                with open(md_path, 'x', encoding='utf-8') as f:
                     f.write(markdown_content)
             except Exception as e:
                 print(f"音频处理失败：{e}")
