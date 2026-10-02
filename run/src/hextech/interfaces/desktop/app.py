@@ -146,6 +146,8 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._feature_toggle_busy: set[str] = set()
         self._feature_toggle_lock = threading.Lock()
         self._closing = False
+        self._windows_session_end_pending = False
+        self._windows_session_end_epoch = 0
         self._shutdown_done_event = threading.Event()
         self._initialize_background_runtime()
 
@@ -172,6 +174,12 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         with suppress_desktop_activation():
             self.root.update_idletasks()
         self._desktop_hwnd = desktop_wrapper_hwnd(self.root)
+        from .session_end import install_windows_session_end_bridge
+        self._session_end_hwnd = install_windows_session_end_bridge(
+            self.root,
+            on_query=self._on_windows_query_end_session,
+            on_end=self._on_windows_end_session,
+        )
         self._desktop_wrapper_revision = 1
         self._desktop_window_presentation = DesktopWindowPresentation(self)
         self._desktop_window_presentation.start()
@@ -181,6 +189,40 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self.startup_timing.mark("tk_shell_built")
         self.root.after_idle(self._mark_first_idle_visible)
         self.root.after(50, self._schedule_post_visible_bootstrap)
+
+    def _on_windows_query_end_session(self) -> bool:
+        """快速允许注销/关机；只有随后确认结束才进入统一退出。"""
+
+        self._windows_session_end_epoch += 1
+        self._windows_session_end_pending = True
+        service_manager = getattr(self, "service_manager", None)
+        set_shutdown_requested = getattr(service_manager, "set_shutdown_requested", None)
+        if callable(set_shutdown_requested):
+            set_shutdown_requested(True)
+        return True
+
+    def _on_windows_end_session(self, ending: bool) -> None:
+        if ending:
+            self._windows_session_end_pending = True
+            # WM_ENDSESSION(TRUE) is the final confirmation.  The system may
+            # tear down the desktop immediately after this WndProc returns, so
+            # do the idempotent UI-side shutdown initiation synchronously;
+            # exit_application itself keeps slow process cleanup on a worker.
+            self._finish_windows_session_end(self._windows_session_end_epoch)
+            return
+        self._windows_session_end_pending = False
+        self._windows_session_end_epoch += 1
+        service_manager = getattr(self, "service_manager", None)
+        set_shutdown_requested = getattr(service_manager, "set_shutdown_requested", None)
+        if callable(set_shutdown_requested):
+            set_shutdown_requested(False)
+
+    def _finish_windows_session_end(self, epoch: int | None = None) -> None:
+        if not self._windows_session_end_pending or (
+            epoch is not None and epoch != self._windows_session_end_epoch
+        ):
+            return
+        self.exit_application()
 
     def _on_desktop_root_destroy(self, event) -> None:
         """直接销毁/Tcl 关闭也必须停止早期观察，不能把 UI 留给后台线程回收。"""

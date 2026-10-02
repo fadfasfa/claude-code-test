@@ -47,3 +47,29 @@ def test_candidate_shortcut_cleanup_is_exact_and_dry_run(tmp_path: Path) -> None
     with pytest.raises(ValueError, match="非候选桌面快捷方式"):
         cleanup_obsolete_candidate_shortcut(stable)
     assert stable.is_file()
+
+
+def test_candidate_cleanup_rejects_reparse_roots_before_enumeration(tmp_path: Path, monkeypatch) -> None:
+    import tooling.diagnostics.cleanup as cleanup
+
+    artifacts = tmp_path / ".artifacts"
+    (artifacts / "hx" / "releases").mkdir(parents=True)
+    candidate = artifacts / "hx" / "releases" / "HextechCompanion-20260914-rf8"
+    candidate.mkdir()
+    original = cleanup._is_reparse_point
+    monkeypatch.setattr(cleanup, "_is_reparse_point", lambda path: path.absolute() == artifacts.absolute() or original(path))
+
+    with pytest.raises(ValueError, match="reparse point"):
+        cleanup.candidate_package_targets(tmp_path)
+
+
+def test_python_cache_counts_only_successfully_removed_objects(tmp_path: Path, monkeypatch) -> None:
+    import tooling.diagnostics.cleanup as cleanup
+
+    cache_dir = tmp_path / "pkg" / "__pycache__"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "module.pyc").write_bytes(b"bytecode")
+    monkeypatch.setattr(cleanup, "BASE_DIR", tmp_path)
+
+    assert cleanup.cleanup_python_caches() == (1, 1)
+    assert not cache_dir.exists()

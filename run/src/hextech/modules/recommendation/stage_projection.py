@@ -175,15 +175,16 @@ def apply_scoped_stage_stats(
         if str(row.get("state") or "") != "ready" or str(row.get("status_code") or "") == "PRIVACY_OFF":
             projected.append(row)
             continue
-        if scope_status == "preparing":
+        if scope_status == "preparing" or scope_reason == "stage_unconfirmed":
+            unconfirmed = scope_reason == "stage_unconfirmed"
             row.update(
                 {
                     "data_status": "unavailable",
-                    "data_reason": "stats_preparing",
-                    "status_code": "STATS_PREPARING",
+                    "data_reason": "stage_unconfirmed" if unconfirmed else "stats_preparing",
+                    "status_code": "STAGE_UNCONFIRMED" if unconfirmed else "STATS_PREPARING",
                     "stats": {},
                     "stats_source": "",
-                    "stats_scope": "preparing",
+                    "stats_scope": "unavailable" if unconfirmed else "preparing",
                     "requested_stage": stage_context.stage,
                 }
             )

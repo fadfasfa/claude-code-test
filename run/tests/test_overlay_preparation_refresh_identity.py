@@ -84,3 +84,24 @@ def test_closed_or_invalidated_request_cannot_be_refreshed(monkeypatch):
     worker.invalidate()
     assert worker._latest_request is None
     assert not worker._needs_refresh(old)
+
+
+def test_only_waiting_stage_tracks_new_publications(monkeypatch):
+    worker = module.OverlayDataPreparation(SimpleNamespace())
+    monkeypatch.setattr(threading.Thread, "start", lambda self: None)
+    context = {"ok": True, "champion_id": "233", "player_level": 11,
+               "publisher_instance_id": "broker", "publication_seq": 1}
+    first = worker.request(event(), context, completed=None, host_read_at=10.)
+    context["publication_seq"] = 2
+    second = worker.request(event(), context, completed=None, host_read_at=10.2)
+    assert first != second
+    boundary = worker._stage_started_at
+    # A stale preparation cannot publish or freeze the new request.
+    worker._publish(worker._version - 1, SimpleNamespace(key=first, scope={"frozen": True}))
+    assert worker._frozen_stage_identity is None
+    worker._publish(worker._version, SimpleNamespace(key=second, scope={"frozen": True}))
+    fixed = worker.request(event(), context, completed=None, host_read_at=10.3)
+    for seq in range(3, 30):
+        context["publication_seq"] = seq
+        assert worker.request(event(), context, completed=None, host_read_at=10.4) == fixed
+    assert worker._stage_started_at == boundary

@@ -63,6 +63,7 @@ from hextech.interfaces.overlay.host_sync import (
     _write_overlay_session_report,
     _write_real_session_evidence,
 )
+from hextech.interfaces.overlay.draw_evidence import freeze_draw_statistics
 from hextech.interfaces.overlay.host_visibility import (
     _apply_transparent_background,
     _draw_diagnostic_status,
@@ -504,6 +505,8 @@ def _schedule_event_render(
                 model,
                 ready_frame=prepared.phase == "ready" and _snapshot_has_complete_ready_slots(snapshot),
             )
+            visibility["drawn_statistics"] = freeze_draw_statistics(prepared, model)
+            visibility["drawn_statistics"]["draw_completed_at"] = visibility.get("draw_completed_at")
             visibility["rendered_selection_key"] = current_selection_key
             visibility["render_semantic_key"] = semantic_key
             visibility["last_render_model"] = model

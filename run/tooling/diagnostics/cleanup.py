@@ -11,6 +11,7 @@ from __future__ import annotations
 import shutil
 import argparse
 import re
+import stat
 from pathlib import Path
 
 
@@ -22,37 +23,86 @@ CANDIDATE_RELEASE_PATTERN = re.compile(r"HextechCompanion-\d{8}(?:T\d{6})?-rf[\w
 OBSOLETE_CANDIDATE_SHORTCUT_NAME = "Hextech重构候选.lnk"
 
 
-def _remove_path(target: Path, *, dry_run: bool, removed: list[Path] | None = None) -> bool:
-    if not target.exists():
+def _is_reparse_point(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+    except OSError:
         return False
+    return stat.S_ISLNK(metadata.st_mode) or bool(getattr(metadata, "st_file_attributes", 0) & 0x400)
+
+
+def _reject_reparse_chain(path: Path, *, stop_at: Path | None = None) -> None:
+    stop = Path(stop_at).absolute() if stop_at is not None else None
+    raw = Path(path).absolute()
+    for component in (raw, *raw.parents):
+        if _is_reparse_point(component):
+            raise ValueError(f"拒绝处理 reparse point：{component}")
+        if stop is not None and component == stop:
+            break
+
+
+def _remove_path(target: Path, *, dry_run: bool, removed: list[Path] | None = None) -> bool:
+    if not target.exists() and not target.is_symlink():
+        return False
+    if _is_reparse_point(target):
+        raise RuntimeError(f"拒绝删除 reparse point：{target}")
     if removed is not None:
         removed.append(target)
     if dry_run:
         return True
-    if target.is_dir():
-        shutil.rmtree(target, ignore_errors=True)
-    else:
-        target.unlink()
+    try:
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+    except OSError as exc:
+        raise RuntimeError(f"清理失败：{target}: {exc}") from exc
+    if target.exists() or target.is_symlink():
+        raise RuntimeError(f"清理后目标仍存在：{target}")
     return True
 
 
 def cleanup_python_caches(*, dry_run: bool = False) -> tuple[int, int]:
     removed_dirs = 0
     removed_files = 0
-    for cache_dir in BASE_DIR.rglob("__pycache__"):
-        if cache_dir.is_dir():
-            if not dry_run:
-                shutil.rmtree(cache_dir, ignore_errors=True)
+    cache_dirs: list[Path] = []
+    cache_files: list[Path] = []
+    stack = [BASE_DIR]
+    while stack:
+        current = stack.pop()
+        if _is_reparse_point(current):
+            continue
+        try:
+            entries = list(current.iterdir())
+        except OSError as exc:
+            raise RuntimeError(f"扫描 Python 缓存失败：{current}: {exc}") from exc
+        for entry in entries:
+            if _is_reparse_point(entry):
+                continue
+            if entry.is_dir():
+                if entry.name == "__pycache__":
+                    cache_dirs.append(entry)
+                    try:
+                        cache_entries = list(entry.iterdir())
+                    except OSError as exc:
+                        raise RuntimeError(f"扫描 Python 缓存失败：{entry}: {exc}") from exc
+                    for cache_entry in cache_entries:
+                        if (
+                            not _is_reparse_point(cache_entry)
+                            and cache_entry.is_file()
+                            and cache_entry.suffix.casefold() in {".pyc", ".pyo"}
+                        ):
+                            cache_files.append(cache_entry)
+                else:
+                    stack.append(entry)
+            elif entry.is_file() and entry.suffix.casefold() in {".pyc", ".pyo"}:
+                cache_files.append(entry)
+    for pyc_file in cache_files:
+        if _remove_path(pyc_file, dry_run=dry_run):
+            removed_files += 1
+    for cache_dir in sorted(cache_dirs, key=lambda path: len(path.parts), reverse=True):
+        if _remove_path(cache_dir, dry_run=dry_run):
             removed_dirs += 1
-    for pattern in ("*.pyc", "*.pyo"):
-        for pyc_file in BASE_DIR.rglob(pattern):
-            if pyc_file.is_file():
-                try:
-                    if not dry_run:
-                        pyc_file.unlink()
-                    removed_files += 1
-                except OSError:
-                    pass
     return removed_dirs, removed_files
 
 
@@ -66,30 +116,37 @@ def cleanup_build_outputs(*, dry_run: bool = False) -> list[Path]:
 def candidate_package_targets(base_dir: Path = BASE_DIR) -> list[Path]:
     """只枚举受管候选二进制，不包含 smoke 报告或隔离用户数据。"""
 
-    artifacts = (base_dir / ".artifacts").resolve(strict=False)
+    artifacts = base_dir / ".artifacts"
+    _reject_reparse_chain(artifacts, stop_at=base_dir)
     targets: list[Path] = []
     for root in (artifacts / "hx" / "releases", artifacts / "hx" / "staging"):
+        _reject_reparse_chain(root, stop_at=artifacts)
         if not root.is_dir():
             continue
         for path in root.iterdir():
+            _reject_reparse_chain(path, stop_at=root)
             name = path.stem if path.is_file() and path.suffix.casefold() == ".zip" else path.name
             if CANDIDATE_RELEASE_PATTERN.fullmatch(name):
                 targets.append(path)
     for smoke_root in artifacts.glob("rf*-smoke"):
+        _reject_reparse_chain(smoke_root, stop_at=artifacts)
         if not smoke_root.is_dir():
             continue
         for path in smoke_root.iterdir():
+            _reject_reparse_chain(path, stop_at=smoke_root)
             if path.is_dir() and CANDIDATE_RELEASE_PATTERN.fullmatch(path.name):
                 targets.append(path)
     return sorted(set(targets), key=lambda path: str(path).casefold())
 
 
 def cleanup_candidate_packages(*, base_dir: Path = BASE_DIR, dry_run: bool = False) -> list[Path]:
-    artifacts = (base_dir / ".artifacts").resolve(strict=False)
+    artifacts = base_dir / ".artifacts"
+    _reject_reparse_chain(artifacts, stop_at=base_dir)
     removed: list[Path] = []
     for target in candidate_package_targets(base_dir):
+        _reject_reparse_chain(target, stop_at=artifacts)
         resolved = target.resolve(strict=False)
-        if artifacts not in resolved.parents or target.is_symlink():
+        if artifacts not in resolved.parents:
             raise ValueError(f"拒绝清理越界或链接候选：{target}")
         _remove_path(target, dry_run=dry_run, removed=removed)
     return removed
@@ -98,10 +155,20 @@ def cleanup_candidate_packages(*, base_dir: Path = BASE_DIR, dry_run: bool = Fal
 def cleanup_obsolete_candidate_shortcut(path: Path, *, dry_run: bool = False) -> bool:
     """删除已核验的旧候选入口；稳定快捷方式名称永不匹配此函数。"""
 
-    target = path.resolve(strict=False)
-    if target.name != OBSOLETE_CANDIDATE_SHORTCUT_NAME or target.parent.name.casefold() != "desktop":
-        raise ValueError(f"拒绝删除非候选桌面快捷方式：{target}")
-    if target.exists() and (not target.is_file() or target.is_symlink()):
+    raw = Path(path).expanduser()
+    if raw.name != OBSOLETE_CANDIDATE_SHORTCUT_NAME or raw.parent.name.casefold() != "desktop":
+        raise ValueError(f"拒绝删除非候选桌面快捷方式：{raw}")
+    for component in (raw, *raw.parents):
+        try:
+            metadata = component.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise ValueError(f"无法核验候选快捷方式路径：{component}") from exc
+        if stat.S_ISLNK(metadata.st_mode) or getattr(metadata, "st_file_attributes", 0) & 0x400:
+            raise ValueError(f"拒绝处理 reparse point 快捷方式：{component}")
+    target = raw.resolve(strict=False)
+    if target.exists() and not target.is_file():
         raise ValueError(f"拒绝删除非普通候选快捷方式：{target}")
     return _remove_path(target, dry_run=dry_run)
 

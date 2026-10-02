@@ -709,6 +709,7 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
         if self._closing:
             return
         self._closing = True
+        self._windows_session_end_pending = False
         from .avatar_loading import close_avatar_loader
         close_avatar_loader(self)
         presentation = getattr(self, "_desktop_window_presentation", None)

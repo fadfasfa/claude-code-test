@@ -36,6 +36,26 @@ def build_draft():
     return drafts[-1]
 
 
+def test_never_ready_slot_records_duration_and_survives_success_coalescing():
+    collector, clock, drafts = buffer()
+    for index in range(1, 7):
+        clock[0] = (index - 1) * .3
+        payload = event(index, epoch=1, ready=True)
+        payload["source"].update(scene_state="active", scene_kind="hextech")
+        payload["slots"][2].update(state="detecting", temporal_state="evidence_starved")
+        collector.capture(Image.new("RGB", (320, 200), "navy"), payload)
+        collector.observe_result(payload)
+    final = collector.last.metadata["final_classification"]
+    assert final["unconfirmed_elapsed_ms"] == 1500
+    assert final["slot_unconfirmed_elapsed_ms"] == [0, 0, 1500]
+    assert "full_ready_elapsed_ms" not in final
+    collector.finish({"source": {"reason": "selection_completed"}})
+    anomaly = drafts[-1]
+    assert anomaly.retention_class == "anomaly"
+    clean = replace(build_draft(), diagnostic_id=anomaly.diagnostic_id)
+    assert module.coalesce_selection_drafts(anomaly, clean).retention_class == "anomaly"
+
+
 def test_capture_ab_switch_defaults_on_without_changing_roi_debug(monkeypatch):
     from hextech.modules.vision.diagnostic_settings import selection_capture_enabled, SELECTION_CAPTURE_ENV
 

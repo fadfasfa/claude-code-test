@@ -213,7 +213,7 @@ def test_broker_live_client_wins_and_revision_only_changes_on_semantic_change(tm
         "game_time_seconds": 50.0,
     }
     lcu = {"champion_id": "4", "champion_name": "崔斯特", "source": "lcu-champ-select"}
-    times = iter((base_time, base_time + 1.0))
+    times = iter([base_time] * 4 + [base_time + 1.0] * 4)
     broker = OverlayContextBroker(
         context_path=context_path,
         window_probe=lambda: probe,
@@ -279,7 +279,7 @@ def test_broker_fences_old_live_payload_when_new_game_process_appears(tmp_path: 
             ({"champion_id": "8", "source": "live-client-data", "game_time_seconds": 1.0}, ""),
         )
     )
-    clock = iter((base_time, base_time + 2.0, base_time + 3.0))
+    clock = iter([base_time] * 4 + [base_time + 2.0] * 4 + [base_time + 3.0] * 4)
     context_path = tmp_path / "context.json"
     broker = OverlayContextBroker(
         context_path=context_path,
@@ -323,7 +323,7 @@ def test_broker_accepts_same_champion_in_consecutive_games_by_game_time(tmp_path
             ({"champion_id": "8", "source": "live-client-data", "game_time_seconds": 1.0}, ""),
         )
     )
-    clock = iter((base_time, base_time + 2.0))
+    clock = iter([base_time] * 4 + [base_time + 2.0] * 4)
     context_path = tmp_path / "context.json"
     broker = OverlayContextBroker(
         context_path=context_path,
@@ -490,7 +490,7 @@ def test_lcu_selection_ticket_cannot_cross_game_instance(tmp_path: Path) -> None
             (None, "lcu-no-session"),
         )
     )
-    clock = iter((base_time, base_time + 1, base_time + 2, base_time + 3))
+    clock = iter([base_time] * 2 + [base_time + 1] * 4 + [base_time + 2] * 2 + [base_time + 3] * 4)
     context_path = tmp_path / "context.json"
     broker = OverlayContextBroker(
         context_path=context_path,

@@ -11,6 +11,34 @@ from pathlib import Path
 
 
 class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
+    def test_invalid_or_oversized_json_is_not_copied_as_text(self):
+        from tooling.diagnostics import runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "debug.json"
+            target = Path(tmp) / "out.json"
+            source.write_text('{"token":"secret",', encoding="utf-8")
+            copied = []
+            runtime._copy_debug_file_redacted(source, target, copied=copied)
+            self.assertFalse(target.exists())
+            self.assertEqual(copied, [])
+
+            source.write_bytes(b"{" + b"\"blob\":\"" + b"x" * runtime.MAX_DIAGNOSTIC_JSON_BYTES + b"\"}")
+            runtime._copy_debug_file_redacted(source, target, copied=copied)
+            self.assertFalse(target.exists())
+            self.assertEqual(copied, [])
+
+    def test_collect_rejects_invalid_tail_bounds(self):
+        from tooling.diagnostics.runtime import collect_runtime_diagnostics
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "runtime"
+            root.mkdir()
+            for value in (0, -1, 10_001):
+                with self.subTest(value=value):
+                    with self.assertRaises(ValueError):
+                        collect_runtime_diagnostics(output_dir=Path(tmp) / f"out-{value}", runtime_root=root, tail_lines=value)
+
     def test_collects_runtime_logs_and_skips_sensitive_files(self):
         from tooling.diagnostics.runtime import collect_runtime_diagnostics
 

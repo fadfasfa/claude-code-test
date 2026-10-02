@@ -470,6 +470,7 @@ def _write_overlay_session_report(
             "slot": _safe_slot_number(item.get("slot"), index),
             "status_code": str(item.get("status_code") or ""),
             "status_text": str(item.get("status_text") or "")[:80],
+            "stats_text": str(item.get("stats_text") or "")[:160],
             "stats_source": str(_recommendation_row(index).get("stats_source") or ""),
             "stats_scope": str(_recommendation_row(index).get("stats_scope") or ""),
             "stats_generation_id": str(
@@ -644,6 +645,7 @@ def _write_overlay_session_report(
             "error": str((context or {}).get("error") or "") if isinstance(context, Mapping) else "",
             "player_level": (context or {}).get("player_level") if isinstance(context, Mapping) else None,
         },
+        "drawn_statistics": dict(visibility.get("drawn_statistics") or {}),
         "stats_scope": dict(visibility.get("pinned_stats_scope") or {})
         if isinstance(visibility.get("pinned_stats_scope"), Mapping)
         else {},

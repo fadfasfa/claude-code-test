@@ -9,6 +9,8 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 
 def test_export_user_diagnostics_creates_limited_redacted_zip(tmp_path, monkeypatch):
     from hextech.modules.session import diagnostics as user_diagnostics
@@ -243,3 +245,24 @@ def test_export_user_diagnostics_redacts_local_absolute_paths(tmp_path, monkeypa
     assert ".env" not in exported_blob
     assert "<local-path>" in exported_blob
     assert "<sensitive-file>" in exported_blob
+
+
+def test_export_user_diagnostics_rejects_oversized_json_and_tail(tmp_path, monkeypatch):
+    from hextech.modules.session import diagnostics as user_diagnostics
+
+    runtime_root = tmp_path / "runtime"
+    state_dir = runtime_root / "state"
+    logs_dir = runtime_root / "logs"
+    state_dir.mkdir(parents=True)
+    logs_dir.mkdir()
+    oversized = state_dir / "startup_status.json"
+    oversized.write_bytes(b"{" + b"\"blob\":\"" + b"x" * user_diagnostics.MAX_DIAGNOSTIC_JSON_BYTES + b"\"}")
+    monkeypatch.setattr(user_diagnostics, "get_runtime_root_dir", lambda: runtime_root)
+
+    with pytest.raises(ValueError):
+        user_diagnostics.export_user_diagnostics(output_dir=tmp_path / "bad-zero", tail_lines=0)
+    with pytest.raises(ValueError):
+        user_diagnostics.export_user_diagnostics(output_dir=tmp_path / "bad-large", tail_lines=10_001)
+
+    result = user_diagnostics.export_user_diagnostics(output_dir=tmp_path / "ok", tail_lines=1)
+    assert not (result.bundle_dir / "state" / "startup_status.json").exists()

@@ -106,6 +106,8 @@ class DesktopBootstrapMixin:
                 manage_overlay_runtime=False,
                 listener_interval_seconds=3.0,
             )
+            if self._windows_session_end_pending:
+                service_manager.set_shutdown_requested(True)
             if self._closing:
                 return
             def start_data_service() -> None:
@@ -126,6 +128,9 @@ class DesktopBootstrapMixin:
                     restore_persisted_game_overlay=False,
                 )
                 supervisor_future.result()
+                if self._windows_session_end_pending:
+                    service_manager.shutdown(timeout_seconds=0.5, final_timeout_seconds=4.5)
+                    return
                 self._run_on_ui_thread(self._activate_overlay_control_plane)
 
                 def load_local_snapshot() -> list[dict]:
@@ -297,6 +302,8 @@ class DesktopBootstrapMixin:
         """启动独立执行面，并用非 UI 线程续租，避免 Tk 主循环卡顿误杀运行态。"""
 
         try:
+            if getattr(self, "_closing", False) or getattr(self, "_windows_session_end_pending", False):
+                return
             kwargs: dict[str, object] = {
                 "parent_pid": os.getpid(),
                 "prewarm_templates": True,
@@ -307,6 +314,10 @@ class DesktopBootstrapMixin:
             self.runtime_supervisor = ui_runtime.start_runtime_supervisor_process(
                 **kwargs,
             )
+            if getattr(self, "_closing", False) or getattr(self, "_windows_session_end_pending", False):
+                ui_runtime.stop_runtime_supervisor_process(self.runtime_supervisor)
+                self.runtime_supervisor = None
+                return
             self._start_supervisor_lease_thread()
             if restore_persisted_game_overlay:
                 self._restore_persisted_game_overlay()

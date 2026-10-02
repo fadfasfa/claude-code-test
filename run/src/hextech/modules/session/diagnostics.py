@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 import re
+import stat
 import time
 import zipfile
+from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +52,8 @@ LOG_TAIL_ALLOWLIST = {
     "hextech_error.log",
 }
 SENSITIVE_REPORT_DIRS = {"state", "logs"}
+MAX_DIAGNOSTIC_JSON_BYTES = 4 * 1024 * 1024
+MAX_DIAGNOSTIC_TAIL_LINES = 10_000
 TIMESTAMP_PREFIX_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[,.]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
@@ -159,8 +163,14 @@ def redact_diagnostic_tail_line(line: str) -> str:
 
 
 def _read_json(path: Path) -> dict:
+    if _is_reparse_path(path):
+        return {}
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_DIAGNOSTIC_JSON_BYTES + 1)
+        if len(raw) > MAX_DIAGNOSTIC_JSON_BYTES:
+            return {}
+        payload = json.loads(raw.decode("utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return {}
     if not isinstance(payload, dict):
@@ -202,33 +212,76 @@ def _line_timestamp(line: str) -> float | None:
     return _timestamp_to_epoch(match.group(1))
 
 
-def _recent_tail_lines(path: Path, *, line_count: int, since_timestamp: float | None) -> list[str]:
+def _is_reparse_path(path: Path) -> bool:
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        metadata = path.lstat()
     except OSError:
-        return []
-    if line_count <= 0 or not lines:
-        return []
-    if since_timestamp is None:
-        return lines[-line_count:]
+        return False
+    return stat.S_ISLNK(metadata.st_mode) or bool(getattr(metadata, "st_file_attributes", 0) & 0x400)
 
-    parsed = [(line, _line_timestamp(line)) for line in lines]
-    if any(timestamp is not None for _, timestamp in parsed):
-        filtered: list[str] = []
-        keep_continuation = False
-        for line, timestamp in parsed:
-            if timestamp is not None:
-                keep_continuation = timestamp >= since_timestamp
-            if keep_continuation:
-                filtered.append(line)
-        return filtered[-line_count:]
+
+def _iter_bounded_lines(path: Path, *, max_line_bytes: int = 64 * 1024):
+    if _is_reparse_path(path):
+        return
+    pending = bytearray()
+    oversized = False
+    try:
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(64 * 1024), b""):
+                pending.extend(chunk)
+                while True:
+                    newline = pending.find(b"\n")
+                    if newline < 0:
+                        if len(pending) > max_line_bytes:
+                            oversized = True
+                            del pending[: len(pending) - max_line_bytes]
+                        break
+                    raw = bytes(pending[:newline])
+                    del pending[: newline + 1]
+                    if oversized or len(raw) > max_line_bytes:
+                        yield "<truncated-line>"
+                    else:
+                        yield raw.decode("utf-8", errors="replace").rstrip("\r")
+                    oversized = False
+            if pending:
+                if oversized or len(pending) > max_line_bytes:
+                    yield "<truncated-line>"
+                else:
+                    yield bytes(pending).decode("utf-8", errors="replace").rstrip("\r")
+    except OSError:
+        return
+
+
+def _recent_tail_lines(path: Path, *, line_count: int, since_timestamp: float | None) -> list[str]:
+    if line_count <= 0 or _is_reparse_path(path):
+        return []
+    tail = deque(maxlen=line_count)
+    filtered_tail = deque(maxlen=line_count)
+    has_timestamp = False
+    keep_continuation = False
+    for line in _iter_bounded_lines(path):
+        tail.append(line)
+        timestamp = _line_timestamp(line)
+        if timestamp is not None:
+            has_timestamp = True
+            keep_continuation = since_timestamp is None or timestamp >= since_timestamp
+        elif since_timestamp is None:
+            keep_continuation = True
+        if since_timestamp is None or keep_continuation:
+            filtered_tail.append(line)
+    if not tail:
+        return []
+    if has_timestamp:
+        return list(filtered_tail)
+    if since_timestamp is None:
+        return list(tail)
 
     try:
         if path.stat().st_mtime < since_timestamp:
             return []
     except OSError:
         return []
-    return lines[-line_count:]
+    return list(tail)
 
 
 def _write_text_tail(source: Path, target: Path, *, tail_lines: int, since_timestamp: float | None) -> bool:
@@ -254,14 +307,25 @@ def _iter_skipped_sensitive(runtime_root: Path) -> list[str]:
     skipped: list[str] = []
     for dirname in SENSITIVE_REPORT_DIRS:
         directory = runtime_root / dirname
-        if not directory.is_dir():
+        if _is_reparse_path(directory) or not directory.is_dir():
             continue
-        for path in directory.rglob("*"):
-            if path.is_file() and _is_sensitive_path(path):
-                try:
-                    skipped.append(path.relative_to(runtime_root).as_posix())
-                except ValueError:
-                    skipped.append(path.name)
+        stack = [directory]
+        while stack:
+            current = stack.pop()
+            try:
+                entries = list(current.iterdir())
+            except OSError:
+                continue
+            for path in entries:
+                if path.is_dir():
+                    if not _is_reparse_path(path):
+                        stack.append(path)
+                    continue
+                if not _is_reparse_path(path) and path.is_file() and _is_sensitive_path(path):
+                    try:
+                        skipped.append(path.relative_to(runtime_root).as_posix())
+                    except ValueError:
+                        skipped.append(path.name)
     return sorted(set(skipped))
 
 
@@ -269,9 +333,20 @@ def _zip_directory(source_dir: Path, zip_path: Path) -> None:
     if zip_path.exists():
         zip_path.unlink()
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted(source_dir.rglob("*")):
-            if path.is_file() and path != zip_path:
-                archive.write(path, path.relative_to(source_dir).as_posix())
+        stack = [source_dir]
+        while stack:
+            current = stack.pop()
+            try:
+                entries = list(current.iterdir())
+            except OSError:
+                continue
+            for path in entries:
+                if _is_reparse_path(path):
+                    continue
+                if path.is_dir():
+                    stack.append(path)
+                elif path.is_file() and path != zip_path:
+                    archive.write(path, path.relative_to(source_dir).as_posix())
 
 
 def export_user_diagnostics(
@@ -279,8 +354,16 @@ def export_user_diagnostics(
     recent_minutes: int = 180,
     tail_lines: int = 500,
 ) -> DiagnosticsExportResult:
+    try:
+        tail_lines = int(tail_lines)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("tail_lines 必须是正整数") from exc
+    if not 0 < tail_lines <= MAX_DIAGNOSTIC_TAIL_LINES:
+        raise ValueError(f"tail_lines 必须在 1..{MAX_DIAGNOSTIC_TAIL_LINES} 范围内")
     runtime_root = Path(get_runtime_root_dir())
     export_root = Path(output_dir) if output_dir is not None else runtime_root / "reports" / "user_diagnostics"
+    if _is_reparse_path(runtime_root) or any(_is_reparse_path(parent) for parent in runtime_root.parents):
+        raise ValueError("诊断 runtime_root 路径不得是 symlink/junction/reparse point")
     ensure_private_runtime_dir(export_root)
     bundle_dir = export_root / _timestamp_label()
     suffix = 1
@@ -295,6 +378,8 @@ def export_user_diagnostics(
     since_timestamp = time.time() - max(1, int(recent_minutes)) * 60
 
     state_dir = runtime_root / "state"
+    if _is_reparse_path(state_dir):
+        raise ValueError("诊断 state 路径不得是 symlink/junction/reparse point")
     for filename in sorted(STATE_JSON_ALLOWLIST):
         source = state_dir / filename
         if not source.is_file() or _is_sensitive_path(source):
@@ -315,6 +400,8 @@ def export_user_diagnostics(
             copied_files += 1
 
     logs_dir = runtime_root / "logs"
+    if _is_reparse_path(logs_dir):
+        raise ValueError("诊断 logs 路径不得是 symlink/junction/reparse point")
     for filename in sorted(LOG_TAIL_ALLOWLIST):
         source = logs_dir / filename
         if not source.is_file() or _is_sensitive_path(source):

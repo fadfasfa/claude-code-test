@@ -11,7 +11,7 @@ import json
 import threading
 import time
 from collections.abc import Mapping
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -60,6 +60,7 @@ def preparation_key(
                str(slot.get("visual_variant_id") or ""))
               for slot in slots[:3] if isinstance(slot, Mapping)),
         first_selection_started(event),
+        context.get("_stage_wait_revision"),
         (int(viewport_size[0]), int(viewport_size[1])),
         "expanded" if str(display_mode) == "expanded" else "compact",
     )
@@ -80,6 +81,7 @@ class DisplayModel:
     timings: Mapping[str, float]
     host_read_at: float
     input_timing: Mapping[str, float] | None = None
+    context: Mapping[str, Any] | None = None
 
 
 # 保留既有调用名，不再建立第二份结构/状态源。
@@ -120,6 +122,11 @@ class OverlayDataPreparation:
         self._bootstrap_view: Any = None
         self._generation_status: dict[str, Any] = {}
         self._display_summaries = DisplaySummaryCache(max_entries=256)
+        self._stage_identity: tuple[Any, ...] | None = None
+        self._stage_started_at = 0.0
+        self._frozen_stage_identity: tuple[Any, ...] | None = None
+        self._observed_stage_key: tuple[Any, ...] | None = None
+        self._observed_stage_at = 0.0
 
     def warmup(self) -> None:
         """真实 Host 启动即后台校验 seed；不固定尚未开始的游戏局。"""
@@ -139,6 +146,9 @@ class OverlayDataPreparation:
             self._observed_game_identity = identity
             if identity[0]:
                 self._observed_selection_started |= first_selection_started(event)
+                stage_key = (identity, source.get("selection_epoch"))
+                if first_selection_started(event) and stage_key != self._observed_stage_key:
+                    self._observed_stage_key, self._observed_stage_at = stage_key, time.time()
 
     def request_idle_refresh(self, *, now: float | None = None) -> bool:
         """无对局请求时最多每秒提交一次元数据预热，不在 GUI 线程读取快照。"""
@@ -174,6 +184,16 @@ class OverlayDataPreparation:
         if fragment_selection(event) or not str(source.get("session_id") or ""):
             self.invalidate()
             return None
+        stage_identity = (requested_game, source.get("selection_epoch"), context.get("champion_id"))
+        with self._condition:
+            if stage_identity != self._stage_identity:
+                self._stage_identity = stage_identity
+                self._stage_started_at = (self._observed_stage_at if stage_identity[:2] == self._observed_stage_key
+                                          else time.time())
+                self._frozen_stage_identity = None
+            context = {**context, "_stage_confirmation_started_at": self._stage_started_at,
+                       "_stage_wait_revision": None if self._frozen_stage_identity == stage_identity else
+                       (context.get("publisher_instance_id"), context.get("publication_seq"))}
         key = preparation_key(
             event,
             context,
@@ -222,6 +242,8 @@ class OverlayDataPreparation:
             self._latest_request = None
             self._prewarmed_key = None
             self._result = None
+            self._stage_identity = None
+            self._frozen_stage_identity = None
 
     def poll(self, key: tuple[Any, ...] | None) -> PreparedOverlayData | None:
         with self._condition:
@@ -261,6 +283,8 @@ class OverlayDataPreparation:
         with self._condition:
             if self._valid(version, result.key):
                 self._result = result
+                if result.scope.get("frozen"):
+                    self._frozen_stage_identity = self._stage_identity
                 self._error = ""
 
     def _refresh_idle_snapshot(self, version: int) -> None:
@@ -411,6 +435,8 @@ class OverlayDataPreparation:
                 key, event, model, projected, generation, scope, scope_key, content_key, phase,
                 {**timings, "prepared_ms": (time.perf_counter() - started) * 1000.0}, host_read_at,
                 {**input_timing, "preparation_completed_at": time.time()},
+                {k: context.get(k) for k in ("champion_id", "player_level", "game_instance_id", "window_hwnd",
+                    "publisher_instance_id", "publication_seq", "sample_started_at", "sample_completed_at")},
             ))
 
         preliminary = prepare_synergy_display_summaries(
@@ -431,12 +457,16 @@ class OverlayDataPreparation:
         if previous is None or previous.phase != "ready":
             publish(preliminary, state, {}, ("preparing",), "hints_ready")
         scope_identity = (str(key[0]), str(context.get("champion_id") or ""))
+        local_scope = copy(self._scope)
         if scope_identity != self._scope_identity:
-            self._scope.reset()
+            local_scope.reset()
+        scope = local_scope.resolve(event, context, view, completed_selection_count=completed,
+                                    confirmation_started_at=context.get("_stage_confirmation_started_at"))
+        with self._condition:
+            if not self._valid(version, key):
+                return
+            self._scope = local_scope
             self._scope_identity = scope_identity
-        scope = self._scope.resolve(event, context, view, completed_selection_count=completed)
-        if not self._valid(version, key):
-            return
         timings["scoped_stats_ready_ms"] = (time.perf_counter() - started) * 1000.0
         projected = OverlayStageRuntime.project(state, scope, view)
         scope_status = scope.to_status()

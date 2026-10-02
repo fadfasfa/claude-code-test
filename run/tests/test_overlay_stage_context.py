@@ -125,16 +125,17 @@ class _FakeCache:
 
 
 def _event(epoch: int) -> dict[str, object]:
-    return {"source": {"session_id": "game-a", "selection_epoch": epoch}}
+    return {"source": {"session_id": "game-a", "game_instance_id": "game-a", "window_hwnd": 42,
+                       "selection_epoch": epoch}}
 
 
-def test_stats_pin_freezes_level_and_generation_until_next_epoch() -> None:
+def test_stats_pin_freezes_confirmed_count_and_generation_until_next_epoch() -> None:
     clock = [10.0]
     cache = _FakeCache()
     pin = SelectionStatsPin(cache=cache, now=lambda: clock[0])  # type: ignore[arg-type]
     first = pin.resolve(
         _event(1),
-        {"champion_id": "1", "player_level": 11, "game_instance_id": "game-a"},
+        {"ok": True, "champion_id": "1", "game_instance_id": "game-a", "window_hwnd": 42},
         _FakeView("generation-1"),  # type: ignore[arg-type]
         completed_selection_count=2,
     )
@@ -152,7 +153,7 @@ def test_stats_pin_freezes_level_and_generation_until_next_epoch() -> None:
 
     next_epoch = pin.resolve(
         _event(2),
-        {"champion_id": "1", "player_level": 15, "game_instance_id": "game-a"},
+        {"ok": True, "champion_id": "1", "game_instance_id": "game-a", "window_hwnd": 42},
         _FakeView("generation-2"),  # type: ignore[arg-type]
         completed_selection_count=3,
     )
@@ -183,7 +184,8 @@ def test_stats_pin_waits_two_seconds_then_freezes_unknown_scope() -> None:
     )
     assert frozen.frozen is True
     assert frozen.stage is None
-    assert cache.calls == [("generation-1", "1")]
+    assert frozen.reason == "stage_unconfirmed"
+    assert cache.calls == []
 
     recovered_late = pin.resolve(
         _event(1),

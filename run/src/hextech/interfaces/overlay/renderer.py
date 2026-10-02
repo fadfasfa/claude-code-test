@@ -589,6 +589,7 @@ def build_render_model_from_session(
         "RECOGNITION_MISSING": ("未识别到海克斯", "识别未完成"),
         "SNAPSHOT_UNAVAILABLE": ("统计数据准备中", "数据准备中"),
         "STATS_PREPARING": ("统计准备中", "统计准备中"),
+        "STAGE_UNCONFIRMED": ("阶段未确认", "阶段未确认"),
         "STATS_STALE": ("统计数据暂非最新", "统计数据暂非最新"),
         "PRIVACY_OFF": ("已开启隐私模式", "统计关闭"),
         "SOURCE_STAT_MISSING": ("公开来源未提供此海克斯统计", "公开来源未提供此海克斯统计"),

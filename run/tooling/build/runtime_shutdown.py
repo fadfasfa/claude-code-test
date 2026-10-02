@@ -9,6 +9,14 @@ import psutil
 APP_NAME = "Hextech伴生终端.exe"
 
 
+def require_idle_for_isolated_candidate() -> None:
+    """Read-only preflight: isolated builds never acquire authority to stop other apps."""
+    for process in psutil.process_iter(["name"]):
+        name = str(process.info.get("name") or "").casefold()
+        if name in {APP_NAME.casefold(), "league of legends.exe"}:
+            raise RuntimeError(f"isolated_candidate_process_conflict: pid={process.pid}; 请先退出应用，不自动停机")
+
+
 def allowed_executable(executable: Path, install_dir: Path, artifacts_dir: Path) -> bool:
     path = executable.resolve()
     if path.name.casefold() != APP_NAME.casefold():

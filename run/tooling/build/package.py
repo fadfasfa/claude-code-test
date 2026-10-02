@@ -30,7 +30,7 @@ if str(SRC_DIR) not in sys.path:
 
 from tooling.build.manifest import build_bundle_manifest, validate_snapshot_seed  # noqa: E402
 from tooling.build.deploy import default_install_dir, deploy_release  # noqa: E402
-from tooling.build.runtime_shutdown import shutdown_for_package  # noqa: E402
+from tooling.build.runtime_shutdown import shutdown_for_package, require_idle_for_isolated_candidate  # noqa: E402
 from tooling.diagnostics.cleanup import cleanup_python_caches  # noqa: E402
 from tooling.build.rules import iter_package_data_entries, stage_package_data_tree  # noqa: E402
 
@@ -318,6 +318,8 @@ def parse_build_args(argv: list[str] | None = None) -> argparse.Namespace:
     """解析构建参数；无参数时保持原有打包入口，但默认不访问网络。"""
 
     parser = argparse.ArgumentParser(description="构建 Hextech 伴生系统便携包")
+    parser.add_argument("--isolated-candidate", action="store_true",
+                        help="隔离候选：只读检查进程，不停止正式程序，不部署。")
     parser.add_argument(
         "--refresh-data",
         action="store_true",
@@ -371,6 +373,18 @@ def parse_build_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="等待旧客户端正常退出的秒数，默认 12 秒。",
     )
     args = parser.parse_args(argv)
+    if args.isolated_candidate:
+        if args.deploy or args.refresh_data:
+            parser.error("--isolated-candidate 不能与 --deploy/--refresh-data 一起使用")
+        if not all((args.artifacts_dir, args.smoke_root, args.release_name)):
+            parser.error("--isolated-candidate 要求 --artifacts-dir、--smoke-root 和 --release-name")
+        isolated_root = (BASE_DIR / ".artifacts").resolve()
+        for path in (args.artifacts_dir, args.smoke_root):
+            resolved = path.resolve()
+            if not resolved.is_relative_to(isolated_root) or resolved == isolated_root:
+                parser.error("隔离候选输出必须位于 run/.artifacts 的独立子目录")
+        if args.smoke_root.resolve().exists():
+            parser.error("隔离候选 smoke root 已存在，拒绝复用")
     if args.refresh_data and args.verified_snapshot_root is not None:
         parser.error("--refresh-data 与 --verified-snapshot-root 不能同时使用")
     if args.verified_snapshot_root is not None:
@@ -390,9 +404,9 @@ def parse_build_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.deploy:
         if sys.platform != "win32":
             parser.error("稳定目录部署当前仅支持 Windows")
-        args.install_dir = (args.install_dir or default_install_dir()).resolve(strict=False)
-        if args.shortcut is not None:
-            args.shortcut = args.shortcut.resolve(strict=False)
+        # 保留命令行传入的 raw path，交给 deploy.validate_* 在 resolve 前检查
+        # symlink/junction/reparse 身份；这里提前 resolve 会把安全边界抹掉。
+        args.install_dir = args.install_dir or default_install_dir()
         if args.deploy_timeout <= 0:
             parser.error("--deploy-timeout 必须大于 0")
     return args
@@ -560,14 +574,16 @@ def build_exe(
     return dist_path / APP_BUILD_NAME
 
 
-def write_portable_launcher(final_dir: Path) -> Path:
+def write_portable_launcher(final_dir: Path, *, isolated_candidate: bool = False) -> Path:
     """生成 ASCII/CRLF 启动脚本，避免中文 EXE 名和代码页破坏命令。"""
 
     launcher_path = final_dir / LAUNCHER_NAME
+    isolated_env = 'set "HEXTECH_VAR_DIR=%~dp0var"\r\n' if isolated_candidate else ""
     launcher_content = (
         "@echo off\r\n"
         "setlocal EnableExtensions EnableDelayedExpansion\r\n"
         "cd /d \"%~dp0\"\r\n"
+        + isolated_env +
         "set \"HEXTECH_EXE=\"\r\n"
         "set /a HEXTECH_EXE_COUNT=0\r\n"
         "for %%F in (*.exe) do (\r\n"
@@ -585,7 +601,7 @@ def write_portable_launcher(final_dir: Path) -> Path:
     return launcher_path
 
 
-def write_first_run_guide(final_dir: Path) -> Path:
+def write_first_run_guide(final_dir: Path, *, isolated_candidate: bool = False) -> Path:
     """生成面向熟人分发的首次使用说明。"""
 
     guide_path = final_dir / FIRST_RUN_GUIDE_NAME
@@ -608,6 +624,11 @@ def write_first_run_guide(final_dir: Path) -> Path:
 - 连续 5 分钟没有 League 客户端或游戏进程时，程序会进入轻量待机；再次打开客户端、点击托盘“显示 Hextech”或再次双击快捷方式都会恢复。
 - “启动 Hextech.bat”仅为兼容入口，命令窗口可能短暂闪现。
 """
+    if isolated_candidate:
+        guide_content = ("隔离诊断候选，未部署、未完成真机验收。\n"
+                         "先退出正式 Hextech，仅通过“启动 Hextech.bat”启动本候选；不要直接双击 EXE。\n"
+                         "启动器将 HEXTECH_VAR_DIR 固定到包内 var，子进程继承；不修改正式快捷方式或运行数据。\n"
+                         "OCR 备用预处理未启用，需真实 ROI、人工真值及 holdout 验证。\n")
     guide_path.write_text(guide_content, encoding="utf-8")
     return guide_path
 
@@ -694,11 +715,15 @@ def run_packaged_smoke(
     timeout: int = 210,
     *,
     smoke_root: Path | None = None,
+    isolated_candidate: bool = False,
 ) -> None:
     """运行便携包首启 smoke；失败时调用方不得替换正式 release。"""
 
-    closed = shutdown_for_package(default_install_dir(), ARTIFACTS_DIR)
-    print_check(f"打包前受控 Hextech 已退出：pids={list(closed)}")
+    if isolated_candidate:
+        require_idle_for_isolated_candidate()
+    else:
+        closed = shutdown_for_package(default_install_dir(), ARTIFACTS_DIR)
+        print_check(f"打包前受控 Hextech 已退出：pids={list(closed)}")
     smoke_script = BASE_DIR / "tooling" / "acceptance" / "smoke_packaged_startup.py"
     command = [
             sys.executable,
@@ -766,6 +791,7 @@ def finalize_output(
     *,
     release_name: str | None = None,
     smoke_root: Path | None = None,
+    isolated_candidate: bool = False,
 ) -> tuple[Path, Path]:
     """整理最终输出目录；先 smoke staging，通过后才替换正式 release。"""
 
@@ -779,10 +805,12 @@ def finalize_output(
         raise RuntimeError(f"显式 release 名称已存在，拒绝覆盖：{final_dir}")
     staging_dir = STAGING_RELEASES_DIR / f"{final_dir.name}-{build_time.strftime('%H%M%S')}"
     if staging_dir.exists():
+        if isolated_candidate:
+            raise RuntimeError(f"隔离候选 staging 已存在，拒绝覆盖：{staging_dir}")
         shutil.rmtree(staging_dir)
     shutil.move(str(exe_dir), str(staging_dir))
-    write_portable_launcher(staging_dir)
-    write_first_run_guide(staging_dir)
+    write_portable_launcher(staging_dir, isolated_candidate=isolated_candidate)
+    write_first_run_guide(staging_dir, isolated_candidate=isolated_candidate)
     validate_packaged_scraping_data(staging_dir)
     native_paths = validate_packaged_native_paths(staging_dir)
     print_check(
@@ -791,7 +819,9 @@ def finalize_output(
         )
     )
     print_check(f"staging 输出目录：{staging_dir}")
-    if smoke_root is None:
+    if isolated_candidate:
+        run_packaged_smoke(staging_dir, timeout=210, smoke_root=smoke_root, isolated_candidate=True)
+    elif smoke_root is None:
         run_packaged_smoke(staging_dir, timeout=210)
     else:
         run_packaged_smoke(staging_dir, timeout=210, smoke_root=smoke_root)
@@ -818,8 +848,11 @@ def main(argv: list[str] | None = None) -> None:
         configure_artifacts_dir(args.artifacts_dir)
     if args.deploy:
         require_main_branch_for_stable_deploy()
-    closed = shutdown_for_package(default_install_dir(), ARTIFACTS_DIR)
-    print_check(f"构建前受控 Hextech 已退出：pids={list(closed)}")
+    if args.isolated_candidate:
+        require_idle_for_isolated_candidate()
+    else:
+        closed = shutdown_for_package(default_install_dir(), ARTIFACTS_DIR)
+        print_check(f"构建前受控 Hextech 已退出：pids={list(closed)}")
     print("\n" + "=" * 60)
     print("  Hextech 伴生系统打包程序")
     print(f"  构建时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -850,6 +883,8 @@ def main(argv: list[str] | None = None) -> None:
             verified_snapshot_root=injected_snapshot_root,
         )
         finalize_kwargs: dict[str, object] = {}
+        if args.isolated_candidate:
+            finalize_kwargs["isolated_candidate"] = True
         if args.release_name is not None:
             finalize_kwargs["release_name"] = args.release_name
         if args.smoke_root is not None:

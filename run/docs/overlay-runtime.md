@@ -2,6 +2,17 @@
 
 本文是 Hextech Overlay、Vision Sidecar、会话诊断、打包部署和真机验收的长期事实源。处理游戏内显示、识别抖动、无数据、旧包误测或发布问题时必须先读本文；数据目录细节仍见 [data-layout.md](data-layout.md)，系统依赖关系见 [system-design.md](system-design.md)。
 
+## 2026-09-29 阶段确认与缺槽诊断候选
+
+本轮先交付隔离诊断候选，不覆盖正式安装，不代表 OCR 缺槽或五局真机验收已通过。
+
+- Context broker 分开记录 Live Client `sample_started_at/sample_completed_at` 与真正发布时间。Host 首次观察选择时记录两秒确认边界；等级路径必须得到边界之后开始的两次不同 publication、同 publisher/游戏/HWND/英雄/阶段的有效采样。旧字段缺失、旧样本和重复读不得确认。可信选卡计数仅在没有有效等级时沿用原兜底；计数未知不猜。确认前显示“统计准备中”，超时本轮固定“阶段未确认”，不显示百分比或 all 统计；确认后同轮等级变化和重随不换阶段，本局统计代冻结不变。
+- Supervisor 持有的既有 Context 线程每250ms检查新鲜匹配的选择事件，新 epoch 最多加速采样两秒，恢复1.5秒周期；单请求串行，失败不补跑积压。Host 仅在阶段等待期间把publication纳入准备键；旧请求不得提交 Stage pin，固定后心跳不重投影。
+- session report v2 的可选 `drawn_statistics` 绑定实际消费的模型、统计原值/文本/阶段/source run/generation/publication和draw时钟。缓存合并不匹配的行标 `prepared_binding_valid=false`，不拼入新数值；draw不是present。保留原合成与真实呈现资格门。
+- 逐槽 starvation、持续未确认进入 anomaly，新增 `slot_unconfirmed_elapsed_ms/unconfirmed_elapsed_ms/selection_elapsed_ms`；永远未三槽齐全也能记录。200组/256MiB、12帧有界合并、异常floor与人工/未知/部分写入保护不变，不清空旧证据。
+- 鼠标诊断增加 eligible、入队与有限drop原因计数；未取得真机反例前不调整点击语义。OCR备用预处理未实施/未启用，先取得三局十个有效epoch及真实异常ROI的人工真值，再按独立holdout门实施验证；不降低0.95 exact与3/5门。
+- 打包器 `--isolated-candidate` 禁止deploy/refresh-data，要求 `.artifacts` 内独立artifacts/smoke根和唯一release名。构建及smoke前只读检查冲突进程，绝不自动停正式应用或游戏。候选只通过包内启动BAT运行，显式设置包内 `HEXTECH_VAR_DIR`；不要直接双击EXE。历史普通打包/部署入口行为不变。
+
 ## 2026-09-19 统一修复（候选，不代表正式部署）
 
 单行统计后续修正：2560×1440保持30px及原统计锚点，文字内边距仅由6px改为5px；2px字形保护保留。百分比继续一位小数，舍入结果`100.0%`等价显示`100%`；其余分辨率内边距不变。正常／细／极细／无空格依序适配，但数值统计不再拆两行，异常数值不伪造。此条替代下文历史两行兜底规则。部署v3时，可选来源处于backoff但其last-good完整unit闭包、hash、Catalog、current与schedule run全部吻合，不阻止安装；必须单列来源退避，不声称来源最新。core/catalog与legacy门不变。

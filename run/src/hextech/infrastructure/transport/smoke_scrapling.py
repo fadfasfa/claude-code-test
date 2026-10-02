@@ -50,7 +50,8 @@ def smoke_fetch() -> None:
     from hextech.infrastructure.transport.scrapling_client import fetch_page
 
     print("正在抓取 https://example.com ...")
-    result = fetch_page("https://example.com", css_selector="h1::text")
+    # example.com removed its h1; the document title still identifies the fixture.
+    result = fetch_page("https://example.com", css_selector="title::text")
 
     if result.error:
         print(f"[FAIL] 抓取失败：{result.error}")

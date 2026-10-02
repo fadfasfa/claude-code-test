@@ -4,11 +4,13 @@ from functools import wraps
 import ctypes
 from ctypes import wintypes
 import os
+from collections.abc import Callable
 import win32gui
 import win32process
 
 _hooks: dict[int, tuple[object, object]] = {}
 _regions: dict[int, tuple] = {}
+_session_end_handlers: dict[int, tuple[Callable[[], object], Callable[[bool], object]]] = {}
 
 
 def require_desktop_wrapper(hwnd: int) -> None:
@@ -61,10 +63,29 @@ def _install_input_hook(hwnd: int) -> None:
     def callback(window, message, wparam, lparam):
         if message == 0x21:
             return 3
+        if message == 0x11:  # WM_QUERYENDSESSION
+            handler = _session_end_handlers.get(int(window))
+            if handler is not None:
+                try:
+                    return 1 if handler[0]() is not False else 0
+                except Exception:
+                    return 0
+            return 1
+        if message == 0x16:  # WM_ENDSESSION
+            handler = _session_end_handlers.get(int(window))
+            if handler is not None:
+                try:
+                    handler[1](bool(wparam))
+                except Exception:
+                    pass
+                # The handler may synchronously destroy the Tk HWND.  Do not
+                # call the original WndProc with an already-destroyed window.
+                return 0
         result = win32gui.CallWindowProc(original, window, message, wparam, lparam)
         if message == 0x82:
             _hooks.pop(window, None)
             _regions.pop(window, None)
+            _session_end_handlers.pop(int(window), None)
         return result
     ctypes.windll.kernel32.SetLastError(0)
     old = win32gui.SetWindowLong(hwnd, -4, callback)
@@ -76,6 +97,19 @@ def _install_input_hook(hwnd: int) -> None:
     _hooks[hwnd] = (original, callback)
 
 
+def install_session_end_handler(
+    hwnd: int,
+    *,
+    on_query: Callable[[], object],
+    on_end: Callable[[bool], object],
+) -> None:
+    """在自有 Tk 顶层窗口上接收 Windows session-end 消息。"""
+
+    require_desktop_wrapper(hwnd)
+    _session_end_handlers[int(hwnd)] = (on_query, on_end)
+    _install_input_hook(hwnd)
+
+
 def unowned_tk_operation(method):
     """兼容入口；只恢复自己的Tk过程，无跨进程owner写入。"""
     @wraps(method)
@@ -83,9 +117,15 @@ def unowned_tk_operation(method):
         if getattr(self, "_desktop_window_operation_depth", 0):
             return method(self, *args, **kwargs)
         hwnd = desktop_wrapper_hwnd(self.root)
+        session_handler = _session_end_handlers.get(hwnd)
         hook = _hooks.pop(hwnd, None)
-        if hook:
+        # Keep the session-end subclass installed while Tk pumps messages.
+        # Geometry operations may recreate the wrapper; the saved handler is
+        # migrated below even if the old HWND receives WM_NCDESTROY first.
+        if hook and session_handler is None:
             checked_set_window_long(hwnd, -4, int(hook[0]))
+        elif hook:
+            _hooks[hwnd] = hook
         self._desktop_window_operation_depth = 1
         try:
             result = method(self, *args, **kwargs)
@@ -95,6 +135,9 @@ def unowned_tk_operation(method):
                 current = desktop_wrapper_hwnd(self.root)
                 if current != hwnd:
                     _regions.pop(hwnd, None)
+                    if session_handler is not None:
+                        _session_end_handlers.pop(hwnd, None)
+                        _session_end_handlers[current] = session_handler
                     self._desktop_wrapper_revision = getattr(self, "_desktop_wrapper_revision", 0) + 1
                 self._desktop_hwnd = current
                 _install_input_hook(current)

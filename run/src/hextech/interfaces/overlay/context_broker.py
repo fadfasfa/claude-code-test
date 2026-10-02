@@ -62,6 +62,7 @@ class OverlayContextBroker:
         self._selection_ticket_seen_at = 0.0
         self._ticket_bound_game_instance = ""
         self._game_instance_id = ""
+        self.last_publication: dict[str, Any] = {}
 
     @staticmethod
     def _valid_context(payload: Mapping[str, Any] | None) -> TypeGuard[dict[str, Any]]:
@@ -183,12 +184,17 @@ class OverlayContextBroker:
         live_payload: dict[str, Any] | None = None
         live_error = "game-window-missing"
         if probe.status == "found":
+            live_started_at = float(self.now())
             live_payload, live_error = self.live_reader()
+            live_completed_at = float(self.now())
+            if live_payload is not None:
+                live_payload = {**live_payload, "sample_started_at": live_started_at,
+                                "sample_completed_at": live_completed_at}
 
         ticket = self._ticket_for_game(now, current_game_instance)
         live_time_confirmed = self._live_game_time_matches_epoch(
             live_payload,
-            now=now,
+            now=live_completed_at if probe.status == "found" else now,
             probe=probe,
         )
         live_ticket_confirmed = bool(
@@ -238,7 +244,7 @@ class OverlayContextBroker:
         self.publication_seq += 1
         publication = self._decorate(
             selected,
-            now=now,
+            now=float(self.now()),
             probe=probe,
             source_priority=priority,
             conflict=conflict,
@@ -246,6 +252,7 @@ class OverlayContextBroker:
         if should_write is not None and not should_write():
             return False
         write_overlay_context(publication, self.context_path)
+        self.last_publication = publication
         return bool(publication.get("champion_id"))
 
 

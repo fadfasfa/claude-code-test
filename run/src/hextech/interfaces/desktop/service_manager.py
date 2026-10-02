@@ -125,6 +125,7 @@ class ServiceManager:
         self._listener_interval_seconds = max(2.0, min(5.0, float(listener_interval_seconds)))
         self._listener_enabled = True
         self._shutdown_requested = False
+        self._session_end_requested = threading.Event()
         self._listener_snapshot: dict[str, Any] = {
             "enabled": True,
             "interval_seconds": self._listener_interval_seconds,
@@ -149,6 +150,8 @@ class ServiceManager:
         """启动 Web；恢复路径可传入同一端到端 deadline 的剩余预算。"""
 
         with self._lock:
+            if self._shutdown_requested or self._session_end_requested.is_set():
+                raise RuntimeError("ServiceManager 已进入关闭流程，拒绝启动 Web")
             if self.web.is_running():
                 self.web.mark("running")
                 return
@@ -180,7 +183,7 @@ class ServiceManager:
                 self.data_service.process = None
             if self._start_data_service_func is None:
                 raise RuntimeError("DataService 启动工厂未配置")
-            if self._shutdown_requested:
+            if self._shutdown_requested or self._session_end_requested.is_set():
                 raise RuntimeError("ServiceManager 已进入关闭流程，拒绝启动 DataService")
             self.data_service.mark("starting")
             try:
@@ -222,11 +225,19 @@ class ServiceManager:
         with self._lock:
             self._stop_service(self.web)
 
+    def set_shutdown_requested(self, requested: bool) -> None:
+        """在 Windows session-end 查询期间暂时禁止新的服务启动。"""
+
+        if requested:
+            self._session_end_requested.set()
+        else:
+            self._session_end_requested.clear()
+
     def start_game_overlay(self) -> None:
         with self._lock:
             if self._overlay_controller is None:
                 raise RuntimeError("game_overlay 由 Runtime Supervisor 管理")
-            if self._shutdown_requested:
+            if self._shutdown_requested or self._session_end_requested.is_set():
                 raise RuntimeError("ServiceManager 已进入关闭流程，拒绝重新启动 game_overlay")
             if self._overlay_controller.is_running():
                 self._sync_overlay_state()
@@ -263,7 +274,7 @@ class ServiceManager:
 
         with self._lock:
             now = time.time()
-            effective_enabled = bool(enabled) and not self._shutdown_requested
+            effective_enabled = bool(enabled) and not self._shutdown_requested and not self._session_end_requested.is_set()
             self._overlay_watchdog["enabled"] = effective_enabled
             self._overlay_watchdog["last_checked_at"] = now
             self._overlay_watchdog["last_error"] = ""
@@ -349,6 +360,7 @@ class ServiceManager:
         """
 
         self._listener_stop.set()
+        self._session_end_requested.set()
         with self._lock:
             self._shutdown_requested = True
         self._shutdown_done = threading.Event()

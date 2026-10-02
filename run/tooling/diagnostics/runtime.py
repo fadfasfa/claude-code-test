@@ -13,8 +13,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import stat
 import time
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -38,6 +39,8 @@ DEFAULT_TAIL_LINES = 500
 DEFAULT_RECENT_MINUTES = 180
 DEFAULT_WATCH_INTERVAL_SECONDS = 60.0
 DEFAULT_WATCH_DURATION_MINUTES = 0.0
+MAX_DIAGNOSTIC_JSON_BYTES = 4 * 1024 * 1024
+MAX_DIAGNOSTIC_TAIL_LINES = 10_000
 SENSITIVE_NAME_PARTS = (
     "api_key",
     "auth",
@@ -107,8 +110,14 @@ def _safe_relative(path: Path, root: Path) -> str:
 
 
 def _read_json(path: Path) -> Any:
+    if _is_reparse_path(path):
+        return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_DIAGNOSTIC_JSON_BYTES + 1)
+        if len(raw) > MAX_DIAGNOSTIC_JSON_BYTES:
+            return None
+        return json.loads(raw.decode("utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
 
@@ -138,12 +147,56 @@ def _entry_timestamp(entry: Mapping[str, Any]) -> float | None:
     return None
 
 
-def _tail_text(path: Path, *, max_lines: int) -> str:
+def _is_reparse_path(path: Path) -> bool:
+    """诊断读取不跟随 symlink/junction/mount point。"""
+
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        metadata = path.lstat()
     except OSError:
+        return False
+    return stat.S_ISLNK(metadata.st_mode) or bool(getattr(metadata, "st_file_attributes", 0) & 0x400)
+
+
+def _iter_bounded_lines(path: Path, *, max_line_bytes: int = 64 * 1024) -> Iterable[str]:
+    """以固定 chunk 读取文本，避免超长单行或大文件一次性进入内存。"""
+
+    if _is_reparse_path(path):
+        return
+    pending = bytearray()
+    oversized = False
+    try:
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(64 * 1024), b""):
+                pending.extend(chunk)
+                while True:
+                    newline = pending.find(b"\n")
+                    if newline < 0:
+                        if len(pending) > max_line_bytes:
+                            oversized = True
+                            del pending[: len(pending) - max_line_bytes]
+                        break
+                    raw = bytes(pending[:newline])
+                    del pending[: newline + 1]
+                    if oversized or len(raw) > max_line_bytes:
+                        yield "<truncated-line>"
+                    else:
+                        yield raw.decode("utf-8", errors="replace").rstrip("\r")
+                    oversized = False
+            if pending:
+                if oversized or len(pending) > max_line_bytes:
+                    yield "<truncated-line>"
+                else:
+                    yield bytes(pending).decode("utf-8", errors="replace").rstrip("\r")
+    except OSError:
+        return
+
+
+def _tail_text(path: Path, *, max_lines: int) -> str:
+    if max_lines <= 0 or _is_reparse_path(path):
         return ""
-    return "\n".join(lines[-max_lines:]) + ("\n" if lines else "")
+    lines = deque(_iter_bounded_lines(path), maxlen=max_lines)
+    values = list(lines)
+    return "\n".join(values) + ("\n" if values else "")
 
 
 def _tail_jsonl_events(path: Path, *, max_lines: int) -> list[dict[str, Any]]:
@@ -186,6 +239,8 @@ def _redact_bundle_value(value: Any) -> Any:
 def _copy_debug_file_redacted(source: Path, target: Path, *, copied: list[dict[str, Any]]) -> None:
     """复制可分享 debug 文本；debug_recent 不允许原样带出本机路径或 token。"""
 
+    if _is_reparse_path(source):
+        return
     target.parent.mkdir(parents=True, exist_ok=True)
     if source.suffix.lower() == ".json":
         payload = _read_json(source)
@@ -194,18 +249,22 @@ def _copy_debug_file_redacted(source: Path, target: Path, *, copied: list[dict[s
             text = json.dumps(redacted, ensure_ascii=False, indent=2) + "\n"
             target.write_text(text, encoding="utf-8")
             copied.append({"source": str(source), "target": str(target), "bytes": len(text.encode("utf-8"))})
-            return
-
-    try:
-        lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
+        # Invalid or oversized JSON must not fall through to text redaction:
+        # the raw payload may contain secrets that the text rules cannot see.
         return
-    text = "\n".join(_redact_bundle_text(redact_diagnostic_tail_line(line)) for line in lines) + ("\n" if lines else "")
-    target.write_text(text, encoding="utf-8")
-    copied.append({"source": str(source), "target": str(target), "bytes": len(text.encode("utf-8"))})
+
+    bytes_written = 0
+    with target.open("w", encoding="utf-8", newline="\n") as stream:
+        for line in _iter_bounded_lines(source):
+            value = _redact_bundle_text(redact_diagnostic_tail_line(line)) + "\n"
+            stream.write(value)
+            bytes_written += len(value.encode("utf-8"))
+    copied.append({"source": str(source), "target": str(target), "bytes": bytes_written})
 
 
 def _write_tail(source: Path, target: Path, *, max_lines: int, copied: list[dict[str, Any]]) -> None:
+    if max_lines <= 0 or _is_reparse_path(source):
+        return
     target.parent.mkdir(parents=True, exist_ok=True)
     lines = _tail_text(source, max_lines=max_lines).splitlines()
     text = "\n".join(_redact_bundle_text(redact_diagnostic_tail_line(line)) for line in lines) + (
@@ -216,19 +275,30 @@ def _write_tail(source: Path, target: Path, *, max_lines: int, copied: list[dict
 
 
 def _iter_recent_files(root: Path, *, since_timestamp: float, extensions: set[str]) -> Iterable[Path]:
-    if not root.exists():
+    if not root.exists() or _is_reparse_path(root):
         return []
     result: list[Path] = []
-    for path in root.rglob("*"):
-        if not path.is_file() or _is_sensitive_path(path):
-            continue
-        if path.suffix.lower() not in extensions:
-            continue
+    stack = [root]
+    while stack:
+        current = stack.pop()
         try:
-            if path.stat().st_mtime >= since_timestamp:
-                result.append(path)
+            entries = list(current.iterdir())
         except OSError:
             continue
+        for path in entries:
+            if path.is_dir():
+                if not _is_reparse_path(path):
+                    stack.append(path)
+                continue
+            if _is_reparse_path(path) or not path.is_file() or _is_sensitive_path(path):
+                continue
+            if path.suffix.lower() not in extensions:
+                continue
+            try:
+                if path.stat().st_mtime >= since_timestamp:
+                    result.append(path)
+            except OSError:
+                continue
     return sorted(result, key=lambda item: str(item).lower())
 
 
@@ -1085,6 +1155,14 @@ def watch_runtime_diagnostics(
     """周期性生成只读诊断快照；Ctrl+C 停止时保留已有快照。"""
 
     runtime_root = Path(runtime_root) if runtime_root is not None else get_runtime_root_dir()
+    if _is_reparse_path(runtime_root) or any(_is_reparse_path(parent) for parent in runtime_root.parents):
+        raise ValueError("runtime_root 不得位于 symlink/junction/reparse point 路径中")
+    try:
+        tail_lines = int(tail_lines)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("tail_lines 必须是正整数") from exc
+    if not 0 < tail_lines <= MAX_DIAGNOSTIC_TAIL_LINES:
+        raise ValueError(f"tail_lines 必须在 1..{MAX_DIAGNOSTIC_TAIL_LINES} 范围内")
     session_root = output_dir or runtime_root / "reports" / "runtime_diagnostics_watch" / _utc_stamp()
     # watch 通常由启动脚本先创建目录用于 stdout/stderr；允许复用空目录，
     # 每个 snapshot 子目录仍带序号和时间戳，避免覆盖已有采样。
@@ -1151,11 +1229,22 @@ def collect_runtime_diagnostics(
     trace_since_timestamp: float | None = None,
 ) -> dict[str, Any]:
     runtime_root = Path(runtime_root) if runtime_root is not None else get_runtime_root_dir()
+    if _is_reparse_path(runtime_root) or any(_is_reparse_path(parent) for parent in runtime_root.parents):
+        raise ValueError("runtime_root 不得位于 symlink/junction/reparse point 路径中")
+    try:
+        tail_lines = int(tail_lines)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("tail_lines 必须是正整数") from exc
+    if not 0 < tail_lines <= MAX_DIAGNOSTIC_TAIL_LINES:
+        raise ValueError(f"tail_lines 必须在 1..{MAX_DIAGNOSTIC_TAIL_LINES} 范围内")
     reports_root = output_dir or runtime_root / "reports" / "runtime_diagnostics" / _utc_stamp()
     reports_root.mkdir(parents=True, exist_ok=False)
     state_dir = runtime_root / "state"
     logs_dir = runtime_root / "logs"
     debug_dir = runtime_root / "debug"
+    for directory in (state_dir, logs_dir, debug_dir):
+        if _is_reparse_path(directory):
+            raise ValueError(f"诊断目录不得是 symlink/junction/reparse point：{directory}")
     since_timestamp = time.time() - max(1, int(recent_minutes)) * 60
     copied: list[dict[str, Any]] = []
     skipped_sensitive: list[str] = []
@@ -1253,6 +1342,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.tail_lines <= 0:
+        raise SystemExit("--tail-lines 必须是正整数")
     output_dir = Path(args.output_dir) if str(args.output_dir or "").strip() else None
     if args.watch:
         manifest = watch_runtime_diagnostics(

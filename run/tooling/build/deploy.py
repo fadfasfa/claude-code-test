@@ -341,14 +341,45 @@ def shutdown_existing_install(executable: Path, *, timeout: float = 12.0) -> boo
 def validate_shortcut_path(shortcut_path: Path) -> Path:
     """只接受既有快捷方式，防止拼写错误在桌面静默制造重复入口。"""
 
-    shortcut_path = Path(shortcut_path).resolve(strict=False)
-    if shortcut_path.suffix.casefold() != ".lnk":
+    raw = Path(shortcut_path).expanduser()
+    if raw.suffix.casefold() != ".lnk":
         raise DeploymentError("快捷方式必须使用 .lnk 后缀")
+    # 先检查 raw 路径；resolve 后再检查会丢失 junction/symlink 身份。
+    for component in (raw, *raw.parents):
+        try:
+            metadata = component.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise DeploymentError(f"无法核验快捷方式路径：{component}") from exc
+        if stat.S_ISLNK(metadata.st_mode) or getattr(metadata, "st_file_attributes", 0) & 0x400:
+            raise DeploymentError(f"快捷方式路径不得包含符号链接或 reparse point：{component}")
+    shortcut_path = raw.resolve(strict=False)
     if not shortcut_path.parent.is_dir():
         raise DeploymentError("快捷方式父目录不存在")
     if not shortcut_path.is_file():
         raise DeploymentError(f"既有快捷方式不存在，拒绝创建：{shortcut_path}")
     return shortcut_path
+
+
+def require_main_branch_for_stable_deploy() -> None:
+    """standalone deploy.py 也必须从 main 执行，无法证明时拒绝。"""
+
+    completed = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    branch = completed.stdout.strip() if completed.returncode == 0 else ""
+    if branch != "main":
+        raise DeploymentError(
+            "稳定部署仅允许从 main 分支执行："
+            f"current={branch or 'detached-or-unknown'}"
+        )
 
 
 def _desktop_roots(canonical_shortcut: Path) -> tuple[Path, ...]:
@@ -1255,6 +1286,7 @@ def deploy_release(
 ) -> DeploymentResult:
     """强停全部旧运行时，原子切换后启动稳定目录，并以运行态验收收口。"""
 
+    require_main_branch_for_stable_deploy()
     source = validate_package_dir(package_dir)
     target = validate_install_dir(install_dir)
     source_manifest = json.loads((source / "_internal" / "bundle_manifest.json").read_text(encoding="utf-8"))
@@ -1480,6 +1512,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--shutdown-timeout", type=float, default=12.0)
     args = parser.parse_args(argv)
+    require_main_branch_for_stable_deploy()
     if args.shutdown_timeout <= 0:
         parser.error("--shutdown-timeout 必须大于 0")
     result = deploy_release(
@@ -1518,6 +1551,7 @@ __all__ = [
     "validate_install_dir",
     "validate_package_dir",
     "validate_shortcut_path",
+    "require_main_branch_for_stable_deploy",
 ]
 
 

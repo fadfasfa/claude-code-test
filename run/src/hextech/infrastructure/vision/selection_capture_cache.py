@@ -77,7 +77,7 @@ def _slots(event: Mapping[str, Any]) -> list[dict[str, Any]]:
             key: deepcopy(slot[key])
             for key in (
                 "slot", "state", "temporal_state", "augment_id", "name",
-                "rejection_reason", "slot_generation",
+                "rejection_reason", "slot_generation", "diagnostic",
             )
             if key in slot
         }
@@ -218,6 +218,8 @@ def classify_selection_evidence(frames: list[Mapping[str, Any]], terminal: Mappi
         "scene_type_conflict", "evidence_starved",
         "reroll_unconfirmed", "slow_confirmation", "capture_binding_changed",
     }
+    if terminal_reason in anomalous_reasons or _slot_anomaly(terminal):
+        return "anomaly"
     success = terminal_reason in {"selection_completed", "reroll_completed"}
     for frame in frames:
         raw = frame.get("raw_scene_evidence") if isinstance(frame.get("raw_scene_evidence"), Mapping) else {}
@@ -228,6 +230,8 @@ def classify_selection_evidence(frames: list[Mapping[str, Any]], terminal: Mappi
         if terminal_reason in anomalous_reasons or final_reason in anomalous_reasons:
             return "anomaly"
         final_slots = [slot for slot in final.get("slots", []) if isinstance(slot, Mapping)]
+        if _slot_anomaly(final):
+            return "anomaly"
         final_rejected_scene = final.get("scene_state") in {"absent", "blocked"}
         raw_scene_evidence = (
             (raw.get("button_evidence") or {}).get("present") is True
@@ -247,12 +251,25 @@ def classify_selection_evidence(frames: list[Mapping[str, Any]], terminal: Mappi
     return "success" if success else "weak"
 
 
+def _slot_anomaly(final: Mapping[str, Any]) -> str:
+    slots = [slot for slot in final.get("slots", []) if isinstance(slot, Mapping)]
+    if any(slot.get(field) == "evidence_starved" for slot in slots
+           for field in ("temporal_state", "diagnostic", "rejection_reason")):
+        return "evidence_starved"
+    elapsed = final.get("unconfirmed_elapsed_ms")
+    if isinstance(elapsed, (int, float)) and elapsed >= SLOW_CONFIRMATION_SECONDS * 1000:
+        return "slow_confirmation"
+    return ""
+
+
 def _frame_anomaly_category(frame: SelectionFrame) -> str:
     raw = frame.metadata.get("raw_scene_evidence") if isinstance(
         frame.metadata.get("raw_scene_evidence"), Mapping) else {}
     final = frame.metadata.get("final_classification") if isinstance(
         frame.metadata.get("final_classification"), Mapping) else {}
     reason = str(final.get("reason") or "")
+    if _slot_anomaly(final):
+        return _slot_anomaly(final)
     if final.get("generation_binding") == "mismatch":
         return "generation_binding_mismatch"
     if reason in {
@@ -450,6 +467,7 @@ class SelectionCaptureBuffer:
         self._group_origin = ""
         self._group_started_at: float | None = None
         self._full_ready_elapsed: float | None = None
+        self._slot_waits: dict[tuple[int, int], float] = {}
         self._anomaly_landmarks: dict[str, SelectionFrame] = {}
         self._transition_landmarks: dict[tuple[tuple[Any, ...], tuple[Any, ...]], SelectionFrame] = {}
         self._last_frame_state: tuple[Any, ...] | None = None
@@ -539,6 +557,28 @@ class SelectionCaptureBuffer:
             captured["final_classification"] = _final_classification(
                 event, full_ready_elapsed=elapsed, generation_binding=generation_binding,
             )
+            final = captured["final_classification"]
+            now = self.clock()
+            waits = []
+            admitted_hextech = (final.get("scene_state") == "active"
+                                and final.get("scene_kind") in {None, "", "hextech"})
+            for index in range(3):
+                slot = rendered_slots[index] if index < len(rendered_slots) else {}
+                slot_key = (index, int(slot.get("slot_generation") or 0))
+                if slot.get("state") == "ready" or not admitted_hextech:
+                    self._slot_waits.pop(slot_key, None)
+                    wait = 0.0
+                else:
+                    since = self._slot_waits.setdefault(slot_key, now)
+                    wait = max(0.0, now - since)
+                waits.append(round(wait * 1000, 3))
+            self._slot_waits = {k: v for k, v in self._slot_waits.items()
+                                if k in {(i, int((rendered_slots[i] if i < len(rendered_slots) else {}).get("slot_generation") or 0))
+                                         for i in range(3)}}
+            final["slot_unconfirmed_elapsed_ms"] = waits
+            final["unconfirmed_elapsed_ms"] = max(waits, default=0.0)
+            group_start = self._group_started_at if self._group_started_at is not None else now
+            final["selection_elapsed_ms"] = round(max(0., now - group_start) * 1000, 3)
             if self.last is not None:
                 self._remember_landmark(self.last)
         source = event.get("source") or {}
@@ -637,6 +677,7 @@ class SelectionCaptureBuffer:
         self._group_origin = ""
         self._group_started_at = None
         self._full_ready_elapsed = None
+        self._slot_waits.clear()
         self._anomaly_landmarks.clear()
         self._transition_landmarks.clear()
         self._last_frame_state = None

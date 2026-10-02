@@ -34,6 +34,8 @@ _BROKER_METADATA_FIELDS = (
     "fallback_reason",
     "game_time_seconds",
     "game_epoch_confirmation",
+    "sample_started_at",
+    "sample_completed_at",
 )
 
 

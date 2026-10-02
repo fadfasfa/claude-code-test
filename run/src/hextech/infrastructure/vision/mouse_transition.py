@@ -60,6 +60,8 @@ class MouseTransitionObserver:
         self._stale_drop_count = 0
         self._outside_slot_count = 0
         self._last_error_type = ""
+        self._drops = {key: 0 for key in ("ineligible", "missing_identity", "missing_cursor",
+                                        "identity_mismatch", "capacity", "context_clear", "explicit_clear")}
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -91,10 +93,12 @@ class MouseTransitionObserver:
                 bool(eligible),
             )
             if not eligible:
+                self._drops["context_clear"] += len(self._events)
                 self._events.clear()
 
     def clear(self) -> None:
         with self._lock:
+            self._drops["explicit_clear"] += len(self._events)
             self._events.clear()
 
     def _run(self) -> None:
@@ -121,7 +125,13 @@ class MouseTransitionObserver:
                     self._last_error_type = type(exc).__name__
             with self._lock:
                 hwnd, game_instance_id, epoch, eligible = self._context
+                reason = ("ineligible" if not eligible else "missing_identity" if not (hwnd > 0 and game_instance_id and epoch > 0)
+                          else "missing_cursor" if cursor is None else "")
+                if reason:
+                    self._drops[reason] += 1
                 if eligible and hwnd > 0 and game_instance_id and epoch > 0 and cursor is not None:
+                    if len(self._events) == MOUSE_EVENT_CAPACITY:
+                        self._drops["capacity"] += 1
                     self._sequence += 1
                     self._events.append(
                         MouseTransitionEvent(
@@ -171,6 +181,7 @@ class MouseTransitionObserver:
                     or event.game_instance_id != str(game_instance_id or "")
                     or event.selection_epoch != int(selection_epoch or 0)
                 ):
+                    self._drops["identity_mismatch"] += 1
                     self._stale_drop_count += 1
                     continue
                 hits = [
@@ -205,6 +216,9 @@ class MouseTransitionObserver:
                 "outside_slot_count": self._outside_slot_count,
                 "last_sequence": self._sequence,
                 "last_error_type": self._last_error_type,
+                "enqueued_count": self._sequence,
+                "eligible": self._context[3],
+                "drop_reasons": dict(self._drops),
             }
 
 

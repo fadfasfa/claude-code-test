@@ -703,16 +703,24 @@ def run_overlay_context_poll_loop(
     *,
     interval_seconds: float = DEFAULT_CONTEXT_POLL_INTERVAL_SECONDS,
     write_once_func: Callable[[], bool] = write_current_lcu_overlay_context_once,
+    selection_key_func: Callable[[], tuple | None] | None = None,
 ) -> None:
     """best-effort 常驻轮询；单次失败只降级等待下一轮，不结束 overlay 生命周期。"""
 
     interval = max(0.2, float(interval_seconds or DEFAULT_CONTEXT_POLL_INTERVAL_SECONDS))
+    from .context_poll_schedule import SelectionContextCadence
+    cadence = SelectionContextCadence(interval)
     while not stop_event.is_set():
         try:
-            write_once_func()
+            key = selection_key_func() if selection_key_func is not None else None
+            if cadence.due(time.monotonic(), key):
+                try:
+                    write_once_func()
+                finally:
+                    cadence.completed(time.monotonic())
         except Exception:
             logger.debug("LCU 当前英雄上下文轮询异常。", exc_info=True)
-        stop_event.wait(interval)
+        stop_event.wait(.25 if selection_key_func is not None else interval)
 
 
 @dataclass
@@ -733,10 +741,18 @@ def start_overlay_context_poller(
     write_once_func: Callable[[], bool] = write_current_lcu_overlay_context_once,
 ) -> OverlayContextPoller:
     stop_event = threading.Event()
+    selection_key_func: Callable[[], tuple | None] | None = None
     if write_once_func is write_current_lcu_overlay_context_once:
         from hextech.interfaces.overlay.context_broker import OverlayContextBroker
 
         broker = OverlayContextBroker()
+
+        def current_selection_key():
+            from .context_poll_schedule import fresh_selection_key
+            from hextech.modules.vision.events import read_overlay_event
+            return fresh_selection_key(read_overlay_event(), broker.last_publication, time.time())
+
+        selection_key_func = current_selection_key
 
         def write_current_context() -> bool:
             return broker.poll_once(should_write=lambda: not stop_event.is_set())
@@ -748,6 +764,7 @@ def start_overlay_context_poller(
             "stop_event": stop_event,
             "interval_seconds": interval_seconds,
             "write_once_func": write_once_func,
+            "selection_key_func": selection_key_func,
         },
         name="hextech-overlay-context-poller",
         daemon=True,

@@ -8,8 +8,9 @@ Generation 仍由 ``SelectionGenerationPin`` 按游戏局决定；本模块在�
 from __future__ import annotations
 
 import time
+import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from hextech.interfaces.overlay.generation_pin import SelectionKey, selection_key
@@ -41,6 +42,7 @@ class PinnedStatsScope:
     status: str = "unavailable"
     reason: str = ""
     frozen: bool = False
+    confirmation: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def champion_id(self) -> str:
@@ -74,6 +76,7 @@ class PinnedStatsScope:
             "status": self.status,
             "reason": self.reason,
             "frozen": self.frozen,
+            "confirmation": dict(self.confirmation),
             "stage_context": self.stage_context.to_dict(),
             "scoped_view": self.scoped_view.status() if self.scoped_view is not None else {},
         }
@@ -87,21 +90,69 @@ class SelectionStatsPin:
         *,
         cache: ScopedStatsCache | None = None,
         now: Callable[[], float] = time.monotonic,
+        wall_now: Callable[[], float] = time.time,
         wait_seconds: float = DEFAULT_STAGE_CONTEXT_WAIT_SECONDS,
     ) -> None:
         self.cache = cache or ScopedStatsCache()
         self._now = now
+        self._wall_now = wall_now
         self.wait_seconds = max(0.0, float(wait_seconds))
         self._key: SelectionKey | None = None
         self._started_at = 0.0
         self._pinned: PinnedStatsScope | None = None
         self._latest = PinnedStatsScope(None, "", StageContextV1())
+        self._boundary = 0.0
+        self._candidate: tuple[Any, ...] | None = None
+        self._last_seq = 0
+        self._last_sample = 0.0
+        self._confirmation: dict[str, Any] = {}
 
     def reset(self) -> None:
         self._key = None
         self._started_at = 0.0
         self._pinned = None
         self._latest = PinnedStatsScope(None, "", StageContextV1())
+        self._candidate = None
+        self._last_seq = 0
+        self._last_sample = 0.0
+        self._confirmation = {}
+
+    def _confirmed(self, event: Mapping[str, Any], context: Mapping[str, Any], stage: StageContextV1) -> bool:
+        source = event.get("source") or {}
+        game = str(source.get("game_instance_id") or "")
+        identity_ok = bool(context.get("ok") and not context.get("source_conflict") and game
+                           and game == context.get("game_instance_id")
+                           and source.get("window_hwnd")
+                           and source.get("window_hwnd") == context.get("window_hwnd"))
+        if identity_ok and stage.resolution_source == "selection_count":
+            self._confirmation = {"method": "selection_count", "boundary_at": self._boundary}
+            return True
+        try:
+            start, end, published = (float(context.get(k) or 0) for k in
+                                     ("sample_started_at", "sample_completed_at", "published_at"))
+            seq = int(context.get("publication_seq") or 0)
+        except (TypeError, ValueError, OverflowError):
+            start = end = published = 0.0
+            seq = 0
+        publisher = str(context.get("publisher_instance_id") or "")
+        valid = (identity_ok and stage.status == "ready" and context.get("source") == "live-client-data"
+                 and publisher and seq > 0 and all(math.isfinite(v) for v in (start, end, published))
+                 and self._boundary < start <= end <= published <= self._wall_now()
+                 and self._wall_now() - end <= 3.0)
+        if not valid:
+            self._candidate = None
+            return False
+        candidate = (publisher, game, stage.champion_id, stage.stage)
+        if candidate != self._candidate:
+            self._candidate, self._last_seq, self._last_sample = candidate, seq, start
+            return False
+        if seq <= self._last_seq or start <= self._last_sample:
+            return False
+        self._confirmation = {"method": "post_selection_live_samples", "boundary_at": self._boundary,
+                              "publisher_instance_id": publisher, "publication_seq": seq,
+                              "previous_publication_seq": self._last_seq,
+                              "sample_started_at": start, "sample_completed_at": end}
+        return True
 
     def resolve(
         self,
@@ -110,6 +161,7 @@ class SelectionStatsPin:
         snapshot_view: SnapshotViewPort | None,
         *,
         completed_selection_count: int | None,
+        confirmation_started_at: float | None = None,
     ) -> PinnedStatsScope:
         key = selection_key(event)
         if key is None:
@@ -117,9 +169,12 @@ class SelectionStatsPin:
             return self._latest
         now = self._now()
         if key != self._key:
+            self.reset()
             self._key = key
             self._started_at = now
-            self._pinned = None
+            self._boundary = confirmation_started_at if confirmation_started_at is not None else self._wall_now()
+            # A slow snapshot preparation does not grant a fresh two-second budget.
+            self._started_at -= max(0.0, self._wall_now() - self._boundary)
         if self._pinned is not None:
             self._latest = self._pinned
             return self._pinned
@@ -130,16 +185,26 @@ class SelectionStatsPin:
             completed_selection_count=completed_selection_count,
         )
         elapsed = max(0.0, now - self._started_at)
-        if stage_context.status != "ready" and elapsed < self.wait_seconds:
+        confirmed = elapsed <= self.wait_seconds and self._confirmed(event, context, stage_context)
+        if not confirmed and elapsed < self.wait_seconds:
             self._latest = PinnedStatsScope(
                 selection_key=key,
                 generation_id=generation_id,
-                stage_context=stage_context,
+                stage_context=replace(stage_context, stage=None, status="unknown"),
                 status="preparing",
                 reason="stage_context_waiting",
                 frozen=False,
             )
             return self._latest
+
+        if not confirmed:
+            self._pinned = PinnedStatsScope(
+                key, generation_id, replace(stage_context, stage=None, status="unknown", reason="stage_unconfirmed"),
+                status="unavailable", reason="stage_unconfirmed", frozen=True,
+                confirmation={"boundary_at": self._boundary, "method": "timeout"},
+            )
+            self._latest = self._pinned
+            return self._pinned
 
         if not stage_context.champion_id:
             self._pinned = PinnedStatsScope(
@@ -170,6 +235,7 @@ class SelectionStatsPin:
                 status="ready" if loaded.available else "fallback",
                 reason=loaded.reason,
                 frozen=True,
+                confirmation=dict(self._confirmation),
             )
         self._latest = self._pinned
         return self._pinned
