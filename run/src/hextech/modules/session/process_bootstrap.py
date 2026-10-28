@@ -1,8 +1,7 @@
-"""无控制台子进程的启动握手。
+"""隔离验收probe的一次性结果输出。
 
-冻结 GUI 应用没有可靠的 ``sys.stdout``。Supervisor 与 DataService 因此通过
-带随机 token 的原子 JSON 文件向 Desktop 发布端口和 nonce；源码态仍保留
-stdout 兼容输出，便于人工诊断。
+仅供原生窗口/诊断smoke向测试器返回结果；生产Host/Vision启动与控制使用
+runtime_channel，不通过这个文件/标准输出入口发布端口或nonce。
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ PROCESS_BOOTSTRAP_TOKEN_ENV = "HEXTECH_PROCESS_BOOTSTRAP_TOKEN"
 
 
 def publish_process_bootstrap(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """发布一次启动信息；文件通道是冻结态权威，stdout 仅作兼容。"""
+    """发布一次隔离probe结果；无控制台环境使用测试器指定的原子结果文件。"""
 
     published = dict(payload)
     token = str(os.getenv(PROCESS_BOOTSTRAP_TOKEN_ENV) or "").strip()

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest import mock
+import threading
 
 
 def _hint_cache() -> dict:
@@ -186,82 +186,46 @@ class OverlayContextStabilityTests(unittest.TestCase):
         self.assertEqual(cache["name_index"]["etherealweapon"], "1029")
         self.assertEqual(cache["name_index"]["aram_etherealweapon"], "1029")
 
-    def test_runtime_csv_cache_keeps_manifest_only_alias_as_no_stats_hint(self):
-        import pandas as pd
-
-        from hextech.modules.data.catalog import runtime_store
+    def test_official_catalog_alias_without_source_rows_stays_explicitly_missing(self):
         from hextech.interfaces.overlay import renderer
-        from hextech.modules.recommendation.hints import build_overlay_hint_cache_from_precomputed, query_overlay_hint
+        from hextech.modules.data.generation.query import ReleaseQuery
+        from hextech.modules.recommendation.hints import query_overlay_hint
 
-        latest_df = pd.DataFrame(
-            [
-                {
-                    "英雄名称": "暗裔剑魔",
-                    "英雄 ID": "266",
-                    "海克斯ID": "1322",
-                    "海克斯名称": "罪恶快感",
-                    "海克斯阶级": "黄金",
-                    "海克斯胜率": 0.51,
-                    "海克斯出场率": 0.07,
-                    "源站排名": 1,
-                    "综合得分": 1.0,
-                }
-            ]
-        )
-        catalog_lookup = {
-            "冰雪爆裂": {
-                "name": "冰雪爆裂",
-                "tier": "黄金",
-                "cdragon_id": 2080,
-                "augment_name_id": "Snowbomb",
-                "icon_url": "/assets/augments/snowbomb_small.png",
-                "tooltip_plain": "在目标位置引爆雪球。",
-            },
-            "占位强化 A": {
-                "name": "占位强化 A",
-                "tier": "白银",
-                "cdragon_id": -1,
-                "augment_name_id": "PlaceholderA",
-                "icon_url": "/assets/augments/placeholdera_small.png",
-            },
-            "占位强化 B": {
-                "name": "占位强化 B",
-                "tier": "白银",
-                "cdragon_id": -1,
-                "augment_name_id": "PlaceholderB",
-                "icon_url": "/assets/augments/placeholderb_small.png",
-            }
-        }
-
-        with (
-            mock.patch.object(runtime_store, "get_latest_csv", return_value="C:/tmp/Hextech_Data_2099-01-01.csv"),
-            mock.patch.object(runtime_store, "load_runtime_csv", return_value=latest_df),
-            mock.patch("hextech.modules.data.catalog.augment_lookup.load_augment_catalog_lookup_read_only", return_value=catalog_lookup),
-        ):
-            cache = build_overlay_hint_cache_from_precomputed(include_private_stats=True, source_tag="test")
-
+        # Pure v4 query projection. The actual release/asset closure is tested separately.
+        query = object.__new__(ReleaseQuery)
+        query._lock = threading.RLock()
+        query.allowed = {"1322", "2080", "91001", "91002"}
+        query.pool = {"canonical_ids": sorted(query.allowed), "identities": [
+            {"canonical_id":"1322", "name":"罪恶快感", "tier":"黄金", "augment_name_id":"ARAM_GetExcited"},
+            {"canonical_id":"2080", "name":"冰雪爆裂", "tier":"黄金", "augment_name_id":"Snowbomb"},
+            {"canonical_id":"91001", "name":"占位强化 A", "tier":"白银", "augment_name_id":"PlaceholderA"},
+            {"canonical_id":"91002", "name":"占位强化 B", "tier":"白银", "augment_name_id":"PlaceholderB"},
+        ]}
+        query.optional = {}
+        query._hints_cache = None
+        query._synergy_cache = {}
+        cache = query.hints()
         hint_result = query_overlay_hint(cache, "snowbomb")
         self.assertTrue(hint_result["ok"])
         self.assertEqual(hint_result["hint"]["augment_id"], "2080")
         self.assertEqual(hint_result["hint"]["name"], "冰雪爆裂")
         self.assertNotIn("stats_by_champion_id", hint_result["hint"])
+        self.assertNotIn("sample_count", hint_result["hint"])
+        self.assertEqual(query.resolve("Snowbomb")["canonical_id"], "2080")
         self.assertEqual(query_overlay_hint(cache, "placeholdera")["hint"]["name"], "占位强化 A")
         self.assertEqual(query_overlay_hint(cache, "placeholderb")["hint"]["name"], "占位强化 B")
-
         model = renderer.build_render_model(
-            {
-                "ok": True,
-                "visible": True,
-                "slots": [{"slot": 0, "state": "ready", "augment_id": "snowbomb", "name": "", "tier": "Gold"}],
-            },
+            {"ok":True, "visible":True,
+             "slots":[{"slot":0,"state":"ready","augment_id":"snowbomb","name":"","tier":"Gold"}]},
             hint_cache=cache,
-            context={"ok": True, "champion_id": "266", "champion_name": "暗裔剑魔"},
+            context={"ok":True,"champion_id":"266","champion_name":"暗裔剑魔"},
         )
-
         self.assertEqual(model["stats"][0]["name"], "冰雪爆裂")
         self.assertEqual(model["stats"][0]["status_code"], "SOURCE_STAT_MISSING")
         self.assertEqual(model["stats"][0]["stats_text"], "公开来源未提供此海克斯统计")
         self.assertEqual(model["stats"][0]["status_text"], "公开来源未提供此海克斯统计")
+        self.assertEqual(model["stats"][0].get("winrate_text", ""), "")
+        self.assertEqual(model["stats"][0].get("pickrate_text", ""), "")
 
 
 if __name__ == "__main__":

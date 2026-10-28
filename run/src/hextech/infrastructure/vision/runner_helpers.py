@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 import time
 from pathlib import Path
@@ -197,9 +196,10 @@ def _completed_captured_at(item: object) -> float:
 def current_snapshot_generation_id() -> str:
     """只读 current 小指针；Sidecar 不重新加载 Stats payload。"""
 
+    from hextech.modules.data.generation.release_store import read_head
     try:
-        payload = json.loads((get_var_dir() / "snapshots" / "current.v2.json").read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        payload = read_head(get_var_dir() / "snapshots")
+    except (OSError, ValueError):
         return ""
     return str(payload.get("current_generation_id") or "") if isinstance(payload, Mapping) else ""
 

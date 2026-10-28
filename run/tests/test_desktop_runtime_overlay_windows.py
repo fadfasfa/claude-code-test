@@ -38,10 +38,15 @@ class DesktopRuntimeOverlayWindowTests(unittest.TestCase):
             _run_on_ui_thread=lambda func: func(),
         )
 
-        with tempfile.TemporaryDirectory() as temp_dir, patch.object(runtime, "ASSET_DIR", temp_dir):
+        from hextech.interfaces.desktop import runtime_window
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch.object(runtime_window, "CHAMPION_ASSET_DIR", Path(temp_dir)/"seed"),
+            patch.object(runtime_window, "var_path", lambda *parts: Path(temp_dir).joinpath(*parts)),
+        ):
             runtime.load_and_set_img(ui, "266", FakeLabel())
 
-            self.assertFalse(os.path.exists(os.path.join(temp_dir, "266.png")))
+            self.assertFalse((Path(temp_dir)/"cache/assets/champions/266.png").exists())
             self.assertNotIn("266", ui.image_cache)
             self.assertNotIn("266", ui.downloading_imgs)
 

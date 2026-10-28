@@ -11,13 +11,14 @@ from collections.abc import Mapping
 from typing import Any
 
 
-from hextech.modules.recommendation.hero_rankings import build_hero_rankings, standard_scores as _standard_scores
+from hextech.modules.recommendation.hero_rankings import build_hero_rankings
 
 
 def build_aramkit_payloads(
     pointer: Mapping[str, Any],
     *,
     catalog: Any,
+    runtime_root=None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     from hextech.infrastructure.sources.aramkit.service import validate_scoped_stats_artifact
     from hextech.modules.data.catalog.version_catalog import (
@@ -26,13 +27,19 @@ def build_aramkit_payloads(
     )
     from hextech.modules.data.source_runs import source_run_artifact_path
 
-    index = validate_scoped_stats_artifact(pointer)
     artifact = pointer.get("artifact") if isinstance(pointer.get("artifact"), Mapping) else {}
-    index_path = source_run_artifact_path(
-        "aramkit",
-        str(pointer.get("run_id") or ""),
-        str(artifact.get("relative_path") or ""),
-    )
+    if runtime_root is None:
+        index = validate_scoped_stats_artifact(pointer)
+        index_path = source_run_artifact_path("aramkit", str(pointer.get("run_id") or ""), str(artifact.get("relative_path") or ""))
+    else:
+        from pathlib import Path
+        from hextech.modules.data.generation.release_store import checked_file, object_at
+        base = Path(runtime_root) / "sources" / "aramkit" / "runs" / str(pointer["run_id"])
+        checked_file(base, "manifest.json", digest=pointer["manifest_sha256"])
+        index_path = checked_file(base, artifact["relative_path"], digest=artifact["sha256"], size=artifact["size"])
+        index = object_at(index_path)
+        for child in index["files"]:
+            checked_file(index_path.parent, child["relative_path"], digest=child["sha256"], size=child["size"])
     catalog_champions = load_champion_core_data(catalog.root)
     catalog_by_id: dict[str, Mapping[str, Any]] = {}
     for entry in load_augment_manifest_entries(catalog.root):
@@ -62,44 +69,11 @@ def build_aramkit_payloads(
         catalog_champion = catalog_champions.get(champion_id)
         if not isinstance(catalog_champion, Mapping):
             raise ValueError(f"ARAMKit 英雄无法绑定 Catalog：{champion_id}")
-        cards: list[dict[str, Any]] = []
+        from hextech.modules.recommendation.card_projection import project_augment_cards
         all_rows = payload.get("all")
         if not isinstance(all_rows, list) or not all_rows:
             raise ValueError(f"ARAMKit 英雄统计为空：{champion_id}")
-        for raw in all_rows:
-            if not isinstance(raw, Mapping):
-                raise ValueError(f"ARAMKit 海克斯统计 schema 无效：{champion_id}")
-            augment_id = str(raw.get("id") or "")
-            catalog_augment = catalog_by_id.get(augment_id)
-            if not isinstance(catalog_augment, Mapping):
-                raise ValueError(f"ARAMKit 海克斯无法绑定 Catalog：{champion_id}/{augment_id}")
-            cards.append(
-                {
-                    "id": augment_id,
-                    "hero_id": champion_id,
-                    "hero_name": str(catalog_champion.get("name") or ""),
-                    "海克斯ID": augment_id,
-                    "海克斯名称": str(catalog_augment.get("name") or ""),
-                    "海克斯阶级": str(catalog_augment.get("tier") or ""),
-                    "海克斯胜率": float(raw["win_rate"]),
-                    "海克斯出场率": float(raw["pick_rate"]),
-                    "winrate": float(raw["win_rate"]),
-                    "pickrate": float(raw["pick_rate"]),
-                    "sample_count": int(raw["sample_count"]),
-                    "source_rank": int(raw["source_rank"]),
-                    "status": "ready",
-                    "icon": str(catalog_augment.get("icon_url") or ""),
-                    "augment_name_id": str(catalog_augment.get("augment_name_id") or ""),
-                }
-            )
-        win_scores = _standard_scores([float(card["winrate"]) for card in cards])
-        pick_scores = _standard_scores([float(card["pickrate"]) for card in cards])
-        for card, win_score, pick_score in zip(cards, win_scores, pick_scores, strict=True):
-            card["score"] = win_score * 0.85 + pick_score * 0.15
-            card["综合得分"] = card["score"]
-        cards.sort(key=lambda card: (-float(card["score"]), -int(card["sample_count"]), int(card["id"])))
-        for rank, card in enumerate(cards, start=1):
-            card["rank"] = rank
+        cards = project_augment_cards(all_rows, champion_id, str(catalog_champion["name"]), catalog_by_id)
         source_rows.append((champion, catalog_champion, cards))
 
     if not source_rows:

@@ -30,4 +30,5 @@ def test_isolated_launcher_binds_runtime_and_guide(tmp_path):
     launcher = package.write_portable_launcher(tmp_path, isolated_candidate=True)
     assert 'set "HEXTECH_VAR_DIR=%~dp0var"' in launcher.read_text()
     guide = package.write_first_run_guide(tmp_path, isolated_candidate=True).read_text(encoding="utf-8")
-    assert "不要直接双击 EXE" in guide
+    assert "由包内构建清单固定" in guide
+    assert "不回退到正式运行目录" in guide

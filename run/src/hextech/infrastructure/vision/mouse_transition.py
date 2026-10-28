@@ -55,6 +55,7 @@ class MouseTransitionObserver:
         self._left_was_down = False
         self._sequence = 0
         self._context = (0, "", 0, False)
+        self._eligibility_reason = "not_observed"
         self._edge_count = 0
         self._consumed_count = 0
         self._stale_drop_count = 0
@@ -84,8 +85,10 @@ class MouseTransitionObserver:
         game_instance_id: str,
         selection_epoch: int,
         eligible: bool,
+        reason: str = "",
     ) -> None:
         with self._lock:
+            self._eligibility_reason = str(reason or ("scene_eligible" if eligible else "scene_ineligible"))[:80]
             self._context = (
                 int(window_hwnd or 0),
                 str(game_instance_id or ""),
@@ -218,6 +221,7 @@ class MouseTransitionObserver:
                 "last_error_type": self._last_error_type,
                 "enqueued_count": self._sequence,
                 "eligible": self._context[3],
+                "eligibility_reason": self._eligibility_reason,
                 "drop_reasons": dict(self._drops),
             }
 

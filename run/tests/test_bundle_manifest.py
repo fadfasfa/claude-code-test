@@ -66,124 +66,68 @@ def test_validate_bundle_manifest_rejects_empty_critical_fields():
     assert "seed_health" in message
 
 
-def test_verified_snapshot_seed_is_validated_and_recorded(tmp_path, monkeypatch):
-    from hextech.modules.data.generation import DataSnapshotPublisher
-    from tooling.build import manifest as bundle_manifest
-    from tooling.build import rules as build_rules
+def _package_fixture(tmp_path, monkeypatch):
+    import shutil
+    from tests.support.v4_release import make_release
     from tooling.build.resource_manifest import write_resource_manifest
-    from tooling.build.rules import CATALOG_FILES, iter_package_data_entries
+    base = tmp_path / "project"
+    runtime = base / "resources/seeds/runtime.v4"
+    published = make_release(runtime, monkeypatch)
+    catalog_id = published.source_files[0].catalog_generation_id
+    shutil.copytree(runtime / "catalog/generations" / catalog_id, base / "resources/catalog")
+    asset = base / "resources/assets/ui/one.png"
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"png")
+    for name in ("bootstrap/desktop.py", "interfaces/overlay/host.py", "infrastructure/sources/apex/service.py", "infrastructure/sources/mayhem/service.py"):
+        source = base / "src/hextech" / name
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("# fixture\n", encoding="utf-8")
+    write_resource_manifest(base)
+    return base, runtime, published
 
-    snapshot_root = tmp_path / "resources" / "seeds"
-    payload = {
-        "champions": [{"id": "1", "name": "英雄一"}],
-        "champion_hextech": {"英雄一": {"hero_id": "1", "augments": [{"id": "a1"}]}},
-        "overlay_hints": {
-            "hints": {"a1": {"augment_id": "a1", "name": "强化一"}},
-            "name_index": {"a1": "a1", "强化一": "a1"},
-        },
-        "identities": {
-            "schema_version": 2,
-            "champions": {"1": "英雄一"},
-            "augments": {"a1": "强化一"},
-        },
-    }
-    DataSnapshotPublisher(snapshot_root).publish(payload)
-    verified_snapshot_root = tmp_path / "verified-snapshots"
-    published = DataSnapshotPublisher(verified_snapshot_root).publish(payload)
-    # This fixture intentionally has no source/Catalog closure: it exercises
-    # legacy v2 snapshot injection. Real v3 seed closure is tested separately.
-    for legacy_root in (snapshot_root, verified_snapshot_root):
-        current = json.loads((legacy_root / "current.v2.json").read_text(encoding="utf-8"))
-        legacy_path = legacy_root / "generations" / current["current_generation_id"] / "manifest.json"
-        legacy_manifest = json.loads(legacy_path.read_text(encoding="utf-8"))
-        legacy_manifest["schema_version"] = 2
-        legacy_manifest.pop("components", None)
-        legacy_path.write_text(json.dumps(legacy_manifest), encoding="utf-8")
-    catalog_dir = tmp_path / "resources" / "catalog"
-    catalog_dir.mkdir(parents=True)
-    for name in CATALOG_FILES:
-        (catalog_dir / name).write_text("{}", encoding="utf-8")
-    assets = tmp_path / "resources" / "assets" / "champions"
-    assets.mkdir(parents=True)
-    (assets / "one.png").write_bytes(b"png")
-    source_file = tmp_path / "src" / "hextech" / "bootstrap" / "desktop.py"
-    source_file.parent.mkdir(parents=True)
-    source_file.write_text("# test source\n", encoding="utf-8")
-    write_resource_manifest(tmp_path)
-    monkeypatch.setattr(bundle_manifest, "iter_source_files", lambda _base: ["src/hextech/bootstrap/desktop.py"])
-    snapshot_only = SimpleNamespace(files=(), metadata={}, bundled_name=lambda _path: "")
-    monkeypatch.setattr(bundle_manifest, "collect_cohort_seed", lambda _root: snapshot_only)
-    monkeypatch.setattr(build_rules, "collect_cohort_seed", lambda _root: snapshot_only)
 
-    manifest = bundle_manifest.build_bundle_manifest(
-        tmp_path,
-        verified_snapshot_root=verified_snapshot_root,
-    )
-    generated_manifest = tmp_path / "bundle_manifest.json"
-    generated_manifest.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-    entries = iter_package_data_entries(
-        tmp_path,
-        generated_manifest,
-        verified_snapshot_root=verified_snapshot_root,
-    )
-
+@pytest.mark.parametrize("runtime_profile", ["installed", "isolated_candidate"])
+def test_verified_snapshot_seed_is_validated_and_recorded(tmp_path, monkeypatch, runtime_profile):
+    from tooling.build import manifest as bundle_manifest
+    from tooling.build.rules import iter_package_data_entries
+    base, runtime, published = _package_fixture(tmp_path, monkeypatch)
+    manifest = bundle_manifest.build_bundle_manifest(base, verified_snapshot_root=runtime / "snapshots",
+                                                     runtime_profile=runtime_profile)
+    manifest_path = base / "bundle_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    entries = iter_package_data_entries(base, manifest_path, verified_snapshot_root=runtime / "snapshots")
     assert manifest["seed_health"]["generation_id"] == published.generation_id
     assert manifest["schema_version"] == 3
-    assert manifest["build_id"]
-    assert len(manifest["source_fingerprint"]) == 64
-    assert manifest["runtime_contracts"] == {
-        "overlay_event": 3,
-        "sidecar_status": 2,
-        "overlay_session_report": 2,
-    }
-    assert "resources/seeds/current.v2.json" in manifest["seed_files"]
-    for relative_name in manifest["seed_files"]:
-        assert len(manifest["seed_sha256"][relative_name]) == 64
-    verified_root = verified_snapshot_root.resolve()
-    verified_entries = [entry for entry in entries if entry.target.startswith("resources/seeds")]
-    assert verified_entries
-    assert all(verified_root == entry.source.resolve() or verified_root in entry.source.resolve().parents for entry in verified_entries)
+    assert manifest["runtime_profile"] == runtime_profile
+    assert manifest["build_id"] and len(manifest["source_fingerprint"]) == 64
+    assert manifest["runtime_contracts"] == {"overlay_event": 3, "sidecar_status": 2, "overlay_session_report": 2}
+    assert "resources/seeds/runtime.v4/snapshots/current.v4.json" in manifest["seed_files"]
+    assert all(len(digest) == 64 for digest in manifest["seed_sha256"].values())
+    selected = [entry for entry in entries if entry.target.startswith("resources/seeds/runtime.v4")]
+    assert selected
+    assert all(runtime.resolve() in entry.source.resolve().parents for entry in selected)
+
+    for invalid in (None, "", "unknown"):
+        invalid_manifest = {**manifest, "runtime_profile": invalid}
+        with pytest.raises(ValueError, match="runtime_profile"):
+            bundle_manifest.validate_bundle_manifest(invalid_manifest)
 
 
-def test_runtime_bundle_reports_missing_or_corrupt_manifest(tmp_path, monkeypatch):
-    from hextech.infrastructure.persistence import runtime_bundle
-
-    state_dir = tmp_path / "runtime" / "state"
-    warnings: list[str] = []
-
-    monkeypatch.setattr(runtime_bundle.logger, "warning", lambda message, *args: warnings.append(message % args))
-    monkeypatch.setattr(
-        runtime_bundle,
-        "build_runtime_state_path",
-        lambda filename: str(state_dir / filename),
-    )
-
-    state_dir.mkdir(parents=True)
-    (state_dir / "startup_status.json").write_text(
-        json.dumps({"last_error": "remote_failed_local_fallback"}, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-    missing_root = tmp_path / "missing_bundle"
-    missing_root.mkdir()
-    manifest = runtime_bundle._load_bundle_manifest(missing_root)
-
-    status = json.loads((state_dir / "startup_status.json").read_text(encoding="utf-8"))
-    assert manifest["seed_files"] == []
-    assert status["bundle_manifest"]["status"] == "missing"
-    assert status["bundle_manifest"]["warning"] == "bundle_manifest_missing"
-    assert status["last_error"] == "remote_failed_local_fallback"
-    assert warnings
-
-    corrupt_root = tmp_path / "corrupt_bundle"
-    corrupt_root.mkdir()
-    (corrupt_root / "bundle_manifest.json").write_text("{broken", encoding="utf-8")
-    runtime_bundle._load_bundle_manifest(corrupt_root)
-
-    status = json.loads((state_dir / "startup_status.json").read_text(encoding="utf-8"))
-    assert status["bundle_manifest"]["status"] == "error"
-    assert status["bundle_manifest"]["warning"] == "bundle_manifest_invalid"
-    assert status["last_error"] == "remote_failed_local_fallback"
+def test_v4_seed_reports_missing_or_corrupt_manifest_without_editing_existing_state(tmp_path):
+    from hextech.infrastructure.persistence.release_seed import initialize_snapshot
+    from hextech.modules.data.generation import DataSnapshotPublisher
+    state = tmp_path / "runtime/state/startup_status.json"
+    state.parent.mkdir(parents=True)
+    state.write_text('{"last_error":"existing_failure"}', encoding="utf-8")
+    before = state.read_bytes()
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    publisher = DataSnapshotPublisher(tmp_path / "runtime/snapshots")
+    assert initialize_snapshot(publisher, seed)["reason_code"] == "v4_seed_unavailable"
+    (seed / "snapshots").mkdir()
+    (seed / "snapshots/current.v4.json").write_text("{broken", encoding="utf-8")
+    assert initialize_snapshot(publisher, seed)["reason_code"] == "v4_seed_unavailable"
+    assert state.read_bytes() == before
 
 
 def test_finalize_output_runs_smoke_before_replacing_existing_release(tmp_path, monkeypatch):
@@ -301,38 +245,6 @@ def test_finalize_output_promotes_staging_after_smoke_success(tmp_path, monkeypa
     assert smoke_calls[0][1] == 210
 
 
-def test_packaged_smoke_startup_status_uses_runtime_auth_token(tmp_path, monkeypatch):
-    from tooling.acceptance import smoke_packaged_startup as smoke
-
-    runtime_root = tmp_path / "runtime"
-    state_dir = runtime_root / "state"
-    state_dir.mkdir(parents=True)
-    (state_dir / "auth_token.txt").write_text("local-secret", encoding="utf-8")
-    calls: list[tuple[str, dict[str, str] | None]] = []
-
-    def fake_fetch(url: str, timeout: float = 8.0, headers: dict[str, str] | None = None):
-        calls.append((url, headers))
-        if url.endswith("/api/startup_status"):
-            return 200, b'{"hextech_ready":true,"data_snapshot":{"state":"ready","generation_id":"g1"}}'
-        if url.endswith("/api/champions"):
-            return 200, b'[{"heroName":"Garen","heroId":"86"}]'
-        if "/api/champion/" in url:
-            return 200, b'{"loading":true,"generation_id":"g1"}'
-        if "/api/synergies/" in url:
-            return 200, b'{"synergies":[]}'
-        if url.endswith(".png"):
-            return 200, b"png"
-        return 200, b"<html></html>"
-
-    monkeypatch.setattr(smoke, "_fetch", fake_fetch)
-
-    smoke._web_ready("8211", runtime_root)
-
-    startup_call = next(item for item in calls if item[0].endswith("/api/startup_status"))
-    assert startup_call[1] == {
-        "Origin": "http://127.0.0.1:8211",
-        "X-Hextech-Token": "local-secret",
-    }
 
 
 def test_packaged_smoke_cleanup_retries_transient_windows_locks(tmp_path, monkeypatch):
@@ -353,34 +265,3 @@ def test_packaged_smoke_cleanup_retries_transient_windows_locks(tmp_path, monkey
 
     assert smoke._cleanup_smoke_root(smoke_root, attempts=3)
     assert len(attempts) == 3
-
-
-def test_packaged_smoke_rejects_web_generation_mismatch():
-    from tooling.acceptance.smoke_packaged_startup import _business_ready
-
-    checks = _business_ready(
-        {"data_snapshot": {"state": "ready", "generation_id": "g1"}},
-        [{"heroId": "1"}],
-        {"ready": True, "generation_id": "g2"},
-        {"synergies": []},
-        {"code": 200, "bytes": 10},
-        require_snapshot_status=True,
-    )
-
-    assert checks["snapshot_generation_ready"] is True
-    assert checks["web_generation_matches_snapshot"] is False
-
-
-def test_packaged_smoke_allows_runtime_generation_without_verified_seed_status():
-    from tooling.acceptance.smoke_packaged_startup import _business_ready
-
-    checks = _business_ready(
-        {"hextech_ready": True},
-        [{"heroId": "1"}],
-        {"ready": True, "generation_id": "runtime-g1"},
-        {"synergies": []},
-        {"code": 200, "bytes": 10},
-    )
-
-    assert checks["snapshot_generation_ready"] is True
-    assert checks["web_generation_matches_snapshot"] is True

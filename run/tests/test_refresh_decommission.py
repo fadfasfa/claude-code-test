@@ -36,8 +36,8 @@ def test_production_cannot_import_test_support_or_retired_refresh_engine():
     assert not violations, "\n".join(violations)
 
 
-def test_retired_cycle_only_exists_under_frozen_test_baseline():
+def test_retired_cycle_has_no_executable_source_in_production_or_tests():
     assert all(not (ROOT / "src/hextech/bootstrap" / (name + ".py")).exists() for name in RETIRED)
-    assert all((ROOT / "tests/support/legacy_refresh" / (name + ".py")).is_file() for name in RETIRED)
+    assert not list((ROOT / "tests/support/legacy_refresh").glob("*.py"))
     for path in (ROOT / "src").rglob("*.py"):
         assert not re.search(r"\bRefreshCycleMixin\b", path.read_text(encoding="utf-8-sig")), path

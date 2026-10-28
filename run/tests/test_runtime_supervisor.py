@@ -1,16 +1,16 @@
 """测试 RuntimeSupervisor 编排。
 
-调用方: pytest; 关键依赖: hextech.bootstrap.supervisor。
+调用方: pytest; 关键依赖: hextech.bootstrap.runtime_owner。
 """
 from __future__ import annotations
+
+import pytest
 
 import json
 import tempfile
 import threading
 import time
 import unittest
-import urllib.error
-import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -18,47 +18,18 @@ from hextech.interfaces.overlay import runtime_manager as overlay_runtime_manage
 from support.process_fakes import FakeProcess
 
 
-def _request(base_url: str, method: str, path: str, *, nonce: str = "test-nonce", host: str = "127.0.0.1", body: dict | None = None):
-    data = None if body is None else json.dumps(body).encode("utf-8")
-    request = urllib.request.Request(
-        base_url + path,
-        data=data,
-        method=method,
-        headers={
-            "Host": host,
-            "X-Hextech-Supervisor-Nonce": nonce,
-            "Content-Type": "application/json",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=3) as response:
-        return response.status, json.loads(response.read().decode("utf-8") or "{}")
+def _request(owner, method, path, *, body=None, **kwargs):
+    if method == "POST":
+        return 202, owner.run_game_overlay_action(body)
+    if path == "/v1/status":
+        return 200, owner.snapshot()
+    return 200, owner.get_action(path.rsplit("/",1)[-1])
 
 
 class RuntimeSupervisorTests(unittest.TestCase):
-    def test_control_api_requires_safe_host_and_nonce(self):
-        from hextech.bootstrap.supervisor import RuntimeSupervisor
-
-        supervisor = RuntimeSupervisor(parent_pid=0, session_nonce="test-nonce")
-        server = supervisor.serve_in_thread(port=0)
-        try:
-            base = f"http://127.0.0.1:{server.port}"
-
-            status, payload = _request(base, "GET", "/v1/status")
-            self.assertEqual(status, 200)
-            self.assertEqual(payload["supervisor_instance_id"], supervisor.supervisor_instance_id)
-
-            with self.assertRaises(urllib.error.HTTPError) as bad_nonce:
-                _request(base, "GET", "/v1/status", nonce="wrong")
-            self.assertEqual(bad_nonce.exception.code, 401)
-
-            with self.assertRaises(urllib.error.HTTPError) as bad_host:
-                _request(base, "GET", "/v1/status", host="evil.example")
-            self.assertEqual(bad_host.exception.code, 403)
-        finally:
-            server.shutdown()
 
     def test_game_overlay_action_is_async_and_updates_component_status(self):
-        from hextech.bootstrap.supervisor import RuntimeSupervisor
+        from hextech.bootstrap.runtime_owner import AppRuntimeOwner as RuntimeSupervisor
 
         class FakeOverlayRuntime:
             def __init__(self):
@@ -106,14 +77,13 @@ class RuntimeSupervisorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             event_path = Path(tmp) / "events.jsonl"
             supervisor = RuntimeSupervisor(
-                parent_pid=0,
-                session_nonce="test-nonce",
+                monitor=False,
+
                 event_log_path=event_path,
                 overlay_runtime=overlay,
             )
-            server = supervisor.serve_in_thread(port=0)
             try:
-                base = f"http://127.0.0.1:{server.port}"
+                base = supervisor
                 status, action = _request(base, "POST", "/v1/actions/game-overlay", body={"enabled": True})
                 self.assertEqual(status, 202)
                 self.assertEqual(action["status"], "running")
@@ -144,10 +114,10 @@ class RuntimeSupervisorTests(unittest.TestCase):
                 self.assertTrue(completed_event["build_id"])
             finally:
                 overlay.release.set()
-                server.shutdown()
+                supervisor.stop()
 
     def test_game_overlay_opposite_action_is_not_deduplicated(self):
-        from hextech.bootstrap.supervisor import RuntimeSupervisor
+        from hextech.bootstrap.runtime_owner import AppRuntimeOwner as RuntimeSupervisor
 
         class FakeOverlayRuntime:
             def __init__(self):
@@ -172,10 +142,9 @@ class RuntimeSupervisorTests(unittest.TestCase):
                 self.state = {"status": "stopped", "phase": reason}
 
         overlay = FakeOverlayRuntime()
-        supervisor = RuntimeSupervisor(parent_pid=0, session_nonce="test-nonce", overlay_runtime=overlay)
-        server = supervisor.serve_in_thread(port=0)
+        supervisor = RuntimeSupervisor(monitor=False,  overlay_runtime=overlay)
         try:
-            base = f"http://127.0.0.1:{server.port}"
+            base = supervisor
             status, start_action = _request(base, "POST", "/v1/actions/game-overlay", body={"enabled": True})
             self.assertEqual(status, 202)
             self.assertEqual(start_action["status"], "running")
@@ -195,10 +164,10 @@ class RuntimeSupervisorTests(unittest.TestCase):
             self.assertEqual(overlay.calls, [True, False])
         finally:
             overlay.release_start.set()
-            server.shutdown()
+            supervisor.stop()
 
     def test_overlay_runtime_disable_cancels_inflight_generation_without_waiting_for_start_lock(self):
-        from hextech.bootstrap.supervisor import OverlayRuntimeManager
+        from hextech.interfaces.overlay.runtime_manager import OverlayRuntimeManager
 
         prepare_entered = threading.Event()
         release_prepare = threading.Event()
@@ -241,7 +210,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertGreaterEqual(len(inactive_events), 1)
 
     def test_overlay_runtime_retries_transient_sidecar_start_once_with_fixed_backoff(self):
-        from hextech.bootstrap.supervisor import OverlayRuntimeManager
+        from hextech.interfaces.overlay.runtime_manager import OverlayRuntimeManager
 
         attempts: list[int] = []
         delays: list[float] = []
@@ -268,7 +237,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertEqual(delays, [1.0])
 
     def test_overlay_runtime_warm_budget_recommends_fallback_without_stopping_start(self):
-        from hextech.bootstrap import supervisor as runtime_supervisor
+        from hextech.interfaces.overlay import runtime_manager as runtime_supervisor
 
         loader_entered = threading.Event()
         release_loader = threading.Event()
@@ -312,7 +281,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             runtime.set_enabled(False)
 
     def test_overlay_runtime_first_enable_keeps_elapsed_prewarm_time(self):
-        from hextech.bootstrap import supervisor as runtime_supervisor
+        from hextech.interfaces.overlay import runtime_manager as runtime_supervisor
 
         loader_entered = threading.Event()
         release_loader = threading.Event()
@@ -356,7 +325,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             runtime.set_enabled(False)
 
     def test_overlay_runtime_unknown_and_cold_modes_use_cold_fallback_budget(self):
-        from hextech.bootstrap import supervisor as runtime_supervisor
+        from hextech.interfaces.overlay import runtime_manager as runtime_supervisor
 
         with mock.patch.object(overlay_runtime_manager, "OVERLAY_COLD_STARTUP_BUDGET_SECONDS", 0.05):
             for cache_hit, expected_mode in ((None, "unknown"), (False, "cold")):
@@ -391,31 +360,19 @@ class RuntimeSupervisorTests(unittest.TestCase):
                     runtime.set_enabled(False)
 
 
-def test_twenty_four_hour_lease_soak_does_not_append_success_renewals(tmp_path: Path) -> None:
-    from hextech.bootstrap.supervisor import RuntimeSupervisor
-
-    class Overlay:
-        def snapshot(self) -> dict:
-            return {"status": "stopped", "phase": "idle"}
-
-    target = tmp_path / "supervisor_events.v1.jsonl"
-    supervisor = RuntimeSupervisor(parent_pid=0, overlay_runtime=Overlay(), event_log_path=target)
-    for _ in range(43_200):
-        supervisor.renew_lease({"control_instance_id": "desktop-owner"})
-
-    assert supervisor.snapshot()["lease"]["state"] == "connected"
-    assert not target.exists()
 
 
 def test_supervisor_event_journal_rotates_to_one_megabyte_plus_three_segments(tmp_path: Path) -> None:
-    from hextech.bootstrap.supervisor import RuntimeSupervisor
+    from hextech.bootstrap.runtime_owner import AppRuntimeOwner as RuntimeSupervisor
 
     class Overlay:
+        def shutdown(self, reason):
+            return None
         def snapshot(self) -> dict:
             return {"status": "stopped", "phase": "idle"}
 
     target = tmp_path / "supervisor_events.v1.jsonl"
-    supervisor = RuntimeSupervisor(parent_pid=0, overlay_runtime=Overlay(), event_log_path=target)
+    supervisor = RuntimeSupervisor(monitor=False, overlay_runtime=Overlay(), event_log_path=target)
     for index in range(700):
         supervisor.append_event({"event": "test.transition", "sequence": index, "detail": "x" * 8000})
 
@@ -430,9 +387,11 @@ def test_supervisor_event_journal_rotates_to_one_megabyte_plus_three_segments(tm
     assert sum(path.stat().st_size for path in segments) <= 4 * 1024 * 1024
 
 def test_sidecar_heartbeat_recovery_is_not_reported_as_restart(tmp_path: Path) -> None:
-    from hextech.bootstrap.supervisor import RuntimeSupervisor
+    from hextech.bootstrap.runtime_owner import AppRuntimeOwner as RuntimeSupervisor
 
     class RecoveredOverlay:
+        def shutdown(self, reason):
+            return None
         def __init__(self) -> None:
             self.recovered = False
 
@@ -462,7 +421,7 @@ def test_sidecar_heartbeat_recovery_is_not_reported_as_restart(tmp_path: Path) -
 
     event_path = tmp_path / "events.jsonl"
     supervisor = RuntimeSupervisor(
-        parent_pid=0,
+        monitor=False,
         overlay_runtime=RecoveredOverlay(),
         event_log_path=event_path,
     )
@@ -470,3 +429,12 @@ def test_sidecar_heartbeat_recovery_is_not_reported_as_restart(tmp_path: Path) -
 
     events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
     assert [event["event"] for event in events] == ["game_overlay.sidecar_recovered"]
+
+
+@pytest.fixture(autouse=True)
+def _close_app_owner_after_test():
+    yield
+    from hextech.bootstrap import runtime_owner as app_runtime
+    owner = app_runtime.active_owner()
+    if owner is not None:
+        owner.stop(timeout=2)

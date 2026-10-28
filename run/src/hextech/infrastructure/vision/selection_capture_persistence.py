@@ -5,6 +5,7 @@ import hashlib
 import json
 import time
 from copy import deepcopy
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -14,6 +15,23 @@ from .diagnostic_capture_session import _reject_reparse_path
 CACHE_OWNER = "overlay-selection-cache-v2"
 CACHE_GROUP_LIMIT = 200
 CACHE_BYTE_LIMIT = 256 * 1024 * 1024
+_REJECTED_SAVES: OrderedDict[tuple, dict] = OrderedDict()
+
+
+class SelectionCacheCapacityError(ValueError):
+    def __init__(self, reason: str, details: dict) -> None:
+        super().__init__(reason)
+        self.details = details
+
+
+def _io_stage(stage: str, action, *args, **kwargs):
+    """Preserve the original OSError and native error codes for the writer."""
+    try:
+        return action(*args, **kwargs)
+    except OSError as exc:
+        if not getattr(exc, "selection_cache_stage", None):
+            exc.selection_cache_stage = stage
+        raise
 
 _LEGACY_MANIFEST_FIELDS = frozenset({
     "schema_version", "owner", "diagnostic_id", "manual", "labels",
@@ -126,10 +144,11 @@ def persist_selection_capture(root: Path, draft: Any, *, group_limit=CACHE_GROUP
     from hextech.infrastructure.persistence.file_lock import InterProcessFileLock
     _reject_reparse_path(root / ".writer.lock")
     lock = InterProcessFileLock(root / ".writer.lock")
-    if not lock.acquire():
+    if not _io_stage("writer_lock", lock.acquire):
         raise ValueError("selection_cache_writer_busy")
     try:
-        return _persist_locked(root, draft, group_limit=group_limit, byte_limit=byte_limit)
+        return _io_stage("persist", _persist_locked, root, draft,
+                         group_limit=group_limit, byte_limit=byte_limit)
     finally:
         lock.release()
 
@@ -182,12 +201,66 @@ def _matching_slot_asset(path: Path, previous: Mapping[str, Any] | None, *, slot
     return candidate
 
 
+def _encoding_identity(draft: Any) -> tuple:
+    frames = set()
+    for frame in draft.frames:
+        geometry = [frame.metadata.get("selection_box"), [
+            {"slot": slot.get("slot"), **{kind: {
+                key: slot.get(kind, {}).get(key) for key in ("valid", "box")}
+                for kind in ("name", "icon")}}
+            for slot in frame.metadata.get("slot_rois", [])]]
+        frames.add((_rgb_sha256(frame.image), json.dumps(geometry, sort_keys=True, default=str)))
+    return tuple(sorted(frames))
+
+
 def _persist_locked(root: Path, draft: Any, *, group_limit: int, byte_limit: int) -> dict:
+    """Avoid repeating PNG work for unchanged rejected content and inventory."""
+    _reject_reparse_path(root)
+    def capacity_state():
+        if not root.exists():
+            return (0, 0, ())
+        return (*_io_stage("inventory", _inventory, root), tuple(sorted(
+            (group[0].name, (group[0] / "manifest.json").stat().st_mtime_ns, group[3])
+            for group in _groups(root))))
+    inventory = capacity_state()
+    # Observation clocks, frame ids and terminal accumulators change even for identical
+    # pixels. Cache only PNG descriptors, then re-evaluate the latest manifest/quota;
+    # a smaller terminal or newly reclaimable group must still be allowed to fit.
+    identity = (str(root.absolute()), draft.retention_class, draft.manual,
+                _encoding_identity(draft), group_limit, byte_limit)
+    previous = _REJECTED_SAVES.get(identity)
+    encoding_plan = dict(previous["encoding_plan"]) if previous else {}
+    try:
+        if previous and previous["inventory"] == inventory:
+            _REJECTED_SAVES.move_to_end(identity)
+            try:
+                _persist_once(root, draft, group_limit=group_limit, byte_limit=byte_limit,
+                              encoding_plan=encoding_plan, probe=True)
+            except SelectionCacheCapacityError as exc:
+                exc.details["retry_suppressed"] = True
+                raise
+            except KeyError:
+                # A previously reused on-disk asset may now be needed by a new
+                # diagnostic group; it has no in-memory encoding descriptor yet.
+                pass
+        result = _persist_once(root, draft, group_limit=group_limit, byte_limit=byte_limit,
+                               encoding_plan=encoding_plan)
+    except SelectionCacheCapacityError:
+        _REJECTED_SAVES[identity] = {"inventory": capacity_state(), "encoding_plan": encoding_plan}
+        while len(_REJECTED_SAVES) > 64:
+            _REJECTED_SAVES.popitem(last=False)
+        raise
+    _REJECTED_SAVES.pop(identity, None)
+    return result
+
+
+def _persist_once(root: Path, draft: Any, *, group_limit: int, byte_limit: int,
+                  encoding_plan: dict, probe: bool = False) -> dict:
     from .failure_evidence import _atomic_write_bytes, _png_bytes, RoiImage
     if len(draft.diagnostic_id) != 32 or any(c not in "0123456789abcdef" for c in draft.diagnostic_id):
         raise ValueError("selection_cache_invalid_diagnostic_id")
     _reject_reparse_path(root)
-    root.mkdir(parents=True, exist_ok=True)
+    _io_stage("root_mkdir", root.mkdir, parents=True, exist_ok=True)
     path = root / draft.diagnostic_id
     _reject_reparse_path(path)
     groups = _groups(root)
@@ -198,6 +271,21 @@ def _persist_locked(root: Path, draft: Any, *, group_limit: int, byte_limit: int
     existing_manifest = existing[1] if existing else None
     reusable_frames = _existing_frames(path, existing_manifest)
     payloads: dict[str, bytes] = {}
+    encoded_here: dict[str, tuple[str, int]] = {}
+
+    def png_asset(image):
+        identity = _rgb_sha256(image)
+        if identity in encoded_here:
+            return encoded_here[identity]
+        if probe:
+            return encoding_plan[identity]
+        encoded = _png_bytes(image)
+        filename = hashlib.sha256(encoded).hexdigest()+".png"
+        descriptor = (filename, len(encoded))
+        encoded_here[identity] = encoding_plan[identity] = descriptor
+        payloads[filename] = encoded
+        return descriptor
+
     observations = []
     for frame in draft.frames:
         rgb_sha256 = _rgb_sha256(frame.image)
@@ -206,10 +294,7 @@ def _persist_locked(root: Path, draft: Any, *, group_limit: int, byte_limit: int
             filename = str(previous["file"])
             byte_size = int(previous["byte_size"])
         else:
-            encoded = _png_bytes(frame.image)
-            filename = hashlib.sha256(encoded).hexdigest()+".png"
-            byte_size = len(encoded)
-            payloads[filename] = encoded
+            filename, byte_size = png_asset(frame.image)
         observation = {"file": filename, "sha256": filename[:-4], "byte_size": byte_size,
                        "rgb_sha256": rgb_sha256, "sampled_at": frame.sampled_at,
                        "clarity": frame.clarity, **deepcopy(frame.metadata)}
@@ -231,10 +316,8 @@ def _persist_locked(root: Path, draft: Any, *, group_limit: int, byte_limit: int
                     roi.update(file=reusable["file"], sha256=reusable["sha256"],
                                byte_size=reusable["byte_size"])
                 else:
-                    content = _png_bytes(RoiImage.from_image(image.crop(local)))
-                    digest = hashlib.sha256(content).hexdigest()
-                    roi.update(file=digest+".png", sha256=digest, byte_size=len(content))
-                    payloads[digest+".png"] = content
+                    filename, size = png_asset(RoiImage.from_image(image.crop(local)))
+                    roi.update(file=filename, sha256=filename[:-4], byte_size=size)
         observations.append(observation)
     retention_class = max(
         (draft.retention_class, str(existing_manifest.get("retention_class") or "success")
@@ -260,7 +343,8 @@ def _persist_locked(root: Path, draft: Any, *, group_limit: int, byte_limit: int
                     asset_sizes[str(roi["file"])] = int(roi["byte_size"])
     needed = len(payloads["manifest.json"]) + sum(asset_sizes.values())
     if needed > byte_limit:
-        raise ValueError("selection_cache_group_exceeds_byte_budget")
+        raise SelectionCacheCapacityError("selection_cache_group_exceeds_byte_budget",
+            {"needed_bytes": needed, "byte_limit": byte_limit, "retention_class": retention_class})
     previous_assets = _manifest_assets(existing[1]) if existing else set()
     remaining = [
         group for group in groups
@@ -270,41 +354,51 @@ def _persist_locked(root: Path, draft: Any, *, group_limit: int, byte_limit: int
     # Protected/partial bytes and the atomic-write temporary count at every instant. New PNGs
     # accumulate before the manifest is committed; the old manifest still exists while its
     # replacement temporary is written. Reused content-addressed PNGs add no bytes.
-    total, count = _inventory(root)
+    total, count = _io_stage("inventory", _inventory, root)
     new_asset_bytes = sum(
-        len(content) for name, content in payloads.items()
-        if name != "manifest.json" and not (path / name).exists()
+        size for name, size in asset_sizes.items() if not (path / name).exists()
     )
     transient_peak = total + new_asset_bytes + len(payloads["manifest.json"])
+    reclaimable_bytes = sum(group[2] for group in remaining)
+    victims = []
     while count+int(not path.exists()) > group_limit or transient_peak > byte_limit:
         if not remaining:
-            raise ValueError("selection_cache_budget_exhausted")
+            raise SelectionCacheCapacityError("selection_cache_budget_exhausted", {
+                "needed_bytes": needed, "transient_peak_bytes": transient_peak,
+                "retained_bytes": total, "reclaimable_bytes": reclaimable_bytes,
+                "byte_limit": byte_limit, "group_limit": group_limit,
+                "retention_class": retention_class, "retry_suppressed": False})
         victim = min(remaining, key=lambda g: (
             _manifest_retention_priority(g[1]), g[1].get("updated_at", 0), g[0].name,
         ))
+        victims.append(victim)
+        remaining.remove(victim)
+        total -= victim[2]
+        count -= 1
+        transient_peak -= victim[2]
+    if probe:
+        return {}
+    for victim in victims:
         # Revalidate immediately before deletion; no recursive deletion or external references.
         checked = _inspect_group(victim[0])
         if checked is None or not checked[3]:
             raise ValueError("selection_cache_rotation_protected")
         for child in checked[0].iterdir():
-            child.unlink()
-        checked[0].rmdir()
-        remaining.remove(victim)
-        total -= checked[2]
-        count -= 1
-        transient_peak -= checked[2]
-    path.mkdir(exist_ok=True)
+            _io_stage("rotation_unlink", child.unlink)
+        _io_stage("rotation_rmdir", checked[0].rmdir)
+    _io_stage("group_mkdir", path.mkdir, exist_ok=True)
     # Manifest is committed last; leftovers on failure are intentionally protected.
     for name, content in payloads.items():
         _reject_reparse_path(path / name)
         if name == "manifest.json" or not (path / name).exists():
-            _atomic_write_bytes(path / name, content)
+            _io_stage("manifest_write" if name == "manifest.json" else "asset_write",
+                      _atomic_write_bytes, path / name, content)
         elif (path / name).read_bytes() != content:
             raise ValueError("selection_cache_asset_hash_mismatch")
     for stale_name in previous_assets - _manifest_assets(manifest):
         stale = path / stale_name
         _reject_reparse_path(stale)
-        stale.unlink(missing_ok=True)
+        _io_stage("stale_asset_unlink", stale.unlink, missing_ok=True)
     # An accepted task is not a successful save until every manifest asset really exists.
     committed = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
     if committed != manifest:

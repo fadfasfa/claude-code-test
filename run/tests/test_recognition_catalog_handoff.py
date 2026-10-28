@@ -164,13 +164,13 @@ def test_catalog_only_runtime_recovers_pinned_catalog_during_game(monkeypatch, t
     from hextech.modules.data.ports import paths
     from support.process_fakes import FakeProcess
     from test_cohort_seed import _write_catalog
-    from test_cohort_v3 import _publish_independent_recognition_catalog
+    from support.v4_release import _publish_independent_recognition_catalog
 
     runtime_root = tmp_path / "runtime"
     _, pointer_a, _ = _write_catalog(runtime_root)
     monkeypatch.setattr(paths, "RUNTIME_DATA_DIR", runtime_root)
     monkeypatch.setattr(template_build, "ASSET_DIR", tmp_path / "assets")
-    assert not (runtime_root / "snapshots").exists()
+    assert json.loads((runtime_root / "snapshots/current.v4.json").read_text())["current_generation_id"] == ""
     signature = template_runtime_resource_signature(tmp_path / "resources")
 
     def build(**kwargs):
@@ -233,7 +233,7 @@ def test_catalog_only_runtime_recovers_pinned_catalog_during_game(monkeypatch, t
     result = runtime.set_enabled(True)
     assert result["pending_recognition_catalog_id"] == catalog_b
     assert runtime._active_vision_hint_cache == hints_a
-    assert not (runtime_root / "snapshots").exists()
+    assert json.loads((runtime_root / "snapshots/current.v4.json").read_text())["current_generation_id"] == ""
     if missing_field:
         assert result["last_start_failure_kind"] == "sidecar_recovery_identity_missing"
         assert result["phase"] == "sidecar_recovery_blocked"
@@ -255,7 +255,7 @@ def test_catalog_only_runtime_recovers_pinned_catalog_during_game(monkeypatch, t
 def test_supervisor_recovers_old_catalog_or_reports_missing_identity(monkeypatch, tmp_path, old_catalog):
     import threading
 
-    from hextech.bootstrap.supervisor import RuntimeSupervisor
+    from hextech.bootstrap.runtime_owner import AppRuntimeOwner as RuntimeSupervisor
     from support.process_fakes import FakeProcess
 
     starts = []
@@ -287,7 +287,7 @@ def test_supervisor_recovers_old_catalog_or_reports_missing_identity(monkeypatch
     monkeypatch.setattr(runtime, "observe_data_generation", lambda: {
         "changed": False, "state": "deferred_game_active",
     })
-    supervisor = RuntimeSupervisor(parent_pid=0, overlay_runtime=runtime, event_log_path=tmp_path / "events.jsonl")
+    supervisor = RuntimeSupervisor(monitor=False, overlay_runtime=runtime, event_log_path=tmp_path / "events.jsonl")
     execute = supervisor._execute_game_overlay_action
 
     def tracked_execute(**kwargs):
@@ -410,17 +410,15 @@ def test_retention_protects_active_recognition_catalog(tmp_path):
 
 def test_restart_keeps_verified_new_catalog_with_old_statistics(tmp_path):
     import shutil
-    from hextech.infrastructure.persistence.cohort_seed import install_bundled_cohort
+    from hextech.infrastructure.persistence.release_seed import install_v4_seed
     from hextech.modules.data.catalog.versioned import build_catalog_manifest, sha256_file
-    from test_cohort_v3 import _v3_runtime
-    from test_cohort_seed import _bundle_from_runtime
+    from support.v4_release import release_runtime
 
-    source, _, _ = _v3_runtime(tmp_path / "source", details=True)
-    bundle = _bundle_from_runtime(tmp_path, source)
+    source, _, _ = release_runtime(tmp_path / "source", details=True)
     runtime = tmp_path / "runtime"
-    install_bundled_cohort(bundle_root=bundle, runtime_root=runtime)
-    pointer_file = runtime / "catalog/current.v2.json"
-    old = json.loads(pointer_file.read_text())
+    install_v4_seed(source, runtime)
+    from hextech.modules.data.generation.release_store import read_head, update_head
+    old = read_head(runtime / "snapshots")["recognition_catalog"]
     staging = tmp_path / "new-catalog"
     shutil.copytree(runtime / "catalog/generations" / old["catalog_generation_id"], staging)
     (staging / "hero_version.txt").write_text("new-version", encoding="utf-8")
@@ -430,13 +428,22 @@ def test_restart_keeps_verified_new_catalog_with_old_statistics(tmp_path):
     (target / "manifest.json").write_text(json.dumps(manifest.to_dict()), encoding="utf-8")
     current = {"schema_version": 2, "catalog_generation_id": manifest.catalog_generation_id,
                "content_sha256": manifest.content_sha256, "manifest_sha256": sha256_file(target / "manifest.json")}
-    pointer_file.write_text(json.dumps(current), encoding="utf-8")
-    before = (runtime / "snapshots/current.v2.json").read_bytes()
-    install_bundled_cohort(bundle_root=bundle, runtime_root=runtime)
-    assert json.loads(pointer_file.read_text())["catalog_generation_id"] == manifest.catalog_generation_id
-    assert (runtime / "snapshots/current.v2.json").read_bytes() == before
+    update_head(runtime / "snapshots", recognition_catalog=current)
+    before = (runtime / "snapshots/current.v4.json").read_bytes()
+    install_v4_seed(source, runtime)
+    assert read_head(runtime / "snapshots")["recognition_catalog"]["catalog_generation_id"] == manifest.catalog_generation_id
+    assert (runtime / "snapshots/current.v4.json").read_bytes() == before
 
     # Corruption cannot be legitimized by the independent publication path.
     (target / "hero_version.txt").write_text("broken", encoding="utf-8")
-    install_bundled_cohort(bundle_root=bundle, runtime_root=runtime)
-    assert json.loads(pointer_file.read_text())["catalog_generation_id"] == old["catalog_generation_id"]
+    install_v4_seed(source, runtime)
+    assert read_head(runtime / "snapshots")["recognition_catalog"]["catalog_generation_id"] == old["catalog_generation_id"]
+
+
+@pytest.fixture(autouse=True)
+def _close_app_runtime_owner():
+    yield
+    from hextech.modules.session.runtime_channel import active_owner
+    owner=active_owner()
+    if owner is not None:
+        owner.stop(timeout=2)

@@ -472,14 +472,9 @@ def test_write_structured_event_target_path_avoids_default_runtime_paths(tmp_pat
 
 def test_entrypoints_install_runtime_logging():
     run_dir = Path(__file__).resolve().parents[1]
-    web_server_source = (run_dir / "src" / "hextech" / "bootstrap" / "web.py").read_text(encoding="utf-8")
-    assert "install_runtime_logging()" in (
-        run_dir / "src" / "hextech" / "bootstrap" / "desktop.py"
-    ).read_text(encoding="utf-8")
-    assert "install_runtime_logging()\n    run_web_server()" in web_server_source
-    assert "\ninstall_runtime_logging()\n\nfrom hextech.interfaces.web.backend.app" not in web_server_source
-    assert "install_runtime_logging()" in (
-        run_dir / "src" / "hextech" / "infrastructure" / "sources" / "version_sync.py"
-    ).read_text(encoding="utf-8")
-    supervisor_source = (run_dir / "src" / "hextech" / "bootstrap" / "supervisor.py").read_text(encoding="utf-8")
-    assert "sanitize_event_message" in supervisor_source
+    for relative in ("bootstrap/desktop.py", "bootstrap/overlay.py", "infrastructure/sources/version_sync.py"):
+        assert "install_runtime_logging()" in (run_dir / "src/hextech" / relative).read_text(encoding="utf-8")
+    owner = (run_dir / "src/hextech/bootstrap/runtime_owner.py").read_text(encoding="utf-8")
+    assert "sanitize_event_message" in owner
+    assert not (run_dir / "src/hextech/bootstrap/web.py").exists()
+    assert not (run_dir / "src/hextech/bootstrap/supervisor.py").exists()

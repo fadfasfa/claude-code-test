@@ -72,13 +72,21 @@ def _transport_summary(responses: list[Any]) -> dict[str, Any]:
             getattr(result, "response_headers", None)
         )) is not None
     ]
+    failed = [result for result in responses if (
+        str(getattr(result, "error", "") or "")
+        or str(getattr(result, "error_kind", "") or "")
+        or getattr(result, "status_code", None) not in {200, 304}
+        or not bool(getattr(result, "text", ""))
+    )]
+    errors = " ".join(str(getattr(result, field, "") or "")
+                      for result in failed for field in ("error_kind", "error")).casefold()
+    failure = {
+        "failure_stage": "fetch",
+        "failure_kind": "timeout" if "timeout" in errors or "timed out" in errors else "transient_network",
+    } if failed or not responses else {}
     return {
-        "check_complete": bool(responses) and all(
-            not str(getattr(result, "error", "") or "")
-            and getattr(result, "status_code", None) in {200, 304}
-            and bool(getattr(result, "text", ""))
-            for result in responses
-        ),
+        "check_complete": bool(responses) and not failed,
+        **failure,
         "not_modified": bool(responses) and all(
             bool(getattr(result, "not_modified", False)) for result in responses
         ),

@@ -34,10 +34,7 @@ def test_pyproject_exposes_only_bootstrap_commands() -> None:
     scripts = payload["project"]["scripts"]
     assert scripts == {
         "hextech-desktop": "hextech.bootstrap.desktop:main",
-        "hextech-web": "hextech.bootstrap.web:main",
         "hextech-overlay": "hextech.bootstrap.overlay:main",
-        "hextech-data-service": "hextech.bootstrap.data_service:main",
-        "hextech-supervisor": "hextech.bootstrap.supervisor:main",
     }
 
 
@@ -70,11 +67,11 @@ def test_source_packages_follow_modular_monolith_boundaries() -> None:
     assert not (root / "runtime").exists(), "禁止恢复无消费者的 runtime 预留空包"
     assert not (root / "bootstrap" / "data_refresh.py").exists(), "禁止恢复旧刷新编排"
     assert not (root / "infrastructure" / "sources" / "heal_worker.py").exists(), "禁止恢复零调用自愈编排"
-    assert (root / "modules" / "acquisition" / "hextech" / "contracts.py").is_file()
-    assert (root / "modules" / "acquisition" / "hextech" / "validation.py").is_file()
+    assert (root / "modules" / "acquisition" / "hextech" / "production_pool.py").is_file()
+    assert not (root / "modules" / "acquisition" / "hextech" / "validation.py").exists()
     assert (root / "modules" / "acquisition" / "apex" / "parser.py").is_file()
     assert (root / "modules" / "acquisition" / "mayhem" / "merge.py").is_file()
-    assert (root / "infrastructure" / "sources" / "hextech" / "service.py").is_file()
+    assert not (root / "infrastructure" / "sources" / "hextech" / "service.py").exists()
     assert (root / "infrastructure" / "sources" / "apex" / "service.py").is_file()
     assert (root / "infrastructure" / "sources" / "mayhem" / "service.py").is_file()
     assert (root / "infrastructure" / "transport" / "scrapling_client.py").is_file()

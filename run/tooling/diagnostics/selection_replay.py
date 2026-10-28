@@ -12,7 +12,7 @@ from PIL import Image
 from hextech.modules.session.selection_diagnostics import _reject_reparse_path
 
 
-def export_labelled_candidate(group: Path, truth: dict, output: Path) -> dict:
+def export_labelled_candidate(group: Path, truth: dict, output: Path, *, identity_bindings: dict | None = None) -> dict:
     """显式导出人工绑定的版本化候选；从不写入识别器资产路径。"""
     from hextech.modules.data.ports.paths import get_var_dir
 
@@ -23,6 +23,15 @@ def export_labelled_candidate(group: Path, truth: dict, output: Path) -> dict:
     # Same complete evidence checks as replay; no model output manufactures truth.
     replay_group(group, truth, lambda _: {"slots": []})
     manifest = json.loads((group / "manifest.json").read_text(encoding="utf-8"))
+    labelled_ids = {identity for row in truth["frames"] for identity in row["expected_slots"] if identity is not None}
+    bindings = {}
+    for identity in sorted(labelled_ids):
+        binding = (identity_bindings or {}).get(identity)
+        if (not isinstance(binding, dict) or binding.get("canonical_id") != identity
+            or not all(isinstance(binding.get(key), str) and binding[key].strip()
+                       for key in ("internal_name", "full_name"))):
+            raise ValueError("candidate_requires_complete_identity_binding")
+        bindings[identity] = {key: binding[key] for key in ("canonical_id", "internal_name", "full_name")}
     assets, records = {"capture-manifest.json": (group / "manifest.json").read_bytes()}, []
     for frame, annotation in zip(manifest["frames"], truth["frames"], strict=True):
         assets[frame["file"]] = (group / frame["file"]).read_bytes()
@@ -59,11 +68,21 @@ def export_labelled_candidate(group: Path, truth: dict, output: Path) -> dict:
                 raise ValueError("labelled_asset_hash_mismatch")
             assets[filename] = content
             records.append({"canonical_id": canonical_id, "file": filename,
+                            "internal_name": bindings[canonical_id]["internal_name"],
+                            "full_name": bindings[canonical_id]["full_name"],
+                            "game_instance_id": frame["game_instance_id"],
+                            "captured_at": frame["captured_at"],
+                            "selection_epoch": manifest.get("selection_epoch"),
                             "capture_id": frame["frame_id"], "slot": index})
     if not records:
         raise ValueError("no_labelled_names")
-    payload = {"schema_version": 1, "state": "candidate_requires_holdout_review",
-               "automatic_exemplar_eligible": False, "truth": truth, "samples": records}
+    payload = {"schema_version": 2, "state": "candidate_requires_holdout_review",
+               "automatic_exemplar_eligible": False, "requires_manual_truth": True,
+               "identity_bindings": bindings,
+               "minimum_required_frames": 3, "evidence_window": 5,
+               "required_validation": {"min_games": 3, "min_epochs": 10, "independent_holdout": True,
+                                       "minimum_confidence": .92, "minimum_margin": .08},
+               "truth": truth, "samples": records}
     payload["candidate_version"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     output.mkdir(parents=True, exist_ok=False)
     for filename, content in assets.items():
@@ -253,7 +272,12 @@ def main() -> None:
     report["wrong_candidates"] = report.pop("wrong_ready")
     report["qualified"] = False
     if args.export_candidate:
-        candidate = export_labelled_candidate(args.group, json.loads(args.truth.read_text(encoding="utf-8")), args.export_candidate)
+        pool = hints["source"]["production_augment_pool"]
+        bindings = {str(item["canonical_id"]): {"canonical_id": str(item["canonical_id"]),
+                    "internal_name": item.get("augment_name_id", ""), "full_name": item.get("name", "")}
+                    for item in pool["identities"]}
+        candidate = export_labelled_candidate(args.group, json.loads(args.truth.read_text(encoding="utf-8")),
+                                             args.export_candidate, identity_bindings=bindings)
         report["candidate_version"] = candidate["candidate_version"]
     print(json.dumps(report, ensure_ascii=False, indent=2))
 

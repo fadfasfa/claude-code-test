@@ -53,7 +53,48 @@ def test_missing_catalog_capabilities_retry_without_claiming_source_failure(runt
     assert (datetime.fromisoformat(state.next_due_at)-datetime.fromisoformat(state.last_attempt_at)).total_seconds() == 300
 
 
-def test_real_unit_to_v3_publish_without_optional(runtime):
+def test_unknown_identity_requests_one_official_check_and_preserves_catalog_backoff(runtime):
+    from dataclasses import replace
+    from datetime import timedelta, timezone
+    root, catalog, _ = runtime
+    service = IncrementalRefreshService(publisher=DataSnapshotPublisher(root / "snapshots"), root=root,
+        game_state_probe=lambda: False, champion_probe=lambda: "")
+    schedule = service.schedule_store.load()
+    deadline = (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat()
+    sources = dict(schedule.sources)
+    sources["catalog"] = replace(sources["catalog"], state="backoff", next_due_at=deadline, failure_kind="timeout")
+    service.schedule_store.save(replace(schedule, sources=sources))
+    evidence = {"failure_fingerprint": "same-input", "diagnostics": {"reason_code": "catalog_binding_failed",
+        "catalog_generation_id": catalog["catalog_generation_id"], "catalog_sha256": catalog["content_sha256"],
+        "unknown_augment_ids": [9001]}}
+    service._mark_source("aramkit", error="validation", result=evidence)
+    state = service.schedule_store.load()
+    assert state.sources["catalog"].dependency_recheck_requested
+    assert state.sources["catalog"].next_due_at == deadline
+    sources = dict(state.sources)
+    sources["catalog"] = replace(sources["catalog"], dependency_recheck_requested=False)
+    service.schedule_store.save(replace(state, sources=sources))
+    service._mark_source("aramkit", error="validation", result=evidence)
+    assert not service.schedule_store.load().sources["catalog"].dependency_recheck_requested
+
+
+@pytest.mark.parametrize("kind,matching,unlocked", [("validation", True, True), ("validation", False, False), ("timeout", True, False)])
+def test_catalog_change_unlocks_only_validation_bound_to_superseded_catalog(runtime, kind, matching, unlocked):
+    from support.v4_release import _publish_independent_recognition_catalog
+    root, catalog, _ = runtime
+    service = IncrementalRefreshService(publisher=DataSnapshotPublisher(root / "snapshots"), root=root,
+        game_state_probe=lambda: False, champion_probe=lambda: "")
+    service._mark_source("aramkit", error=kind, result={"failure_fingerprint": "old-input", "diagnostics": {
+        "reason_code": "catalog_binding_failed", "catalog_generation_id": catalog["catalog_generation_id"] if matching else "unrelated",
+        "catalog_sha256": catalog["content_sha256"]}})
+    newer = _publish_independent_recognition_catalog(root)
+    service._adopt_statistics_catalog(newer)
+    state = service.schedule_store.load().sources["aramkit"]
+    assert (state.state == "due") is unlocked
+    assert (state.failure_fingerprint == "") is unlocked
+
+
+def test_real_unit_to_v4_publish_without_optional(runtime):
     root, catalog, binding = runtime
     publisher = DataSnapshotPublisher(root / "snapshots")
     stages = []
@@ -104,7 +145,7 @@ def test_real_unit_to_v3_publish_without_optional(runtime):
     result = service.refresh(force=True, scope="core")
     service.wait_optional()
     view = DataSnapshotClient(publisher.root).open_view()
-    assert view.manifest.schema_version == 3
+    assert view.manifest.schema_version == 4
     assert stages == [False]
     assert core_ready_copy == ["核心数据已就绪，后台补齐其他英雄"]
     assert view.is_champion_complete("1")
@@ -283,7 +324,7 @@ def test_stop_during_worker_handoff_cannot_start_new_process(runtime, monkeypatc
     assert not service._cancels
 
 
-def test_unchanged_publish_preserves_previous_and_recovery_previous(runtime, monkeypatch):
+def test_unchanged_publish_preserves_single_atomic_head(runtime, monkeypatch):
     root, _, binding = runtime
     service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)
     ranking, hero = _units(binding, root / "units")
@@ -291,19 +332,18 @@ def test_unchanged_publish_preserves_previous_and_recovery_previous(runtime, mon
     first = service._publish()
     service._heroes = {"1": hero}
     second = service._publish()
-    previous_path = root / "snapshots/previous.v2.json"
-    before = previous_path.read_bytes()
-    assert json.loads(before)["generation_id"] == first
+    head = service.publisher.current_path
+    before = head.read_bytes()
+    assert json.loads(before)["previous_generation_id"] == first
     assert first != second
     assert service._publish() == second
-    assert previous_path.read_bytes() == before
-    point = json.loads((root / "state/data-service/cohort_recovery_point.v1.json").read_text())
-    assert point["pointers"]["generation"]["previous"]["generation_id"] == first
+    assert head.read_bytes() == before
+    assert not (root / "snapshots/previous.v2.json").exists()
     assert DataSnapshotClient(root / "snapshots").open_view().is_champion_complete("1")
 
 
-@pytest.mark.parametrize("fail_after_stage", [False, True])
-def test_repair_publication_keeps_verified_previous_in_recovery_and_rollback(runtime, monkeypatch, fail_after_stage):
+@pytest.mark.parametrize("interrupt_commit", [False, True])
+def test_repair_publication_preserves_verified_fallback_and_atomic_head(runtime, monkeypatch, interrupt_commit):
     root, _, binding = runtime
     service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)
     ranking, hero = _units(binding, root / "units")
@@ -311,31 +351,28 @@ def test_repair_publication_keeps_verified_previous_in_recovery_and_rollback(run
     first = service._publish()
     service._heroes = {"1": hero}
     broken = service._publish()
-    atomic_write_json(root / "snapshots/generations" / broken / "champions.json", [])
-    previous_path = root / "snapshots/previous.v2.json"
-    current_path = root / "snapshots/current.v2.json"
-    recovery_path = root / "state/data-service/cohort_recovery_point.v1.json"
-    before = {path: path.read_bytes() for path in (previous_path, current_path, recovery_path)}
+    (root / "snapshots/generations" / broken / "manifest.json").write_text("broken", encoding="utf-8")
+    head = service.publisher.current_path
+    before = head.read_bytes()
     service._heroes = {}
-    if fail_after_stage:
-        stage = service.promotion.stage_generation_state
-        def fail_stage(**kwargs):
-            stage(**kwargs)
-            raise OSError("repair stage interrupted")
-        monkeypatch.setattr(service.promotion, "stage_generation_state", fail_stage)
-        with pytest.raises(OSError, match="repair stage interrupted"):
+    if interrupt_commit:
+        from hextech.modules.data.ports import atomic as atomic_module
+        write = atomic_module.atomic_write_json
+        def fail_head(path, *args, **kwargs):
+            if path == head:
+                raise OSError("head commit interrupted")
+            return write(path, *args, **kwargs)
+        monkeypatch.setattr(atomic_module, "atomic_write_json", fail_head)
+        with pytest.raises(OSError, match="head commit interrupted"):
             service._publish()
-        assert {path: path.read_bytes() for path in before} == before
+        assert head.read_bytes() == before
         assert DataSnapshotClient(root / "snapshots").open_view().manifest.generation_id == first
     else:
         repaired = service._publish()
         assert repaired not in {first, broken}
-        assert json.loads(previous_path.read_bytes())["generation_id"] == first
-        point = json.loads(recovery_path.read_bytes())
-        assert point["generation_id"] == repaired
-        assert point["pointers"]["generation"]["previous"]["generation_id"] == first
+        assert json.loads(head.read_bytes())["previous_generation_id"] == first
         assert not DataSnapshotClient(root / "snapshots").open_view().degraded
-    assert not service.promotion.journal_path.exists()
+    assert not (root / "state/data-service/promotion_journal.v1.json").exists()
 
 
 def test_postcommit_retention_waits_for_core_optional_and_process_workers(runtime, monkeypatch):
@@ -634,7 +671,7 @@ def test_ingame_catalog_publication_keeps_statistics_binding(runtime, monkeypatc
     monkeypatch.setattr(service, "_due", lambda source, force=False: source == "catalog")
     monkeypatch.setattr(service, "_run", lambda source, work, **kwargs: new_catalog)
     result = service.refresh()
-    assert json.loads((root / "catalog/current.v2.json").read_text()) == new_catalog
+    assert json.loads((root / "snapshots/current.v4.json").read_text())["recognition_catalog"] == new_catalog
     assert service._catalog == catalog
     assert service._ranking == ranking and service._heroes == {"1": hero}
     assert service.publisher.current_generation_id() == generation
@@ -643,6 +680,116 @@ def test_ingame_catalog_publication_keeps_statistics_binding(runtime, monkeypatc
     assert result["catalog_changed"] is True
     assert result["reason_code"] == "catalog_complete"
     assert result["source_outcomes"]["catalog"]["state"] == "updated"
+
+
+@pytest.mark.parametrize("downloaded_heroes", [0, 1])
+def test_cross_catalog_cancel_keeps_complete_statistics_until_restart_finishes_core(
+    runtime, monkeypatch, downloaded_heroes,
+):
+    import shutil
+    from hextech.modules.data.catalog.versioned import build_catalog_manifest, sha256_file
+
+    root, catalog, binding = runtime
+    service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)
+    ranking, hero = _units(binding, root / "old-units")
+    service._ranking, service._heroes = ranking, {"1": hero}
+    old_generation = service._publish()
+
+    # A real, expanded official Catalog is independently published before ARAMKit.
+    staging = root / "catalog/expanded"
+    shutil.copytree(root / "catalog/generations" / catalog["catalog_generation_id"], staging)
+    champions = json.loads((staging / "英雄目录.v1.json").read_text(encoding="utf-8"))
+    champions["aliases"].append({"heroId": "2", "heroName": "英雄二", "title": "", "enName": "HeroTwo", "aliases": []})
+    champions["alias_to_id"].update({"英雄二": "2", "HeroTwo": "2"})
+    champions["id_to_name"]["2"] = {"heroName": "英雄二", "title": "", "enName": "HeroTwo"}
+    champions["id_to_detail"]["2"] = "英雄二"
+    atomic_write_json(staging / "英雄目录.v1.json", champions)
+    manifest = build_catalog_manifest(staging, created_at="2026-10-25T08:00:00+00:00")
+    catalog_root = root / "catalog/generations" / manifest.catalog_generation_id
+    staging.replace(catalog_root)
+    atomic_write_json(catalog_root / "manifest.json", manifest.to_dict())
+    newer = {**catalog, "catalog_generation_id": manifest.catalog_generation_id,
+             "content_sha256": manifest.content_sha256, "manifest_sha256": sha256_file(catalog_root / "manifest.json")}
+    service._publish_catalog(newer)
+    service._adopt_statistics_catalog(newer)
+    new_binding = CatalogBinding(manifest.catalog_generation_id, manifest.content_sha256,
+                                 frozenset({"1", "2"}), frozenset({1001}))
+    version = resolve_version(_version(data_path="data/16.16-new-catalog"))
+    rows = normalize_rankings({"rows": [_ranking("1"), _ranking("2")]})
+
+    def write_units(command, observe, count):
+        output = Path(command[command.index("--result-output") + 1])
+        directory = output.parent / "units"
+        pointer = publish_unit(version, rows, binding=new_binding, pointer_output=directory / "ranking.pointer.json")
+        observe()
+        assert service.publisher.current_generation_id() == old_generation
+        for row in rows[:count]:
+            publish_unit(version, normalize_detail(_detail(_ranking(row["id"]), 1001), row),
+                         binding=new_binding, champion_id=row["id"],
+                         pointer_output=directory / f"hero-{row['id']}.pointer.json")
+            observe()
+        return output, pointer
+
+    def interrupted(command, *, observe, **kwargs):
+        output, _pointer = write_units(command, observe, downloaded_heroes)
+        assert service.publisher.current_generation_id() == old_generation
+        view = DataSnapshotClient(root / "snapshots").open_view()
+        assert view.is_champion_complete("1")
+        assert view.get_champion_detail("1")["augments"]
+        service.request_stop()
+        atomic_write_json(output, {"state": "cancelled", "reason_code": "cancelled"})
+        return IsolatedProcessResult(1, 0.1, False, "", "")
+
+    service.process_runner = interrupted
+    with pytest.raises(RuntimeError, match="shutdown_requested|cancelled"):
+        service._run("aramkit", root / "interrupted")
+    head = json.loads(service.publisher.current_path.read_text())
+    assert head["recognition_catalog"] == newer
+    assert head["current_generation_id"] == old_generation
+    assert head["previous_generation_id"] == ""
+
+    service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)
+    assert service._catalog["catalog_generation_id"] == catalog["catalog_generation_id"]
+    assert service._recognition == newer
+    assert service._heroes == {"1": hero}
+    service._adopt_statistics_catalog(service._recognition)
+
+    def completed(command, *, observe, **kwargs):
+        output, pointer = write_units(command, observe, 2)
+        atomic_write_json(output, {"state": "ready", "pointer": pointer})
+        return IsolatedProcessResult(0, 0.1, False, "", "")
+
+    service.process_runner = completed
+    service._run("aramkit", root / "completed")
+    view = DataSnapshotClient(root / "snapshots").open_view()
+    assert view.manifest.generation_id != old_generation
+    assert all(view.is_champion_complete(hero_id) for hero_id in ("1", "2"))
+    assert all(view.get_champion_detail(hero_id)["augments"] for hero_id in ("1", "2"))
+    head = json.loads(service.publisher.current_path.read_text())
+    assert head["recognition_catalog"] == newer
+    assert head["previous_generation_id"] == old_generation
+    assert service._core_units_complete()
+
+
+def test_same_catalog_ranking_publishes_while_previous_hero_remains_readable(runtime, monkeypatch):
+    root, _, binding = runtime
+    service = _service(runtime, monkeypatch, lambda *args, **kwargs: None)
+    ranking, hero = _units(binding, root / "old-units")
+    service._ranking, service._heroes = ranking, {"1": hero}
+    old_generation = service._publish()
+    version = resolve_version(_version(data_path="data/16.16-same-catalog"))
+    rows = normalize_rankings({"rows": [_ranking("1")]})
+    service._ranking = publish_unit(version, rows, binding=binding)
+    generation = service._publish()
+    assert generation and generation != old_generation
+    view = DataSnapshotClient(root / "snapshots").open_view()
+    assert view.is_champion_complete("1")
+    assert view.get_champion_detail("1")["data_status"] == "data_stale"
+    assert view.get_champion_detail("1")["augments"]
+    service._heroes["1"] = publish_unit(version, normalize_detail(_detail(_ranking("1"), 1001), rows[0]),
+                                        binding=binding, champion_id="1")
+    assert service._publish() != generation
+    assert DataSnapshotClient(root / "snapshots").open_view().get_champion_detail("1")["data_status"] == "fresh"
 
 
 def test_marker_failure_is_core_failure_not_unchanged(runtime, monkeypatch):

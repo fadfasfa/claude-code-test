@@ -18,15 +18,10 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from hextech.modules.data.catalog.runtime_store import (
-    build_runtime_cache_path,
-)
-from hextech.modules.data.ports.atomic import atomic_write_json
 
 
 SCHEMA_VERSION = 1
 CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
-OVERLAY_HINT_CACHE_FILE = Path(build_runtime_cache_path("overlay_hint_cache.v1.json"))
 # \w 含 CJK：海克斯名是中文，ASCII-only 正则会把整个名字滤成空串，导致模板索引几乎为空。
 _AUGMENT_ID_SAFE_RE = re.compile(r"[^\w.:-]+")
 _AUGMENT_NAME_NORMALIZE_TOKENS = (" ", "\t", "\n", "-", "_", "(", ")", "[", "]", "'", '"', ".", ":", "：", "，", ",", "、", "/", "／")
@@ -113,14 +108,6 @@ def _load_synergy_by_augment_name(
 
     target = Path(snapshot_path) if snapshot_path else None
     if target is None:
-        from hextech.modules.data.catalog import runtime_store
-
-        for resolver in (runtime_store.build_synergy_data_path, runtime_store.get_latest_synergy_snapshot_path):
-            resolved = resolver()
-            if resolved:
-                target = Path(resolved)
-                break
-    if target is None:
         return {}
     try:
         raw_text = target.read_text(encoding="utf-8")
@@ -177,28 +164,6 @@ def _empty_cache_payload(error: str) -> dict[str, Any]:
         "name_index": {},
         "error": error,
     }
-
-
-def _read_wrapped_json_file(path: str | Path, default: Any) -> Any:
-    try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return default
-    if isinstance(payload, Mapping) and "data" in payload:
-        return payload.get("data", default)
-    return payload
-
-
-def _load_stale_precomputed_payloads() -> tuple[list[Mapping[str, Any]], dict[str, Any]]:
-    """读取本地已有预计算快照；只作为 overlay 降级数据源，不改变正式 API freshness。"""
-
-    from hextech.modules.data.catalog import precomputed_cache
-
-    champions = _read_wrapped_json_file(precomputed_cache.CHAMPION_LIST_CACHE_FILE, [])
-    hextech_by_hero = _read_wrapped_json_file(precomputed_cache.HEXTECH_DETAIL_CACHE_FILE, {})
-    champion_rows = [item for item in champions if isinstance(item, Mapping)] if isinstance(champions, list) else []
-    hextech_map = {str(name): payload for name, payload in hextech_by_hero.items()} if isinstance(hextech_by_hero, Mapping) else {}
-    return champion_rows, hextech_map
 
 
 def _clean_text(value: Any) -> str:
@@ -538,167 +503,6 @@ def build_overlay_hint_cache(
     }
 
 
-def _build_overlay_hint_cache_from_latest_runtime_csv(
-    *,
-    include_private_stats: bool,
-    source_tag: str,
-) -> dict[str, Any] | None:
-    """优先复用 Web/UI 的最新 CSV 数据源构建 overlay cache。
-
-    旧 overlay 入口只读预计算详情缓存；该缓存可能落后于最新胜率 CSV，导致
-    Web 已有统计但游戏内 overlay 查不到。这里不写 precomputed，只按 Web 相同
-    视图适配器即时收口一份轻量 hint cache；失败时由调用方降级到旧缓存。
-    """
-
-    from hextech.modules.data.catalog import runtime_store
-    from hextech.modules.data.catalog.augment_lookup import load_augment_catalog_lookup_read_only
-    from hextech.modules.acquisition.common.icons import build_local_augment_icon_url
-
-    latest_csv = runtime_store.get_latest_csv()
-    if not latest_csv:
-        return None
-    try:
-        df = runtime_store.load_runtime_csv(latest_csv)
-    except Exception:
-        return None
-    if df.empty or "英雄名称" not in df.columns:
-        return None
-
-    catalog_lookup = load_augment_catalog_lookup_read_only()
-    hextech_by_hero: dict[str, Any] = {}
-    champion_id_by_name: dict[str, str] = {}
-    for _, row in df.iterrows():
-        clean_hero_name = _clean_text(row.get("英雄名称"))
-        if not clean_hero_name:
-            continue
-        augment_name = _clean_text(row.get("海克斯名称"))
-        if not augment_name:
-            continue
-        card = dict(row.to_dict())
-        catalog_entry = catalog_lookup.get(augment_name) or catalog_lookup.get(normalize_augment_name(augment_name))
-        if isinstance(catalog_entry, Mapping):
-            card.setdefault("tooltip_plain", _clean_text(catalog_entry.get("tooltip_plain")))
-            card.setdefault("海克斯描述", _clean_text(catalog_entry.get("description") or catalog_entry.get("tooltip")))
-            card.setdefault("summary", _clean_text(catalog_entry.get("tooltip_plain") or catalog_entry.get("description")))
-            for alias_key in ("augment_name_id", "cdragon_id"):
-                if catalog_entry.get(alias_key):
-                    card[alias_key] = _clean_text(catalog_entry.get(alias_key))
-            if catalog_entry.get("tier"):
-                card["海克斯阶级"] = _clean_text(catalog_entry.get("tier"))
-            card["icon"] = _clean_text(catalog_entry.get("icon_url")) or build_local_augment_icon_url(augment_name)
-        else:
-            card["icon"] = build_local_augment_icon_url(augment_name)
-        bucket = hextech_by_hero.setdefault(clean_hero_name, {"comprehensive": []})
-        if isinstance(bucket, dict):
-            bucket.setdefault("comprehensive", []).append(card)
-        for key in ("英雄 ID", "英雄ID", "champion_id", "heroId"):
-            if key in row.index:
-                hero_id = _clean_text(row.get(key))
-                if hero_id:
-                    champion_id_by_name[clean_hero_name] = hero_id
-                break
-
-    if not hextech_by_hero:
-        return None
-    cache_payload = build_overlay_hint_cache(
-        hextech_by_hero,
-        include_private_stats=include_private_stats,
-        source_tag=source_tag,
-        champion_id_by_name=champion_id_by_name,
-    )
-    if not cache_payload["hints"]:
-        return None
-    display_hint_count = _merge_display_only_catalog_hints(cache_payload, catalog_lookup)
-    cache_payload["source"].update(
-        {
-            "data_source": "runtime-csv",
-            "runtime_csv": Path(latest_csv).name,
-            "hero_count": len(hextech_by_hero),
-            "catalog_display_hint_count": display_hint_count,
-        }
-    )
-    return cache_payload
-
-
-def build_overlay_hint_cache_from_precomputed(
-    *,
-    include_private_stats: bool = False,
-    source_tag: str = "precomputed",
-) -> dict[str, Any]:
-    """生成 overlay hint cache；优先采用最新 CSV，旧预计算缓存仅作降级。"""
-
-    latest_payload = _build_overlay_hint_cache_from_latest_runtime_csv(
-        include_private_stats=include_private_stats,
-        source_tag=source_tag,
-    )
-    if latest_payload is not None:
-        return latest_payload
-
-    from hextech.modules.data.catalog.precomputed_cache import (
-        load_precomputed_champion_list,
-        load_precomputed_hextech_for_hero,
-        warm_precomputed_hextech_cache,
-    )
-
-    hextech_by_hero: dict[str, Any] = {}
-    champion_id_by_name: dict[str, str] = {}
-    if not warm_precomputed_hextech_cache():
-        # overlay 是选择阶段实时展示，不能在启动路径里同步重建 170+ 英雄详情。
-        # 正式预计算 cache stale 时，仅降级消费本地已有快照；是否刷新仍交给后台流程。
-        stale_champions, stale_hextech_by_hero = _load_stale_precomputed_payloads()
-        if stale_hextech_by_hero:
-            if stale_champions:
-                for champion in stale_champions:
-                    hero_name = _clean_text(champion.get("英雄名称") or champion.get("hero_name") or champion.get("name"))
-                    hero_id = _clean_text(champion.get("英雄 ID") or champion.get("英雄ID") or champion.get("champion_id") or champion.get("heroId"))
-                    if hero_name and hero_id:
-                        champion_id_by_name[hero_name] = hero_id
-                    payload = stale_hextech_by_hero.get(hero_name)
-                    if isinstance(payload, Mapping):
-                        hextech_by_hero[hero_name] = payload
-            else:
-                hextech_by_hero = {
-                    hero_name: payload
-                    for hero_name, payload in stale_hextech_by_hero.items()
-                    if isinstance(payload, Mapping)
-                }
-        if not hextech_by_hero:
-            return {
-                "schema_version": SCHEMA_VERSION,
-                "generated_at": time.time(),
-                "source": {
-                    "tag": source_tag,
-                    "private_policy_stats_enabled": bool(include_private_stats),
-                },
-                "hints": {},
-                "name_index": {},
-                "error": "cache_missing",
-            }
-    else:
-        for champion in load_precomputed_champion_list():
-            if not isinstance(champion, Mapping):
-                continue
-            hero_name = _clean_text(champion.get("英雄名称") or champion.get("hero_name") or champion.get("name"))
-            if not hero_name:
-                continue
-            hero_id = _clean_text(champion.get("英雄 ID") or champion.get("英雄ID") or champion.get("champion_id") or champion.get("heroId"))
-            if hero_id:
-                champion_id_by_name[hero_name] = hero_id
-            payload = load_precomputed_hextech_for_hero(hero_name)
-            if isinstance(payload, Mapping):
-                hextech_by_hero[hero_name] = payload
-
-    cache_payload = build_overlay_hint_cache(
-        hextech_by_hero,
-        include_private_stats=include_private_stats,
-        source_tag=source_tag,
-        champion_id_by_name=champion_id_by_name,
-    )
-    if not cache_payload["hints"]:
-        cache_payload["error"] = "cache_missing"
-    return cache_payload
-
-
 def _resolve_cache_error(cache_payload: Mapping[str, Any], *, now: float | None = None) -> str:
     if not isinstance(cache_payload, Mapping):
         return "cache_missing"
@@ -713,8 +517,6 @@ def _resolve_cache_error(cache_payload: Mapping[str, Any], *, now: float | None 
     generated_at = _coerce_float(cache_payload.get("generated_at"))
     if generated_at is None or generated_at <= 0:
         return "cache_missing"
-    if ((now if now is not None else time.time()) - generated_at) > CACHE_MAX_AGE_SECONDS:
-        return "cache_expired"
     return ""
 
 
@@ -740,26 +542,3 @@ def query_overlay_hint(cache_payload: Mapping[str, Any], augment_id: Any) -> dic
     if not isinstance(hint, Mapping):
         return {"ok": False, "error": "hint_missing", "augment_id": normalized_id}
     return {"ok": True, "hint": dict(hint)}
-
-
-def write_overlay_hint_cache(cache_payload: Mapping[str, Any], path: str | Path | None = None) -> Path:
-    """写入 overlay hint cache 到运行态 cache 目录。"""
-
-    target = Path(path) if path is not None else OVERLAY_HINT_CACHE_FILE
-    atomic_write_json(target, cache_payload, ensure_ascii=False, indent=2)
-    return target
-
-
-def load_overlay_hint_cache(path: str | Path | None = None) -> dict[str, Any]:
-    """读取 overlay hint cache；缺失或损坏时返回空缓存错误结构。"""
-
-    target = Path(path) if path is not None else OVERLAY_HINT_CACHE_FILE
-    try:
-        raw_text = target.read_text(encoding="utf-8")
-    except OSError:
-        return _empty_cache_payload("cache_missing")
-    try:
-        payload = json.loads(raw_text)
-    except json.JSONDecodeError:
-        return _empty_cache_payload("cache_damaged")
-    return payload if isinstance(payload, dict) else _empty_cache_payload("cache_damaged")

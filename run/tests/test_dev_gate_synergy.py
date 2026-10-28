@@ -2,24 +2,7 @@
 
 import pytest
 
-from tests._dev_gate_support import (
-    FetchedResource,
-    Path,
-    RUN_DIR,
-    SynergyEntry,
-    SynergyExtractor,
-    SynergyWriter,
-    TemporaryDirectory,
-    _augment_map,
-    _collision_core_info,
-    _core_info,
-    _normalize_synergy_items,
-    _synergy_item_to_display_string,
-    build_champion_lookup,
-    icon_resolver,
-    json,
-    patch,
-)
+from tests._dev_gate_support import (FetchedResource, Path, SynergyEntry, SynergyExtractor, SynergyWriter, TemporaryDirectory, _augment_map, _collision_core_info, _core_info, build_champion_lookup, icon_resolver, json, patch)
 
 pytestmark = pytest.mark.dev_gate
 
@@ -98,13 +81,6 @@ def test_synergy_structured_payloads() -> None:
     assert writer_payload["55"]["synergy_items"][0]["augment_names"] == ["利刃华尔兹"]
     assert "利刃华尔兹 | 黄金 | 评分 A" in writer_payload["55"]["synergies"][0]
 
-    legacy = "利刃华尔兹 | 黄金 | 评分 A | 强力联动 | A | B站晴转小雨Yy_ | 原创 | 卡特琳娜 R 可以触发这条联动。"
-    items = _normalize_synergy_items([], [legacy])
-    assert items[0]["augment_names"] == ["利刃华尔兹"]
-    assert items[0]["rating"] == "A"
-    assert items[0]["is_original"]
-    assert _synergy_item_to_display_string(items[0]).split(" | ")[4:6] == ["0", "0"]
-
     html_extractor = SynergyExtractor(
         champion_lookup=build_champion_lookup(_core_info()),
         augment_name_map=_augment_map(),
@@ -164,13 +140,3 @@ def test_synergy_alias_collision_guard() -> None:
 
     payload_without_viktor = writer.build_payload({"vi": [entry("vi", "蔚专属联动")]})
     assert payload_without_viktor["112"]["synergy_items"] == []
-
-def test_synergy_playwright_calibrator_contract() -> None:
-    tool_path = RUN_DIR / "tooling" / "diagnostics" / "synergy.py"
-    text = tool_path.read_text(encoding="utf-8")
-    assert "sync_playwright" in text
-    assert "只访问本地 Hextech Web/API" in text
-    assert "apexlol.info" not in text.lower()
-    assert "build_synergy_data_path" in text
-    assert "api_quarantined" in text
-    assert "if duplicate_with else []" in text

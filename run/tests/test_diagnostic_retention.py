@@ -302,8 +302,7 @@ def test_all_production_append_writers_are_registered_and_bounded() -> None:
     }
 
     assert observed == {
-        "bootstrap/supervisor.py",
+        "bootstrap/runtime_owner.py",
         "infrastructure/observability/logging.py",
-        "infrastructure/sources/catalog.py",
         "infrastructure/vision/sidecar_diagnostics.py",
     }

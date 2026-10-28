@@ -250,7 +250,9 @@ def write_overlay_context(payload: Mapping[str, Any], path: str | Path | None = 
     """原子写入当前英雄上下文。"""
 
     target = Path(path) if path is not None else OVERLAY_CONTEXT_FILE
-    atomic_write_json(target, dict(payload), ensure_ascii=False, indent=2)
+    from hextech.modules.session.runtime_channel import publish_runtime
+    if path is not None or not publish_runtime("context", payload):
+        atomic_write_json(target, dict(payload), ensure_ascii=False, indent=2)
     return target
 
 

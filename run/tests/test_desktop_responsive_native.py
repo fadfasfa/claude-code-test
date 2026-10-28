@@ -33,6 +33,8 @@ def test_native_responsive_controls(request, monkeypatch):
     try:
         ui._render_candidate_cards(rows)
         identity = ui._card_rows["0"]["card"]
+        assert not identity.bind("<Button-1>")
+        assert identity.cget("cursor") != "hand2"
         enabled = ui.game_overlay_var.get()
         from itertools import product
         for dpi, (width, mode), client_scale in product(
@@ -45,7 +47,7 @@ def test_native_responsive_controls(request, monkeypatch):
             assert minimum < 700*dpi
             assert ui._card_rows["0"]["card"] is identity and ui.game_overlay_var.get() == enabled
             assert {int(t["frame"].grid_info()["row"]) for t in ui._feature_toggle_widgets} == {
-                "normal": {0}, "narrow": {0, 1}, "minimum": {0, 1, 2}}[mode]
+                "normal": {0}, "narrow": {0}, "minimum": {0, 1}}[mode]
             widgets = [ui.title_bar, ui.exit_button, ui.refresh_button, ui.diagnostics_button, ui.status_line_label]
             widgets += [t["label"] for t in ui._feature_toggle_widgets]
             row = ui._card_rows["0"]

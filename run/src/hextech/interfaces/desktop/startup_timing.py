@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from hextech.modules.data.ports.paths import RUNTIME_DATA_DIR
+from hextech.modules.data.ports.paths import RUNTIME_DATA_DIR, get_var_dir
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.session.build_identity import current_build_id
 
@@ -56,14 +56,15 @@ class StartupTimingProbe:
         self.flush()
 
     def flush(self) -> None:
-        data = {
-            "schema_version": STARTUP_TIMING_SCHEMA_VERSION,
-            "build_id": self._build_id,
-            "generated_at": time.time(),
-            "started_at": self.wall_started_at,
-            "marks": list(self._marks),
-        }
         try:
+            data = {
+                "schema_version": STARTUP_TIMING_SCHEMA_VERSION,
+                "build_id": self._build_id,
+                "runtime_root": str(get_var_dir().resolve()),
+                "generated_at": time.time(),
+                "started_at": self.wall_started_at,
+                "marks": list(self._marks),
+            }
             atomic_write_json(self.output_path, data, ensure_ascii=False, indent=2)
         except Exception:
             # timing 诊断不能影响桌面启动。

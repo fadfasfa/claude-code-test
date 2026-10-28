@@ -1,7 +1,6 @@
 """测试构建入口和依赖分层规则。"""
 from __future__ import annotations
 
-import hashlib
 import json
 import struct
 import subprocess
@@ -69,7 +68,7 @@ def test_build_accepts_isolated_artifact_and_smoke_roots(tmp_path):
 )
 def test_build_package_direct_help_is_cwd_independent(cwd: Path, script: Path):
     completed = subprocess.run(
-        [sys.executable, str(script), "--help"],
+        [sys.executable, "-X", "utf8", str(script), "--help"],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -83,7 +82,7 @@ def test_build_package_direct_help_is_cwd_independent(cwd: Path, script: Path):
 def test_stable_build_module_help_uses_current_python_environment_module() -> None:
     import os
     completed = subprocess.run(
-        [sys.executable, "-m", "tooling.build", "--help"],
+        [sys.executable, "-X", "utf8", "-m", "tooling.build", "--help"],
         cwd=RUN_DIR,
         text=True,
         encoding="utf-8",
@@ -120,7 +119,7 @@ def test_offline_build_validation_does_not_call_remote_refresh(monkeypatch):
     )
 
     assert build_package.prepare_runtime_data_for_package(refresh_data=False) == (
-        build_package.BASE_DIR / "resources" / "seeds"
+        build_package.BASE_DIR / "resources" / "seeds" / "runtime.v4" / "snapshots"
     ).resolve()
 
 
@@ -166,7 +165,7 @@ def test_explicit_refresh_packages_the_refreshed_runtime_snapshot(monkeypatch, t
     assert build_package.prepare_runtime_data_for_package(refresh_data=True) == snapshot_root.resolve()
 
 
-@pytest.mark.parametrize("failed_source", ["blitz", "apex", "mayhem"])
+@pytest.mark.parametrize("failed_source", ["apex", "mayhem"])
 def test_optional_refresh_failure_does_not_block_verified_core_package(monkeypatch, tmp_path, failed_source):
     from tooling.build import package as build_package
     from hextech.bootstrap import refresh_once
@@ -531,44 +530,30 @@ def test_packaged_overlay_chain_rejects_stale_sidecar_then_accepts_current_build
     assert details["sidecar_pid"] == 202
 
 
-def test_populated_runtime_fixture_contains_eight_generations_and_four_legacy(tmp_path: Path) -> None:
+def test_populated_runtime_fixture_contains_eight_generations_and_four_legacy(tmp_path: Path, monkeypatch) -> None:
+    import shutil
+    from tests.support.v4_release import make_release
+    from tooling.build.cohort_seed import collect_cohort_seed
     from tooling.acceptance import smoke_packaged_startup as smoke
-
+    source_runtime = tmp_path / "source"
+    manifest = make_release(source_runtime, monkeypatch)
+    seed = collect_cohort_seed(source_runtime / "snapshots")
     package = tmp_path / "package"
     internal = package / "_internal"
-    seed_generation = internal / "resources" / "seeds" / "generations" / "bundle-generation"
-    seed_generation.mkdir(parents=True)
-    (seed_generation / "manifest.json").write_text(
-        json.dumps({"generation_id": "bundle-generation"}),
-        encoding="utf-8",
-    )
-    seed_pointer = internal / "resources" / "seeds" / "current.v2.json"
-    seed_pointer.parent.mkdir(parents=True, exist_ok=True)
-    seed_pointer.write_text(json.dumps({"current_generation_id": "bundle-generation"}), encoding="utf-8")
-    (internal / "bundle_manifest.json").write_text(
-        json.dumps(
-            {
-                "seed_files": [
-                    "resources/seeds/current.v2.json",
-                    "resources/seeds/generations/bundle-generation/manifest.json",
-                ],
-                "cohort_seed_files": [],
-            }
-        ),
-        encoding="utf-8",
-    )
+    for path in seed.files:
+        target = internal / seed.bundled_name(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+    (internal / "bundle_manifest.json").write_text(json.dumps({
+        "seed_files": [seed.bundled_name(path) for path in seed.files],
+    }), encoding="utf-8")
     runtime = tmp_path / "runtime"
-
     smoke._write_populated_runtime_fixture(package, runtime)
-
-    generations = list((runtime / "snapshots" / "generations").iterdir())
+    generations = list((runtime / "snapshots/generations").iterdir())
     assert len(generations) == 8
-    legacy = [
-        path
-        for path in generations
-        if '"source": "hextech"' in (path / "manifest.json").read_text(encoding="utf-8", errors="ignore")
-    ]
-    assert len(legacy) == 4
+    assert len([p for p in generations if "legacy" in p.name]) == 4
+    from hextech.modules.data.generation import DataSnapshotClient
+    assert DataSnapshotClient(runtime / "snapshots").open_view().manifest.generation_id == manifest.generation_id
 
 
 def test_pyinstaller_collects_scraping_package_data():
@@ -595,50 +580,6 @@ def test_native_binary_path_budget_accepts_boundary_and_rejects_overflow(tmp_pat
         validate_packaged_native_paths(package_dir, max_path_length=exact_length - 1)
 
 
-def test_package_entries_include_verified_snapshot_files(tmp_path, monkeypatch):
-    from tooling.build.resource_manifest import write_resource_manifest
-    from tooling.build import rules as build_rules
-    from tooling.build.rules import iter_package_data_entries
-
-    snapshot_root = tmp_path / "verified"
-    generation_dir = snapshot_root / "generations" / "g1"
-    generation_dir.mkdir(parents=True)
-    (snapshot_root / "current.v2.json").write_text('{"current_generation_id":"g1"}', encoding="utf-8")
-    (generation_dir / "manifest.json").write_text("{}", encoding="utf-8")
-    seed_root = tmp_path / "resources" / "seeds"
-    seed_generation = seed_root / "generations" / "g1"
-    seed_generation.mkdir(parents=True)
-    (seed_root / "current.v2.json").write_bytes((snapshot_root / "current.v2.json").read_bytes())
-    (seed_generation / "manifest.json").write_bytes((generation_dir / "manifest.json").read_bytes())
-    write_resource_manifest(tmp_path)
-    manifest_path = tmp_path / "bundle_manifest.json"
-    verified_files = [snapshot_root / "current.v2.json", generation_dir / "manifest.json"]
-    seed_sha256 = {
-        f"resources/seeds/{path.relative_to(snapshot_root).as_posix()}": hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in verified_files
-    }
-    manifest_path.write_text(
-        json.dumps({"seed_sha256": seed_sha256, "cohort_seed_sha256": {}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        build_rules,
-        "collect_cohort_seed",
-        lambda _root: type("SnapshotOnlySeed", (), {"files": (), "bundled_name": lambda self, _path: ""})(),
-    )
-
-    entries = iter_package_data_entries(
-        tmp_path,
-        manifest_path,
-        verified_snapshot_root=snapshot_root,
-    )
-    snapshot_entries = [entry for entry in entries if snapshot_root in entry.source.parents]
-
-    assert {entry.source.name for entry in snapshot_entries} == {"current.v2.json", "manifest.json"}
-    assert {entry.target for entry in snapshot_entries} == {
-        "resources/seeds",
-        "resources/seeds/generations/g1",
-    }
 
 
 def test_observed_name_exemplars_are_in_the_package_whitelist():
@@ -653,7 +594,7 @@ def test_observed_name_exemplars_are_in_the_package_whitelist():
     } <= packaged
 
 
-def test_package_entries_exclude_unlisted_png(tmp_path):
+def test_package_entries_exclude_unlisted_png(tmp_path, monkeypatch):
     from tooling.build.resource_manifest import write_resource_manifest
     from tooling.build.rules import iter_package_data_entries, stage_package_data_tree
 
@@ -665,7 +606,9 @@ def test_package_entries_exclude_unlisted_png(tmp_path):
     unlisted = asset_dir / "unlisted.png"
     unlisted.write_bytes(b"unlisted")
     bundle_manifest = tmp_path / "bundle_manifest.json"
-    bundle_manifest.write_text("{}", encoding="utf-8")
+    bundle_manifest.write_text('{"seed_sha256":{}}', encoding="utf-8")
+    from tooling.build import rules
+    monkeypatch.setattr(rules, "collect_cohort_seed", lambda _: type("EmptySeed", (), {"files": (), "bundled_name": lambda *_: ""})())
 
     entries = iter_package_data_entries(tmp_path, bundle_manifest)
     sources = {entry.source.resolve() for entry in entries}

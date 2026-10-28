@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -14,19 +13,11 @@ from typing import Any
 from hextech.contracts import SourcePointerV2, SourceProvenance, utc_now_iso
 from hextech.infrastructure.persistence.production_pool_binding import bind_production_pool
 from hextech.infrastructure.persistence.source_artifacts import validated_source_artifact
-from hextech.infrastructure.sources.aramkit.projection import build_aramkit_payloads
 from hextech.infrastructure.sources.aramkit.service import validate_scoped_stats_artifact
-from hextech.infrastructure.sources.blitz.projection import build_blitz_details
-from hextech.modules.acquisition.mayhem.merge import merge_mayhem_payloads
 from hextech.modules.data.catalog.version_catalog import load_augment_manifest_entries, load_champion_core_data
 from hextech.modules.data.catalog.versioned import sha256_file
 from hextech.modules.data.source_runs import source_run_dir
 from hextech.modules.recommendation.hero_rankings import build_hero_rankings
-from hextech.modules.recommendation.hints import (
-    build_overlay_hint_cache, enrich_overlay_hint_cache_with_catalog,
-    enrich_overlay_hint_cache_with_synergy,
-)
-from hextech.modules.recommendation.identities import build_augment_identity_payload
 
 
 @dataclass(frozen=True)
@@ -55,7 +46,6 @@ class _Loaded:
     paths: dict[Path, tuple[int, int, int, int]]
     provenance: SourceProvenance
     manifest: dict[str, Any]
-    details: dict[str, Any] | None = None
     scoped_payloads: dict[str, Any] | None = None
 
     def verify_unchanged(self) -> None:
@@ -70,7 +60,8 @@ class IncrementalProjection:
     File identity checks avoid rereading every historical champion body. This
     assumes task-owned immutable run directories, not adversarial kernel writes.
     """
-    def __init__(self, catalog: Any):
+    def __init__(self, catalog: Any, runtime_root: Path | None = None):
+        self.runtime_root = runtime_root
         self.catalog = catalog
         self._cache: dict[str, _Loaded] = {}
         self._used: set[str] = set()
@@ -109,14 +100,19 @@ class IncrementalProjection:
         if cached is not None:
             cached.verify_unchanged()
             return cached
-        manifest_path = source_run_dir(source, pointer.run_id) / "manifest.json"
-        artifact_unresolved = source_run_dir(source, pointer.run_id) / pointer.artifact.relative_path
+        manifest_path = (self.runtime_root / "sources" / source / "runs" / pointer.run_id if self.runtime_root is not None else source_run_dir(source, pointer.run_id)) / "manifest.json"
+        artifact_unresolved = (self.runtime_root / "sources" / source / "runs" / pointer.run_id if self.runtime_root is not None else source_run_dir(source, pointer.run_id)) / pointer.artifact.relative_path
         paths = {path: _stamp(path) for path in (manifest_path, artifact_unresolved)}
-        path = validated_source_artifact(source, payload, expected_role=role)
+        if self.runtime_root is not None:
+            from hextech.modules.data.generation.release_store import checked_file
+            base = self.runtime_root / "sources" / source / "runs" / pointer.run_id
+            checked_file(base, "manifest.json", digest=pointer.manifest_sha256)
+            path = checked_file(base, pointer.artifact.relative_path, digest=pointer.artifact.sha256, size=pointer.artifact.size)
+        else:
+            path = validated_source_artifact(source, payload, expected_role=role)
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             raise ValueError(f"{source} artifact must be an object")
-        details = None
         scoped_payloads = None
         if source == "aramkit" and role == "scoped_stats":
             for child in raw.get("files", []):
@@ -125,21 +121,24 @@ class IncrementalProjection:
                     raise ValueError("scoped child path escapes artifact")
                 child_path = path.parent / relative
                 paths[child_path] = _stamp(child_path)
-            index = validate_scoped_stats_artifact(payload)
+            index = raw if self.runtime_root is not None else validate_scoped_stats_artifact(payload)
             scoped_payloads = {}
             for child in index["files"]:
                 child_path = path.parent / child["relative_path"]
-                scoped_payloads[str(child["champion_id"])] = json.loads(child_path.read_text(encoding="utf-8"))
-            _, details = build_aramkit_payloads(payload, catalog=self.catalog)
-        elif source == "blitz":
-            details = build_blitz_details(payload, catalog=self.catalog)
+                scoped = json.loads(child_path.read_text(encoding="utf-8"))
+                from hextech.modules.data.scoped_stats import _index_records
+                _index_records(scoped["all"], scope="all")
+                for stage in ("1", "2", "3", "4"):
+                    _index_records(scoped["stages"][stage], scope=stage)
+                scoped_payloads[str(child["champion_id"])] = {"champion": scoped["champion"],
+                    "complete": bool(scoped["all"]) and all(scoped["stages"][stage] for stage in ("1", "2", "3", "4"))}
         provenance = SourceProvenance(source=source, run_id=pointer.run_id,
             catalog_generation_id=pointer.catalog_generation_id,
             artifact_role=role, artifact_sha256=pointer.artifact.sha256,
             record_count=pointer.artifact.record_count, manifest_sha256=pointer.manifest_sha256,
             content_schema_version=pointer.artifact.content_schema_version)
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        loaded = _Loaded(pointer, raw, paths, provenance, manifest, details, scoped_payloads)
+        loaded = _Loaded(pointer, raw, paths, provenance, manifest, scoped_payloads)
         loaded.verify_unchanged()
         self._cache[fingerprint] = loaded
         return loaded
@@ -173,11 +172,7 @@ class IncrementalProjection:
         """Validate/cache one staged hero without rebuilding a whole snapshot."""
         unit = self._load("aramkit", pointer, "scoped_stats")
         scoped = (unit.scoped_payloads or {}).get(champion_id, {})
-        detail = next((value for value in (unit.details or {}).values()
-                       if str(value.get("hero_id")) == champion_id), None)
-        if (not detail or not detail.get("augments") or
-                str(scoped.get("champion", {}).get("id")) != champion_id or
-                any(not scoped.get("stages", {}).get(stage) for stage in ("1", "2", "3", "4"))):
+        if str(scoped.get("champion", {}).get("id")) != champion_id or not scoped.get("complete"):
             raise ValueError("champion component is incomplete")
 
     def _ranking_cohort(
@@ -211,103 +206,43 @@ class IncrementalProjection:
         _ranking, _source_version, champions = self._ranking_cohort(ranking_pointer)
         return frozenset(str(item["id"]) for item in champions)
 
-    def build(self, ranking_pointer: Mapping[str, Any],
-              champion_pointers: Mapping[str, Mapping[str, Any]],
-              optional_pointers: Mapping[str, Mapping[str, Any]]) -> IncrementalBuild:
+    def build_references(self, ranking_pointer, champion_pointers, optional_pointers):
+        """Production publishing validates units without constructing duplicate consumer payloads."""
+        if set(optional_pointers) - {"apex", "mayhem"}:
+            raise ValueError("retired optional source")
         self._used = set()
-        ranking, source_version, champions = self._ranking_cohort(ranking_pointer)
-        ranked_ids = {item["id"] for item in champions}
-        if set(champion_pointers) - ranked_ids:
+        ranking, version, champions = self._ranking_cohort(ranking_pointer)
+        expected = {row["id"] for row in champions}
+        if set(champion_pointers) - expected:
             raise ValueError("champion contribution absent from ranking cohort")
-        component_base = {"source_version": source_version, "catalog_id": self.catalog.generation_id}
-        components = {"ranking": {**component_base, "run_id": ranking.pointer.run_id}, "champions": {}}
+        components = {"ranking": {"source_version": version, "catalog_id": self.catalog.generation_id,
+                                   "run_id": ranking.pointer.run_id}, "champions": {}}
         sources = [*self.catalog.provenance(), ranking.provenance]
-        source_status: dict[str, Any] = {"aramkit": self._status(ranking), "catalog": {
-            "catalog_id": self.catalog.generation_id, "data_at": self.catalog.manifest.created_at,
-            "checked_at": utc_now_iso(), "freshness": "fresh", "data_status": "fresh",
-            "manifest_sha256": self.catalog.manifest_sha256}}
-        optional = {}
-        for source, role in (("apex", "synergy"), ("mayhem", "combos")):
-            candidate = optional_pointers.get(source)
-            if not candidate:
-                source_status[source] = {"catalog_id": self.catalog.generation_id, "data_status": "pending",
-                                         "data_reason": "optional_source_pending", "checked_at": utc_now_iso()}
-                continue
-            try:
-                optional[source] = self._load(source, candidate, role)
-            except (ValueError, OSError, KeyError, TypeError) as exc:
-                source_status[source] = {"catalog_id": self.catalog.generation_id, "data_status": "unavailable",
-                    "data_reason": "optional_source_rejected", "coverage": {"reason": str(exc)},
-                    "checked_at": utc_now_iso()}
-                continue
-            sources.append(optional[source].provenance)
-            source_status[source] = self._status(optional[source])
-        synergy = deepcopy(optional["apex"].payload) if "apex" in optional else {}
-        if "mayhem" in optional:
-            synergy = merge_mayhem_payloads(apex_payload=synergy, mayhem_payload=optional["mayhem"].payload,
-                manifest_payload=self.augments, core_payload=self.champions)["merged_payload"]
-        details = {}
-        complete_count = 0
-        for champion in champions:
-            hero_id, name = champion["id"], champion["name"]
-            pointer = champion_pointers.get(hero_id)
-            complete = False
-            run_id = ""
-            hero_source_version = source_version
-            detail = None
+        states = {"catalog": {"catalog_id": self.catalog.generation_id, "data_at": self.catalog.manifest.created_at,
+                  "data_status": "fresh", "freshness": "fresh", "manifest_sha256": self.catalog.manifest_sha256},
+                  "aramkit": self._status(ranking)}
+        for hero in sorted(expected, key=int):
+            pointer = champion_pointers.get(hero)
+            component = {"source_version": version, "catalog_id": self.catalog.generation_id, "complete": False}
             if pointer:
+                self.validate_champion(hero, pointer)
                 unit = self._load("aramkit", pointer, "scoped_stats")
-                if hero_id not in {str(item["champion_id"]) for item in unit.payload["files"]}:
-                    raise ValueError("champion component hero mismatch")
-                hero_source_version = str(unit.payload.get("data_path") or "")
-                if not hero_source_version:
-                    raise ValueError("champion component source version missing")
-                detail = deepcopy((unit.details or {}).get(name))
-                if not detail or str(detail.get("hero_id")) != hero_id or not detail.get("augments"):
-                    raise ValueError("champion component is incomplete")
-                scoped = (unit.scoped_payloads or {}).get(hero_id, {})
-                if (str(scoped.get("champion", {}).get("id")) != hero_id
-                        or any(not scoped.get("stages", {}).get(stage) for stage in ("1", "2", "3", "4"))):
-                    raise ValueError("champion component stages are incomplete")
-                complete = True
-                complete_count += 1
-                run_id = unit.pointer.run_id
+                component.update(complete=True, run_id=unit.pointer.run_id,
+                    source_version=str(unit.manifest["metadata"]["version"]["dataPath"]))
                 if unit.provenance not in sources:
                     sources.append(unit.provenance)
-            if detail:
-                detail["data_status"] = "data_stale" if complete and hero_source_version != source_version else "fresh"
-                detail["synergy"] = deepcopy(synergy.get(hero_id) or synergy.get(name) or {})
+            components["champions"][hero] = component
+        for source, role in (("apex", "synergy"), ("mayhem", "combos")):
+            if source in optional_pointers:
+                try:
+                    unit = self._load(source, optional_pointers[source], role)
+                    sources.append(unit.provenance)
+                    states[source] = self._status(unit)
+                except (OSError, ValueError, TypeError, KeyError):
+                    states[source] = {"catalog_id": self.catalog.generation_id, "data_status": "unavailable",
+                                      "data_reason": "optional_source_rejected"}
             else:
-                detail = {"hero_id": hero_id, "augments": [], "data_status": "pending", "synergy": {}}
-            details[name] = detail
-            components["champions"][hero_id] = {**component_base, "source_version": hero_source_version,
-                                                "complete": complete, **({"run_id": run_id} if run_id else {})}
-        source_status["aramkit"]["coverage"] = {"complete": complete_count, "expected": len(champions)}
-        hero_ids = {item["name"]: item["id"] for item in champions}
-        hints = build_overlay_hint_cache(details, include_private_stats=True, source_tag="incremental-aramkit",
-                                         synergy_by_name={}, champion_id_by_name=hero_ids)
-        # Immutable content identity must not change because the same inputs were re-projected.
-        hints["generated_at"] = datetime.fromisoformat(str(ranking.manifest["completed_at"]).replace("Z", "+00:00")).timestamp()
-        identities = {"champions": {item["id"]: item["name"] for item in champions},
-                      **build_augment_identity_payload(hints, self.augments)}
-        enrich_overlay_hint_cache_with_catalog(hints, self.augments)
-        hints["source"]["production_augment_pool"] = deepcopy(self._pool["source"]["production_augment_pool"])
-        if any(isinstance(value, Mapping) and value.get("synergy_items") for value in synergy.values()):
-            projected = deepcopy(hints)
-            try:
-                enrich_overlay_hint_cache_with_synergy(projected, synergy, previous_report=None)
-            except ValueError as exc:
-                # Optional enrichment cannot invalidate already complete stats.
-                for source in ("apex", "mayhem"):
-                    if source in optional:
-                        source_status[source].update(data_status="unavailable", data_reason="optional_projection_rejected",
-                                                     coverage={"reason": str(exc)})
-                        sources.remove(optional[source].provenance)
-                for detail in details.values():
-                    detail["synergy"] = {}
-            else:
-                hints = projected
+                states[source] = {"catalog_id": self.catalog.generation_id, "data_status": "pending",
+                                  "data_reason": "optional_source_pending"}
         self._cache = {key: value for key, value in self._cache.items() if key in self._used}
-        return IncrementalBuild({"champions": champions, "champion_hextech": details,
-                                 "overlay_hints": hints, "identities": identities},
-                                tuple(sources), components, source_status)
+        return IncrementalBuild({}, tuple(sources), components, states)

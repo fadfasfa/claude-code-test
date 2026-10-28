@@ -59,6 +59,7 @@ def reduce_slots(
             elif (track.last_transition_frame_id == frame_id and track.replacement_transition_reason):
                 # begin_frame已推进这次明确重随；finish只沿用待确认状态，不再推进代际。
                 transitioned.add(index)
+    lexical_evidence = [None] * SLOT_COUNT
     for index in range(SLOT_COUNT):
         raw_slot = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {}
         evidence = raw_slot.get("ocr_production") if isinstance(raw_slot.get("ocr_production"), Mapping) else None
@@ -83,6 +84,7 @@ def reduce_slots(
             if candidates[index] is None:
                 rejection_reasons[index] = "ocr_result_stale"
             continue
+        lexical_evidence[index] = evidence
         scene_negative = (
             evidence.get("scene_negative")
             if isinstance(evidence.get("scene_negative"), Mapping)
@@ -126,15 +128,32 @@ def reduce_slots(
             rejection_reasons[index] = ""
     name_residue = source.get("name_residue") if isinstance(source.get("name_residue"), list) else []
     recorded = []
+    frozen_slots = set()
+    timing = raw_event.get("timing") if isinstance(raw_event.get("timing"), Mapping) else {}
+    try:
+        captured_at = float(timing.get("captured_at") or 0.0)
+    except (ValueError, TypeError):
+        captured_at = 0.0
+    lexical_scene_eligible = bool(
+        raw_event.get("selection_type") == "hextech" and source.get("scene_present") is True
+        and str(source.get("scene_kind") or "hextech") == "hextech"
+        and session_id and str(source.get("game_instance_id") or "") == session_id
+        and not pending_only and not source.get("blocking_modal") and not source.get("scoreboard_key_down")
+        and not source.get("hover_occluded") and not source.get("selection_confirmed")
+    )
     for index, track in enumerate(self.slots):
         raw_slot = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {}
         frozen = index in cursor_over_slots or index in transitioned or (
             pending_only and (track.stable_slot is not None or index >= len(name_residue) or not name_residue[index]))
+        if frozen:
+            frozen_slots.add(index)
         recorded.append(record_slot_observation(track, raw_slot, observed_at=observed_at, frame_id=frame_id,
-                                                candidate=None if frozen else candidates[index]))
+            candidate=None if frozen else candidates[index], captured_at=captured_at,
+            revocation_eligible=lexical_scene_eligible and not frozen,
+            lexical_evidence=lexical_evidence[index]))
     if isinstance(completed, list) and isinstance(outcomes, list):
         apply_completed_ocr_evidence(self.slots, completed, outcomes, session_id=session_id,
-                                     selection_epoch=self.epoch, current_candidates=template_candidates)
+                                     selection_epoch=self.epoch, current_candidates=template_candidates, frozen_slots=frozen_slots)
     for index, track in enumerate(self.slots):
         if rejection_reasons[index] == "ocr_template_conflict":
             from dataclasses import replace
@@ -197,7 +216,10 @@ def reduce_slots(
             candidate=candidates[index],
             rejection_reason=rejection_reasons[index],
             observation_recorded=recorded[index],
+            revocation_enabled=self.identity_revocation_enabled,
         )
+        if track.identity_diagnostics and isinstance(raw_slot, dict):
+            raw_slot["identity_transition"] = dict(track.identity_diagnostics)
         rendered_slots.append(rendered)
         if generation_changed:
             self._revision_changed = True

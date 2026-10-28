@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 import logging
 import os
 import subprocess
@@ -25,6 +26,14 @@ class WindowsJobObject:
             return
         try:
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+            kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+            kernel32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+            kernel32.SetInformationJobObject.restype = wintypes.BOOL
+            kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+            kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+            kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+            kernel32.CloseHandle.restype = wintypes.BOOL
             handle = kernel32.CreateJobObjectW(None, None)
             if not handle:
                 return
@@ -74,12 +83,12 @@ class WindowsJobObject:
             self._kernel32 = kernel32
             self.attached = True
         except Exception:
-            logger.debug("Runtime Supervisor Job Object 绑定失败。", exc_info=True)
+            logger.debug("App runtime owner Job Object 绑定失败。", exc_info=True)
 
     def close(self) -> None:
         if self.handle:
             try:
                 self._kernel32.CloseHandle(self.handle)
             except Exception:
-                logger.debug("Runtime Supervisor Job Object 关闭失败。", exc_info=True)
+                logger.debug("App runtime owner Job Object 关闭失败。", exc_info=True)
             self.handle = None

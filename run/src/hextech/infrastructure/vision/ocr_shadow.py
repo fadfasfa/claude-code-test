@@ -10,10 +10,8 @@ import hashlib
 import os
 import threading
 import time
-import unicodedata
 from collections import OrderedDict, deque
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -36,6 +34,13 @@ from hextech.infrastructure.vision.ocr_completed import (
     build_production_evidence,
     build_inference_result,
     production_needed,
+    reliable_icon_candidate_id,
+)
+from hextech.infrastructure.vision.ocr_vocabulary import (
+    OcrVocabularyEntry,
+    build_ocr_vocabulary,
+    match_ocr_text,
+    normalize_ocr_text,
 )
 from hextech.modules.data.ports.paths import resource_path
 
@@ -91,107 +96,6 @@ def ocr_mode(value: str | None = None, *, legacy_enabled: str | None = None) -> 
     if legacy is not None:
         return "observe" if ocr_shadow_enabled(legacy) else "off"
     return "admit"
-
-
-def normalize_ocr_text(value: object) -> str:
-    """保留中英文、数字并移除空白/装饰符，供严格词表规则比较。"""
-
-    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
-    return "".join(char for char in normalized if char.isalnum())
-
-
-def _levenshtein(left: str, right: str) -> int:
-    if left == right:
-        return 0
-    if not left:
-        return len(right)
-    if len(left) > len(right):
-        left, right = right, left
-    previous = list(range(len(left) + 1))
-    for row, right_char in enumerate(right, start=1):
-        current = [row]
-        for column, left_char in enumerate(left, start=1):
-            current.append(
-                min(
-                    current[-1] + 1,
-                    previous[column] + 1,
-                    previous[column - 1] + (left_char != right_char),
-                )
-            )
-        previous = current
-    return previous[-1]
-
-
-@dataclass(frozen=True)
-class OcrVocabularyEntry:
-    canonical_id: str
-    name: str
-    normalized_name: str
-
-
-def build_ocr_vocabulary(template_index: Sequence[Any]) -> tuple[OcrVocabularyEntry, ...]:
-    """只从当前 production template index 建立固定词表。"""
-
-    entries: list[OcrVocabularyEntry] = []
-    seen: set[tuple[str, str]] = set()
-    for template in template_index:
-        canonical_id = str(getattr(template, "augment_id", "") or "").strip()
-        name = str(getattr(template, "name", "") or "").strip()
-        normalized = normalize_ocr_text(name)
-        key = canonical_id, normalized
-        if not canonical_id or not normalized or key in seen:
-            continue
-        seen.add(key)
-        entries.append(OcrVocabularyEntry(canonical_id, name, normalized))
-    return tuple(entries)
-
-
-def match_ocr_text(raw_text: object, vocabulary: Sequence[OcrVocabularyEntry]) -> dict[str, Any]:
-    """精确或唯一包含才接受；编辑距离 Top-3 永远只供诊断。"""
-
-    text = str(raw_text or "")
-    normalized = normalize_ocr_text(text)
-    exact = [
-        entry
-        for entry in vocabulary
-        if normalized and entry.normalized_name and entry.normalized_name == normalized
-    ]
-    accepted: OcrVocabularyEntry | None = exact[0] if len(exact) == 1 else None
-    rule = "exact" if accepted is not None else ""
-    if accepted is None and normalized:
-        contained = [
-            entry
-            for entry in vocabulary
-            if len(entry.normalized_name) >= 3
-            and entry.normalized_name in normalized
-            and len(normalized) - len(entry.normalized_name) <= 2
-        ]
-        if len(contained) == 1:
-            accepted = contained[0]
-            rule = "unique_containment"
-
-    ranked = sorted(
-        (
-            (_levenshtein(normalized, entry.normalized_name), abs(len(normalized) - len(entry.normalized_name)), entry)
-            for entry in vocabulary
-            if entry.normalized_name
-        ),
-        key=lambda item: (item[0], item[1], item[2].name, item[2].canonical_id),
-    )[:3]
-    return {
-        "normalized_text": normalized,
-        "matched_id": accepted.canonical_id if accepted is not None else "",
-        "matched_name": accepted.name if accepted is not None else "",
-        "match_rule": rule,
-        "top3": [
-            {
-                "canonical_id": entry.canonical_id,
-                "name": entry.name,
-                "distance": distance,
-            }
-            for distance, _length_delta, entry in ranked
-        ],
-    }
 
 
 def _resize_norm_batch(images: Sequence[Image.Image]) -> np.ndarray:
@@ -566,6 +470,7 @@ class OcrShadowRuntime:
                         captured_at=float(production_context["captured_at"]),
                         template_candidate_id=str(slot.get("augment_id") or ""),
                         template_evidence_grade=str(slot.get("evidence_grade") or ""),
+                        reliable_icon_candidate_id=reliable_icon_candidate_id(slot),
                     )
                 cached = self._cache.get(input_sha256) if input_sha256 else None
                 if cached is not None:

@@ -364,7 +364,7 @@ def test_real_tk_compact_layout_keeps_long_labels_inside_columns(request, monkey
         )
         ui.root.update()
 
-        for toggle in (ui.web_frontend_check, ui.game_overlay_check, ui.private_stats_check):
+        for toggle in (ui.game_overlay_check, ui.private_stats_check):
             label = toggle.winfo_children()[1]
             assert label.winfo_width() >= label.winfo_reqwidth()
         assert ui.private_stats_check.winfo_rootx() + ui.private_stats_check.winfo_width() <= (

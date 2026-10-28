@@ -60,6 +60,8 @@ class SlotCandidate:
 
     @property
     def identity(self) -> str:
+        if self.augment_id.isdecimal():
+            return self.augment_id
         return self.recognition_key or normalize_augment_id(self.name) or self.augment_id
 
     def ready_slot(self) -> dict[str, Any]:
@@ -104,6 +106,9 @@ def _number(value: Any) -> float:
 
 
 def _identity(candidate: Mapping[str, Any]) -> str:
+    canonical_id = str(candidate.get("augment_id") or "").strip()
+    if canonical_id.isdecimal():
+        return canonical_id
     return str(
         candidate.get("recognition_key")
         or normalize_augment_id(candidate.get("name"))
@@ -488,7 +493,7 @@ def candidate_from_ocr_evidence(slot_index: int, evidence: Mapping[str, Any]) ->
                 "rgb_sha256": str(evidence.get("rgb_sha256") or ""),
             }
         },
-        recognition_key=normalize_augment_id(name) or canonical_id,
+        recognition_key=canonical_id if canonical_id.isdecimal() else normalize_augment_id(name) or canonical_id,
     )
 
 

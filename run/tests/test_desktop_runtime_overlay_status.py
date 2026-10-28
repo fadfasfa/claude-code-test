@@ -62,7 +62,7 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         }
         ui = object.__new__(app.HextechUI)
         ui.game_overlay_var = Var()
-        ui.runtime_supervisor = SimpleNamespace(get_status=lambda: {"components": {"game_overlay": overlay}})
+        ui.runtime_owner = SimpleNamespace(get_status=lambda: {"components": {"game_overlay": overlay}})
         # 单行收敛层：service 通道文本已过新鲜窗口（at=0），overlay 摘要接管显示。
         ui._status_channels = {
             "service": {"text": "后台服务已就绪", "color": app.UI_COLORS["green"], "at": 0.0},
@@ -81,7 +81,7 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         self.assertEqual(ui.status_line_label.text, "窗口就绪 · 模板预热中")
         self.assertNotIn("英雄", ui.status_line_label.text)
 
-    def test_legacy_overlay_status_polling_uses_secondary_label_without_overriding_primary_ready(self):
+    def test_pending_app_owner_status_keeps_primary_channel(self):
         from hextech.interfaces.desktop import app
 
         class Var:
@@ -108,7 +108,7 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         }
         ui = object.__new__(app.HextechUI)
         ui.game_overlay_var = Var()
-        ui.runtime_supervisor = None
+        ui.runtime_owner = None
         ui.service_manager = SimpleNamespace(get_status_snapshot=lambda: snapshot)
         ui._status_channels = {
             "service": {"text": "实时数据已挂载", "color": app.UI_COLORS["green"], "at": 0.0},
@@ -124,8 +124,8 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
 
         # legacy 路径同样不带构建号后缀，短语落 overlay 通道。
         self.assertEqual(ui._status_channels["service"]["text"], "实时数据已挂载")
-        self.assertEqual(ui._overlay_status_text, "等待海克斯选择 · 识别运行")
-        self.assertEqual(ui.status_line_label.text, "等待海克斯选择 · 识别运行")
+        self.assertEqual(ui._overlay_status_text, "识别控制面准备中")
+        self.assertEqual(ui.status_line_label.text, "识别控制面准备中")
 
     def test_game_overlay_toggle_uses_secondary_label_without_overriding_primary_ready(self):
         from hextech.interfaces.desktop import app
@@ -156,7 +156,7 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         ui = object.__new__(app.HextechUI)
         ui.game_overlay_var = Var(True)
         ui.feature_flags = {"game_overlay_enabled": True}
-        ui.runtime_supervisor = SimpleNamespace(
+        ui.runtime_owner = SimpleNamespace(
             set_game_overlay_enabled=lambda enabled: (calls.append(bool(enabled)), {"status": "running"})[1]
         )
         ui._status_channels = {
@@ -228,58 +228,7 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         self.assertEqual(frame.bindings["<Button-1>"](), "break")
         self.assertEqual(calls, [("游戏内显示: 正在切换中", app.UI_COLORS["warn"])])
 
-    def test_empty_web_live_state_falls_back_to_lcu(self):
-        from hextech.interfaces.desktop import runtime
 
-        class FakeResponse:
-            status_code = 200
-
-            def json(self):
-                return {"selected_champion_ids": [], "bench_champion_ids": [], "local_champion_id": 0}
-
-        ui = SimpleNamespace(session=SimpleNamespace(get=lambda *_args, **_kwargs: FakeResponse()))
-
-        with (
-            patch.object(runtime, "_web_frontend_available", return_value=True),
-            patch.object(runtime, "_resolve_redirect_base", return_value="http://127.0.0.1:8000"),
-        ):
-            candidate_groups, payload = runtime._fetch_web_live_state(ui)
-
-        self.assertIsNone(candidate_groups)
-        self.assertIsNone(payload)
-
-    def test_web_live_state_request_includes_local_auth_headers(self):
-        from hextech.interfaces.desktop import runtime
-        from hextech.interfaces.desktop import runtime_interaction
-        from hextech.interfaces.desktop import runtime_services
-
-        captured = {}
-
-        class FakeResponse:
-            status_code = 200
-
-            def json(self):
-                return {"selected_champion_ids": [], "bench_champion_ids": [], "local_champion_id": 0}
-
-        def fake_get(url, **kwargs):
-            captured["url"] = url
-            captured["headers"] = kwargs.get("headers")
-            return FakeResponse()
-
-        ui = SimpleNamespace(session=SimpleNamespace(get=fake_get), web_port_file="unused")
-
-        with (
-            patch.object(runtime_interaction, "_web_frontend_available", return_value=True),
-            patch.object(runtime_interaction, "_resolve_redirect_base", return_value="http://127.0.0.1:8000"),
-            patch.object(runtime_services, "resolve_web_auth_token", return_value="local-secret"),
-        ):
-            runtime._fetch_web_live_state(ui)
-
-        self.assertEqual(captured["url"], "http://127.0.0.1:8000/api/live_state")
-        self.assertEqual(
-            captured["headers"],
-            {"Origin": "http://127.0.0.1:8000", "X-Hextech-Token": "local-secret"},
-        )
 
     def test_client_overlay_hides_when_gameflow_in_progress_without_game_hwnd(self):
         from hextech.interfaces.desktop import runtime
@@ -315,7 +264,6 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
 
     def test_lcu_champ_select_poll_uses_no_retry_local_request(self):
         from hextech.interfaces.desktop import runtime
-        from hextech.interfaces.desktop import runtime_services
 
         class RetrySession:
             def get(self, *_args, **_kwargs):
@@ -348,7 +296,6 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
 
         with (
             patch.object(runtime.requests, "get", side_effect=fake_get),
-            patch.object(runtime_services, "_write_overlay_context_from_live_state", return_value=True),
         ):
             candidate_groups = runtime.poll_lcu_live_ids(ui)
 
@@ -360,7 +307,7 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         self.assertLessEqual(calls[0]["timeout"], 1.0)
 
     def test_service_manager_reads_host_visibility_status(self):
-        from hextech.interfaces.desktop import service_manager
+        from hextech.interfaces.overlay.runtime_manager import OverlayRuntimeManager
 
         with tempfile.TemporaryDirectory() as temp_dir:
             status_path = Path(temp_dir) / "game_overlay_visibility.v1.json"
@@ -376,16 +323,14 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch.object(service_manager, "OVERLAY_HOST_VISIBILITY_FILE", status_path):
-                status = service_manager.ServiceManager._overlay_host_visibility_status()
+            runtime = OverlayRuntimeManager(visibility_status_file=status_path)
+            if True:
+                status = runtime._read_visibility_health()
 
-        self.assertTrue(status["ok"])
-        self.assertFalse(status["visible"])
-        self.assertEqual(status["reason"], "gameflow_not_in_progress")
-        self.assertEqual(status["host"]["gameflow"], False)
+        self.assertEqual(status["visible_reason"], "gameflow_not_in_progress")
 
     def test_service_manager_rejects_stale_or_unknown_host_visibility_status(self):
-        from hextech.interfaces.desktop import service_manager
+        from hextech.interfaces.overlay.runtime_manager import OverlayRuntimeManager
 
         with tempfile.TemporaryDirectory() as temp_dir:
             status_path = Path(temp_dir) / "game_overlay_visibility.v1.json"
@@ -400,23 +345,23 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with patch.object(service_manager, "OVERLAY_HOST_VISIBILITY_FILE", status_path):
-                unknown_schema = service_manager.ServiceManager._overlay_host_visibility_status()
+            runtime = OverlayRuntimeManager(visibility_status_file=status_path)
+            if True:
+                unknown_schema = runtime._read_visibility_health()
 
             status_path.write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "updated_at": time.time() - service_manager.OVERLAY_HOST_VISIBILITY_STALE_SECONDS - 1.0,
+                        "updated_at": time.time() - 6.0 - 1.0,
                         "decision": {"window_visible": True, "reason": "visible_ready"},
                     }
                 ),
                 encoding="utf-8",
             )
-            with patch.object(service_manager, "OVERLAY_HOST_VISIBILITY_FILE", status_path):
-                stale = service_manager.ServiceManager._overlay_host_visibility_status()
+            runtime = OverlayRuntimeManager(visibility_status_file=status_path)
+            if True:
+                stale = runtime._read_visibility_health()
 
-        self.assertFalse(unknown_schema["ok"])
-        self.assertEqual(unknown_schema["error"], "visibility_status_unknown_schema")
-        self.assertFalse(stale["ok"])
-        self.assertEqual(stale["error"], "visibility_status_stale")
+        self.assertEqual(unknown_schema["functional_reason"], "unknown_schema")
+        self.assertEqual(stale["functional_reason"], "host_heartbeat_stale")

@@ -83,9 +83,65 @@ def test_binding_rejects_child_window_before_changing_parent(monkeypatch):
 
 def test_partial_map_failure_does_not_skip_native_withdraw():
     from hextech.interfaces.desktop.app_view import DesktopViewMixin
-    root = SimpleNamespace(winfo_ismapped=lambda: True, withdraw=Mock())
+    mapped = [True]
+    root = SimpleNamespace(winfo_ismapped=lambda: mapped[0], withdraw=Mock(side_effect=lambda: mapped.__setitem__(0, False)))
     ui = SimpleNamespace(_window_visible=False, root=root, _set_window_topmost=Mock())
     ui._withdraw_overlay = lambda: DesktopViewMixin._withdraw_overlay.__wrapped__(ui)
     DesktopViewMixin._hide_overlay(ui)
     root.withdraw.assert_called_once()
     assert not ui._window_visible
+
+
+def test_native_only_mapping_does_not_skip_withdraw_even_with_unmapped_inner():
+    from hextech.interfaces.desktop.app_view import DesktopViewMixin
+    ui = SimpleNamespace(_window_visible=False, root=SimpleNamespace(winfo_ismapped=lambda: False),
+                         _desktop_native_visible=lambda: True, _withdraw_overlay=Mock())
+    DesktopViewMixin._hide_overlay(ui)
+    ui._withdraw_overlay.assert_called_once()
+
+
+@pytest.mark.parametrize("native_hide_succeeds", [False, True])
+def test_live_tk_withdraw_error_still_attempts_native_hide(monkeypatch, native_hide_succeeds):
+    import tkinter as tk
+    from hextech.interfaces.desktop.app_view import DesktopViewMixin
+    from hextech.interfaces.desktop import client_layer
+    calls, native_visible = [], [True]
+    def withdraw():
+        calls.append("tk_withdraw")
+        raise tk.TclError("injected live Tk failure")
+    def native_hide(root):
+        calls.append("native_hide")
+        native_visible[0] = not native_hide_succeeds
+    monkeypatch.setattr(client_layer, "hide_desktop_wrapper", native_hide)
+    root = SimpleNamespace(winfo_exists=lambda: True, winfo_ismapped=lambda: False, withdraw=withdraw)
+    ui = SimpleNamespace(_window_visible=False, root=root, _set_window_topmost=Mock(),
+                         _desktop_native_visible=lambda: native_visible[0])
+    if native_hide_succeeds:
+        DesktopViewMixin._withdraw_overlay.__wrapped__(ui)
+        assert not ui._window_visible
+    else:
+        with pytest.raises(RuntimeError, match="hide_unconfirmed"):
+            DesktopViewMixin._withdraw_overlay.__wrapped__(ui)
+    assert calls == ["tk_withdraw", "native_hide"]
+
+
+def test_destroyed_tk_during_withdraw_never_reuses_cached_wrapper(monkeypatch):
+    import tkinter as tk
+    from hextech.interfaces.desktop.app_view import DesktopViewMixin
+    from hextech.interfaces.desktop import client_layer
+    exists = [True]
+    def unavailable():
+        raise tk.TclError("application has been destroyed")
+    def withdraw():
+        exists[0] = False
+        unavailable()
+    root = SimpleNamespace(winfo_exists=lambda: exists[0], winfo_ismapped=unavailable,
+                           wm_frame=Mock(side_effect=AssertionError("no current wrapper")), withdraw=withdraw)
+    ui = SimpleNamespace(_window_visible=True, root=root, _set_window_topmost=Mock(), _desktop_hwnd=1234,
+                         _desktop_native_visible=lambda: client_layer.desktop_wrapper_is_visible(root))
+    native_hide = Mock(side_effect=AssertionError("must not write stale HWND"))
+    monkeypatch.setattr(client_layer, "hide_desktop_wrapper", native_hide)
+    DesktopViewMixin._withdraw_overlay.__wrapped__(ui)
+    assert not ui._window_visible
+    root.wm_frame.assert_not_called()
+    native_hide.assert_not_called()

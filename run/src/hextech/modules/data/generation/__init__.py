@@ -1,370 +1,121 @@
-"""DataService 发布和消费者读取的版本化数据快照。
-
-发布器先在独立 generation 目录写入并校验全部文件，最后才原子切换 current
-指针。客户端始终整代读取；当前代损坏时只允许整体回退上一代，禁止混用文件。
-"""
-
+"""Production v4 releases: immutable unit references and one atomic head."""
 from __future__ import annotations
-
+import uuid
+import shutil
 import hashlib
 import json
-import logging
-import os
-import re
-import shutil
-import tempfile
-import uuid
+import threading
+from collections import OrderedDict
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
-
-from hextech.contracts import (
-    DataContractError,
-    DataSnapshotCurrentPointerV2,
-    DataSnapshotManifestV2,
-    DataSnapshotPreviousPointerV2,
-    SnapshotFileDescriptor,
-    SourceProvenance,
-    SourceStatusV2,
-)
-from hextech.modules.data.catalog.runtime_store import get_runtime_root_dir
+from typing import Any, TYPE_CHECKING
+from hextech.contracts import SourceProvenance, SourceStatusV2
+from hextech.contracts.release import ReleaseManifest
+from hextech.modules.data.ports.paths import get_var_dir
+from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.freshness import SOURCE_INTERVALS, parse_refresh_time
-from hextech.modules.data.ports.atomic import atomic_write_json, _replace_with_retry
-from .validation import (
-    SNAPSHOT_ROLES,
-    SnapshotValidationError,
-    champion_detail_complete,
-    content_fingerprint,
-    count_records,
-    safe_generation_file,
-    sha256_file,
-    validate_generation_directory,
-)
+from .validation import SnapshotValidationError, champion_detail_complete
+from .release_store import closure, fingerprint, object_at, checked_file, read_head, update_head, HEAD_LOCK
+SNAPSHOT_SCHEMA_VERSION = 4
+DataSnapshotManifest = ReleaseManifest
 
+if TYPE_CHECKING:
+    from .query import ReleaseQuery
 
-SNAPSHOT_SCHEMA_VERSION = 3
-_GENERATION_ID_RE = re.compile(r"^\d{8}T\d{6}-[0-9a-f]{10}$")
-logger = logging.getLogger(__name__)
+def default_snapshot_root():
+    return get_var_dir() / "snapshots"
 
-
-SnapshotFile = SnapshotFileDescriptor
-DataSnapshotManifest = DataSnapshotManifestV2
-
-
-def default_snapshot_root() -> Path:
-    return get_runtime_root_dir() / "snapshots"
-
-
-def _read_json(path: Path) -> Any:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SnapshotValidationError(f"快照 JSON 无法读取：{path.name}: {exc}") from exc
-
-
-def _payload_hashes(payloads: Mapping[str, Any]) -> dict[str, str]:
-    """按 publisher 的实际 JSON 编码计算四个消费 payload 摘要。"""
-
-    return {
-        role: hashlib.sha256(
-            json.dumps(payloads.get(role), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
-        for role in SNAPSHOT_ROLES
-    }
-
-
-def _semantic_source_status(
-    source_status: Mapping[str, SourceStatusV2],
-) -> dict[str, dict[str, Any]]:
-    """剥离每轮检查时钟；保留会改变消费者语义的降级和身份字段。"""
-
-    result: dict[str, dict[str, Any]] = {}
-    for source, value in source_status.items():
-        payload = value.to_dict()
-        payload.pop("checked_at", None)
-        payload.pop("stale_age_seconds", None)
-        result[str(source)] = payload
-    return result
-
-
-_count_records = count_records
-
-
-def _snapshot_components(payloads: Mapping[str, Any], provenance: Sequence[SourceProvenance],
-                         components: Mapping[str, Any] | None) -> dict[str, Any]:
-    if components is not None:
-        DataSnapshotManifest.validate_components(components)
-        return deepcopy(dict(components))
-    # Compatibility for existing full-snapshot callers: content-address the
-    # actual immutable units, never invent a successful upstream source run.
-    def digest(value: Any) -> str:
-        return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
-                                         separators=(",", ":")).encode("utf-8")).hexdigest()
-
-    catalog_ids = {item.catalog_generation_id for item in provenance}
-    catalog_id = next(iter(catalog_ids)) if len(catalog_ids) == 1 else "payload-" + digest(payloads["identities"])
-    result = {
-        "ranking": {"source_version": digest(payloads["champions"]), "catalog_id": catalog_id},
-        "champions": {
-            str(detail["hero_id"]): {
-                "source_version": digest(detail), "catalog_id": catalog_id,
-                "complete": champion_detail_complete(detail),
-            }
-            for detail in payloads["champion_hextech"].values()
-        },
-    }
-    stats = [item for item in provenance if (item.source, item.artifact_role) in {("aramkit", "scoped_stats"), ("hextech", "stats")}]
-    ranking = [item for item in provenance if (item.source, item.artifact_role) in {("aramkit", "hero_rankings"), ("blitz", "augment_ranking")}]
-    ranking = ranking or stats
-    if len(ranking) == 1:
-        result["ranking"].update(run_id=ranking[0].run_id, catalog_id=ranking[0].catalog_generation_id)
-    if len(stats) == 1:
-        for component in result["champions"].values():
-            component.update(run_id=stats[0].run_id, catalog_id=stats[0].catalog_generation_id)
-    DataSnapshotManifest.validate_components(result)
-    return result
-
+def _read_json(path):
+    return object_at(path)
 
 class DataSnapshotPublisher:
-    """DataService 专用的 generation 发布器。"""
-
-    def __init__(self, root: str | Path | None = None) -> None:
+    def __init__(self, root=None):
         self.root = Path(root) if root is not None else default_snapshot_root()
         self.generations_dir = self.root / "generations"
         self.staging_dir = self.root / "staging"
-        self.current_path = self.root / "current.v2.json"
-        self.previous_path = self.root / "previous.v2.json"
+        self.current_path = self.root / "current.v4.json"
+        # Same physical head: previous is never independently committed.
+        self.previous_path = self.current_path
         self.last_promotion_disposition = "unknown"
 
-    def matching_current_manifest(
-        self,
-        payloads: Mapping[str, Any],
-        *,
-        source_files: Sequence[SourceProvenance | Mapping[str, Any]] = (),
-        health: str = "healthy",
-        degraded_sources: Sequence[str] = (),
-        source_status: Mapping[str, Mapping[str, Any] | SourceStatusV2] | None = None,
-        components: Mapping[str, Any] | None = None,
-    ) -> DataSnapshotManifest | None:
-        """返回语义内容完全相同的 current；易变检查时钟不参与比较。"""
+    def current_generation_id(self):
+        try:
+            return DataSnapshotClient(self.root).open_view().manifest.generation_id
+        except (OSError, ValueError):
+            return ""
 
-        normalized = {role: payloads.get(role) for role in SNAPSHOT_ROLES}
-        provenance = tuple(
-            item if isinstance(item, SourceProvenance) else SourceProvenance.from_mapping(item)
-            for item in source_files
-        )
-        fingerprint = content_fingerprint(provenance)
-        normalized_components = _snapshot_components(normalized, provenance, components)
-        candidate_payload_hashes = _payload_hashes(normalized)
-        normalized_source_status = {
-            str(key): value if isinstance(value, SourceStatusV2) else SourceStatusV2.from_mapping(value)
-            for key, value in (source_status or {}).items()
-        }
+    def _candidate(self, *, source_files, components, source_status=None, health="healthy", degraded_sources=(), **kwargs):
+        if components is None:
+            raise SnapshotValidationError("v4 requires explicit unit components; legacy payload publication retired")
+        refs = tuple(sorted((p if isinstance(p, SourceProvenance) else SourceProvenance.from_mapping(p) for p in source_files),
+                            key=lambda p: (p.source, p.run_id, p.artifact_role)))
+        states = {k: v if isinstance(v, SourceStatusV2) else SourceStatusV2.from_mapping(v) for k, v in (source_status or {}).items()}
+        digest = fingerprint(refs, components, states, health, degraded_sources)
+        return ReleaseManifest(datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")+"-"+uuid.uuid4().hex[:10],
+            datetime.now(timezone.utc).isoformat(), digest, refs, deepcopy(dict(components)), states,
+            health, tuple(degraded_sources))
+
+    def matching_current_manifest(self, payloads=None, *, source_files=(), components=None, **kwargs):
+        candidate = self._candidate(source_files=source_files, components=components, **kwargs)
         try:
             current = DataSnapshotClient(self.root).open_view()
-        except SnapshotValidationError:
+        except (ValueError, OSError):
             return None
-        if current.degraded or current.failed_generation_id:
-            # open_view may have returned previous: that is recovery evidence,
-            # not proof that the on-disk current pointer needs no repair.
-            return None
-        current_payload_hashes = {item.role: item.sha256 for item in current.manifest.files}
-        if (
-            current.manifest.schema_version == SNAPSHOT_SCHEMA_VERSION
-            and current.manifest.components == normalized_components
-            and current.manifest.content_fingerprint == fingerprint
-            and current.manifest.source_files == provenance
-            and current_payload_hashes == candidate_payload_hashes
-            and current.manifest.health == str(health)
-            and current.manifest.degraded_sources
-            == tuple(str(item) for item in degraded_sources)
-            and _semantic_source_status(dict(current.manifest.source_status))
-            == _semantic_source_status(normalized_source_status)
-        ):
-            return current.manifest
-        return None
+        return current.manifest if not current.degraded and current.manifest.content_fingerprint == candidate.content_fingerprint else None
 
-    def publish(
-        self,
-        payloads: Mapping[str, Any],
-        *,
-        source_files: Sequence[SourceProvenance | Mapping[str, Any]] = (),
-        require_complete_provenance: bool = False,
-        health: str = "healthy",
-        refreshed_sources: Sequence[str] = (),
-        degraded_sources: Sequence[str] = (),
-        source_status: Mapping[str, Mapping[str, Any] | SourceStatusV2] | None = None,
-        components: Mapping[str, Any] | None = None,
-    ) -> DataSnapshotManifest:
-        normalized = {role: payloads.get(role) for role in SNAPSHOT_ROLES}
-        champion_count, augment_count, stat_record_count = _count_records(normalized, schema_version=SNAPSHOT_SCHEMA_VERSION)
-        provenance = tuple(
-            item if isinstance(item, SourceProvenance) else SourceProvenance.from_mapping(item)
-            for item in source_files
-        )
-        fingerprint = content_fingerprint(provenance)
-        normalized_components = _snapshot_components(normalized, provenance, components)
-        normalized_source_status = {
-            str(key): value if isinstance(value, SourceStatusV2) else SourceStatusV2.from_mapping(value)
-            for key, value in (source_status or {}).items()
-        }
-        current = self.matching_current_manifest(
-            normalized,
-            source_files=provenance,
-            health=health,
-            degraded_sources=degraded_sources,
-            source_status=normalized_source_status,
-            components=normalized_components,
-        )
-        if current is not None:
+    def publish(self, payloads=None, *, source_files=(), components=None, **kwargs):
+        with HEAD_LOCK:
+            return self._publish_locked(payloads, source_files=source_files, components=components, **kwargs)
+
+    def _publish_locked(self, payloads=None, *, source_files=(), components=None, **kwargs):
+        candidate = self._candidate(source_files=source_files, components=components, **kwargs)
+        catalog, _, _, _ = closure(self.root.parent, candidate)
+        try:
+            current = DataSnapshotClient(self.root).open_view()
+        except (OSError, ValueError):
+            current = None
+        if current is not None and not current.degraded and current.manifest.content_fingerprint == candidate.content_fingerprint:
             self.last_promotion_disposition = "unchanged"
-            return current
-        generation_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + f"-{uuid.uuid4().hex[:10]}"
-        staging = self.staging_dir / generation_id
-        final = self.generations_dir / generation_id
-        staging.mkdir(parents=True, exist_ok=False)
-        promoted = False
-        pointer_committed = False
-        previous_written = False
-        previous_bytes: bytes | None = None
+            return current.manifest
+        directory = self.generations_dir / candidate.generation_id
+        directory.mkdir(parents=True, exist_ok=False)
         try:
-            files: list[SnapshotFileDescriptor] = []
-            for role in SNAPSHOT_ROLES:
-                filename = f"{role}.json"
-                path = staging / filename
-                atomic_write_json(path, normalized[role], ensure_ascii=False, separators=(",", ":"))
-                files.append(
-                    SnapshotFileDescriptor(
-                        role=role,
-                        relative_path=filename,
-                        size=path.stat().st_size,
-                        sha256=sha256_file(path),
-                    )
-                )
-            manifest = DataSnapshotManifest(
-                schema_version=SNAPSHOT_SCHEMA_VERSION,
-                generation_id=generation_id,
-                created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                content_fingerprint=fingerprint,
-                source_files=provenance,
-                champion_count=champion_count,
-                augment_count=augment_count,
-                stat_record_count=stat_record_count,
-                files=tuple(files),
-                health=str(health),
-                refreshed_sources=tuple(str(item) for item in refreshed_sources),
-                degraded_sources=tuple(str(item) for item in degraded_sources),
-                source_status=normalized_source_status,
-                components=normalized_components,
-            )
-            atomic_write_json(staging / "manifest.json", manifest.to_dict(), ensure_ascii=False, indent=2)
-            validate_generation_directory(
-                staging,
-                manifest,
-                payloads=normalized,
-                allow_staging=True,
-                require_complete_provenance=require_complete_provenance,
-            )
-            self.generations_dir.mkdir(parents=True, exist_ok=True)
-            staging.replace(final)
-            promoted = True
-            client = DataSnapshotClient(self.root)
+            atomic_write_json(directory / "manifest.json", candidate.to_dict(), ensure_ascii=False, indent=2)
+            DataSnapshotClient(self.root).open_generation(candidate.generation_id)
+            # One replace is the only commit point; source and Catalog pointers are not rewritten.
+            head = read_head(self.root) if self.current_path.exists() else {}
+            recognition = None if head.get("recognition_catalog") else {
+                "schema_version": 2, "catalog_generation_id": catalog.generation_id,
+                "content_sha256": catalog.content_sha256, "manifest_sha256": catalog.manifest_sha256}
+            update_head(self.root, current_generation_id=candidate.generation_id,
+                previous_generation_id=current.manifest.generation_id if current else "", recognition_catalog=recognition)
+        except BaseException as exc:
+            # An exception after replace is not proof that commit failed. Never
+            # delete a directory that the committed atomic head already owns.
             try:
-                # Validate current independently: open_view also parses previous,
-                # so a corrupt previous must not hide an otherwise usable current.
-                previous_id = client.open_generation(self._current_generation_id()).manifest.generation_id
-            except SnapshotValidationError:
-                try:
-                    previous_id = client.open_view().manifest.generation_id
-                except SnapshotValidationError:
-                    previous_id = ""
-            if previous_id:
-                try:
-                    previous_bytes = self.previous_path.read_bytes()
-                except FileNotFoundError:
-                    previous_bytes = None
-                atomic_write_json(
-                    self.previous_path,
-                    DataSnapshotPreviousPointerV2(generation_id=previous_id).to_dict(),
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                previous_written = True
-            atomic_write_json(
-                self.current_path,
-                DataSnapshotCurrentPointerV2(current_generation_id=generation_id).to_dict(),
-                ensure_ascii=False,
-                indent=2,
-            )
-            pointer_committed = True
-            self.last_promotion_disposition = "published"
-            # generation 可能仍被 promotion journal 或历史 provenance 引用。保留策略
-            # 由 DataService 在 journal committed 之后统一执行，publisher 不抢先删除。
-            return manifest
-        except Exception:
-            shutil.rmtree(staging, ignore_errors=True)
-            if promoted and not pointer_committed:
-                shutil.rmtree(final, ignore_errors=True)
-            if previous_written and not pointer_committed:
-                self._restore_previous_pointer(previous_bytes)
+                head = read_head(self.root) if self.current_path.exists() else {}
+            except (OSError, ValueError):
+                raise exc
+            if head.get("current_generation_id") == candidate.generation_id:
+                self.last_promotion_disposition = "published"
+                if isinstance(exc, Exception):
+                    return candidate
+                raise
+            if head.get("previous_generation_id") != candidate.generation_id:
+                shutil.rmtree(directory)
             raise
-
-    def _restore_previous_pointer(self, content: bytes | None) -> None:
-        """Undo a failed rollover byte-for-byte, including malformed UTF-8 JSON."""
-        if content is None:
-            self.previous_path.unlink(missing_ok=True)
-            return
-        fd, temporary = tempfile.mkstemp(prefix=".previous-restore-", suffix=".tmp", dir=self.root)
-        try:
-            with os.fdopen(fd, "wb") as stream:
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
-            _replace_with_retry(temporary, self.previous_path)
-        finally:
-            Path(temporary).unlink(missing_ok=True)
-
-    def current_generation_id(self) -> str:
-        """返回已发布 current generation；不存在时返回空字符串。"""
-
-        return self._current_generation_id()
-
-    def _current_generation_id(self) -> str:
-        if not self.current_path.exists():
-            return ""
-        payload = _read_json(self.current_path)
-        if not isinstance(payload, Mapping):
-            return ""
-        try:
-            return DataSnapshotCurrentPointerV2.from_mapping(payload).current_generation_id
-        except DataContractError:
-            return ""
-
-    def _remove_unreferenced_generations(self, keep: set[str]) -> None:
-        if not self.generations_dir.is_dir():
-            return
-        for path in self.generations_dir.iterdir():
-            if path.is_dir() and path.name not in keep:
-                shutil.rmtree(path, ignore_errors=True)
-
-    @staticmethod
-    def _validate_generation(
-        directory: Path,
-        manifest: DataSnapshotManifest,
-        *,
-        allow_staging: bool = False,
-    ) -> None:
-        validate_generation_directory(directory, manifest, allow_staging=allow_staging)
-
+        self.last_promotion_disposition = "published"
+        return candidate
 
 @dataclass(frozen=True)
 class DataSnapshotView:
     """固定在一次完整 generation 上的只读查询视图。"""
 
     manifest: DataSnapshotManifest
-    _payloads: Mapping[str, Any]
+    _payloads: ReleaseQuery
     degraded: bool = False
     failed_generation_id: str = ""
     _runtime_root: Path | None = None
@@ -550,251 +301,122 @@ class DataSnapshotView:
             "components": deepcopy(dict(self.manifest.components)),
         }
 
-    def get_champions(self) -> list[dict[str, Any]]:
-        champions = self._payloads["champions"]
-        return deepcopy([dict(item) for item in champions if isinstance(item, Mapping)])
-
-    def get_champion(self, champion_id_or_name: object) -> dict[str, Any] | None:
-        needle = str(champion_id_or_name).strip().casefold()
-        for champion in self.get_champions():
-            if needle in {str(champion.get("id", "")).casefold(), str(champion.get("name", "")).casefold()}:
-                return champion
-        return None
-
-    def _champion_detail(self, champion_id_or_name: object) -> Mapping[str, Any] | None:
-        details = self._payloads["champion_hextech"]
-        needle = str(champion_id_or_name).strip().casefold()
-        for name, detail in details.items():
-            if not isinstance(detail, Mapping):
-                continue
-            if needle in {str(name).casefold(), str(detail.get("hero_id", "")).casefold()}:
-                return detail
-        return None
-
-    def get_champion_detail(self, champion_id_or_name: object) -> dict[str, Any] | None:
-        detail = self._champion_detail(champion_id_or_name)
-        return deepcopy(dict(detail)) if detail is not None else None
-
-    def is_champion_complete(self, champion_id_or_name: object) -> bool:
-        detail = self._champion_detail(champion_id_or_name)
-        if not champion_detail_complete(detail):
+    def get_champions(self):
+        return self._payloads.champions()
+    def get_champion(self, value):
+        return self._payloads.champion(value)
+    def get_champion_detail(self, value):
+        return self._payloads.detail(value)
+    def is_champion_complete(self, value):
+        row = self.get_champion(value)
+        if row is None:
             return False
-        if self.manifest.schema_version == 2:
-            return True
-        hero_id = str(detail.get("hero_id") or "") if detail else ""
-        component = self.manifest.components.get("champions", {}).get(hero_id, {})
-        return component.get("complete") is True
-
-    def get_champion_augments(self, champion_id_or_name: object) -> list[dict[str, Any]]:
-        detail = self._champion_detail(champion_id_or_name)
-        augments = detail.get("augments", []) if detail else []
-        return deepcopy([dict(item) for item in augments if isinstance(item, Mapping)])
-
-    def get_synergy_data(self) -> dict[str, Any]:
-        details = self._payloads["champion_hextech"]
-        result: dict[str, Any] = {}
-        for hero_name, detail in details.items():
-            if not isinstance(detail, Mapping):
-                continue
-            synergy = detail.get("synergy")
-            if not isinstance(synergy, Mapping):
-                continue
-            hero_id = str(detail.get("hero_id") or "").strip()
-            result[hero_id or str(hero_name)] = deepcopy(dict(synergy))
-        return result
-
-    def get_combo_stats(self, champion_id_or_name: object, augment_id: object) -> dict[str, Any] | None:
-        identity = self.resolve_augment(augment_id)
-        needle = str(identity.get("canonical_id") or "") if identity else ""
-        if not needle:
+        component = self.manifest.components["champions"].get(row["id"], {})
+        return component.get("complete") is True and champion_detail_complete(self.get_champion_detail(row["id"]))
+    def get_champion_augments(self, value):
+        detail = self.get_champion_detail(value)
+        return detail.get("augments", []) if detail else []
+    def get_synergy_data(self):
+        return self._payloads.synergy()
+    def get_combo_stats(self, champion, augment):
+        identity = self.resolve_augment(augment)
+        if identity is None:
             return None
-        return next(
-            (item for item in self.get_champion_augments(champion_id_or_name) if str(item.get("id")) == needle),
-            None,
-        )
-
-    def resolve_augment(self, value: object) -> dict[str, Any] | None:
-        """解析数字统计 ID、中文名或 Vision stable ID。"""
-
-        from hextech.modules.recommendation.hints import normalize_augment_id, normalize_augment_name
-
-        identities = self._payloads.get("identities", {})
-        if not isinstance(identities, Mapping):
-            return None
-        raw = str(value or "").strip()
-        aliases = identities.get("augment_aliases", {})
-        canonical_id = ""
-        if isinstance(aliases, Mapping):
-            for candidate in (raw, normalize_augment_id(raw), normalize_augment_name(raw)):
-                resolved = str(aliases.get(candidate) or "").strip()
-                if resolved:
-                    canonical_id = resolved
-                    break
-        catalog = identities.get("catalog_augments", {})
-        catalog_item = None
-        if isinstance(catalog, Mapping):
-            for candidate in (raw, normalize_augment_id(raw), normalize_augment_name(raw)):
-                item = catalog.get(candidate)
-                if isinstance(item, Mapping):
-                    catalog_item = dict(item)
-                    break
-            if catalog_item is None:
-                name_matches = [
-                    dict(item)
-                    for item in catalog.values()
-                    if isinstance(item, Mapping)
-                    and normalize_augment_name(item.get("name")) == normalize_augment_name(raw)
-                ]
-                canonical_matches = {
-                    str(item.get("canonical_id") or "").strip()
-                    for item in name_matches
-                    if str(item.get("canonical_id") or "").strip()
-                }
-                # 同名视觉版本只有在唯一 catalog 项，或它们都指向同一统计 ID 时
-                # 才允许名称 fallback；否则保持 unresolved，禁止 first-wins。
-                if len(name_matches) == 1 or len(canonical_matches) == 1:
-                    catalog_item = name_matches[0]
-        augments = identities.get("augments", {})
-        if not canonical_id and raw.isdecimal():
-            canonical_id = raw
-        if catalog_item is None and not canonical_id:
-            return None
-        result = catalog_item or {}
-        result["canonical_id"] = canonical_id or str(result.get("canonical_id") or "")
-        result["stats_available"] = bool(result["canonical_id"])
-        if not result.get("name") and isinstance(augments, Mapping):
-            result["name"] = str(augments.get(result["canonical_id"]) or "")
-        return deepcopy(result)
-
-    def get_overlay_hints(self) -> dict[str, Any]:
-        return deepcopy(dict(self._payloads["overlay_hints"]))
-
-    def get_overlay_display_hints(self) -> dict[str, Any]:
-        """Host 只需名称/联动索引；不复制未参与 Canvas 投影的全英雄历史统计。"""
-        payload = self._payloads["overlay_hints"]
-        hints = payload.get("hints", {}) if isinstance(payload, Mapping) else {}
-        return {
-            "schema_version": 1,
-            "source": deepcopy(dict(payload.get("source") or {})),
-            "name_index": deepcopy(dict(payload.get("name_index") or {})),
-            "hints": {
-                str(key): deepcopy({field: row[field] for field in ("augment_id", "name", "tier", "synergies") if field in row})
-                for key, row in hints.items() if isinstance(row, Mapping)
-            },
-        }
-
-    def get_identity_indexes(self) -> dict[str, Any]:
-        return deepcopy(dict(self._payloads["identities"]))
+        return next((r for r in self.get_champion_augments(champion) if r["id"] == identity["canonical_id"]), None)
+    def resolve_augment(self, value):
+        return self._payloads.resolve(value)
+    def get_overlay_hints(self):
+        return self._payloads.hints()
+    def get_overlay_display_hints(self):
+        payload = self._payloads.hints()
+        return {"schema_version": 1, "source": deepcopy(payload.get("source", {})),
+                "name_index": deepcopy(payload.get("name_index", {})),
+                "hints": {key: {field: deepcopy(row[field]) for field in ("augment_id", "name", "tier", "synergies") if field in row}
+                          for key, row in payload.get("hints", {}).items()}}
+    def get_identity_indexes(self):
+        return self._payloads.identities()
 
 class DataSnapshotClient:
-    """桌面、Web 与 Overlay 共用的只读 generation 客户端。"""
-
-    def __init__(self, root: str | Path | None = None) -> None:
+    def __init__(self, root=None):
         self.root = Path(root) if root is not None else default_snapshot_root()
-        self._loaded: tuple[str, DataSnapshotManifest, dict[str, Any], bool, str] | None = None
-
-    def _pointer(self) -> Mapping[str, Any]:
-        payload = _read_json(self.root / "current.v2.json")
+        # Keep only this client's last two proven releases. Recognition's independently
+        # moving head is deliberately not part of the statistics query cache.
+        self._query_cache = OrderedDict()
+        self._query_lock = threading.RLock()
+    def _pointer(self):
+        return read_head(self.root)
+    def _load_generation(self, generation_id):
+        from hextech.contracts.data_validation import require_identifier
+        require_identifier(generation_id, field_name="generation_id")
+        with self._query_lock:
+            path = checked_file(self.root, f"generations/{generation_id}/manifest.json")
+            try:
+                raw = path.read_bytes()
+                key = (self.root.resolve(strict=True), generation_id, hashlib.sha256(raw).digest())
+                cached = self._query_cache.get(key)
+                if cached is None:
+                    manifest = ReleaseManifest.from_mapping(json.loads(raw))
+                    if manifest.generation_id != generation_id:
+                        raise ValueError("release directory identity mismatch")
+                    if fingerprint(manifest.source_files, manifest.components, manifest.source_status,
+                                   manifest.health, manifest.degraded_sources) != manifest.content_fingerprint:
+                        raise ValueError("release content fingerprint mismatch")
+                    from .query import ReleaseQuery
+                    cached = ReleaseQuery(self.root.parent.absolute(), manifest)
+                    # A changed manifest for the same generation is a new proof, not
+                    # permission to reuse any of the old query's projections.
+                    for old in tuple(self._query_cache):
+                        if old[:2] == key[:2]:
+                            del self._query_cache[old]
+                    self._query_cache[key] = cached
+                    while len(self._query_cache) > 2:
+                        self._query_cache.popitem(last=False)
+                self._query_cache.move_to_end(key)
+                # Frozen dataclasses still contain mutable mappings. Public views
+                # must never expose the manifest that owns the cached query.
+                # Provenance is a tuple of frozen scalar-only DTOs; reuse it
+                # while copying every mutable mapping (including status.coverage).
+                manifest = cached.manifest
+                return deepcopy(manifest, {id(manifest.source_files): manifest.source_files}), cached
+            except (KeyError, TypeError, ValueError, OSError) as exc:
+                raise SnapshotValidationError(str(exc)) from exc
+    def _load(self):
+        head = self._pointer()
         try:
-            if not isinstance(payload, Mapping):
-                raise DataContractError("current pointer 必须是对象")
-            return DataSnapshotCurrentPointerV2.from_mapping(payload).to_dict()
-        except DataContractError as exc:
-            raise SnapshotValidationError(f"current.v2.json 指针无效：{exc}") from exc
-
-    def _previous_generation_id(self) -> str:
-        path = self.root / "previous.v2.json"
-        if not path.is_file():
-            return ""
-        payload = _read_json(path)
-        try:
-            if not isinstance(payload, Mapping):
-                raise DataContractError("previous pointer 必须是对象")
-            return DataSnapshotPreviousPointerV2.from_mapping(payload).generation_id
-        except DataContractError as exc:
-            raise SnapshotValidationError(f"previous.v2.json 指针无效：{exc}") from exc
-
-    def _load_generation(self, generation_id: str) -> tuple[DataSnapshotManifest, dict[str, Any]]:
-        if not _GENERATION_ID_RE.fullmatch(generation_id):
-            raise SnapshotValidationError("generation_id 格式无效")
-        directory = self.root / "generations" / generation_id
-        try:
-            manifest = DataSnapshotManifest.from_mapping(_read_json(directory / "manifest.json"))
-        except DataContractError as exc:
-            raise SnapshotValidationError(f"generation manifest 结构无效：{exc}") from exc
-        payloads: dict[str, Any] = {}
-        for item in manifest.files:
-            payloads[item.role] = _read_json(safe_generation_file(directory, item.relative_path))
-        validate_generation_directory(directory, manifest, payloads=payloads)
-        return manifest, payloads
-
-    def _load(self) -> tuple[DataSnapshotManifest, dict[str, Any], bool, str]:
-        pointer = self._pointer()
-        current_id = str(pointer.get("current_generation_id") or "")
-        previous_id = self._previous_generation_id()
-        if self._loaded is not None and self._loaded[0] == current_id:
-            return self._loaded[1:]
-        try:
-            manifest, payloads = self._load_generation(current_id)
-            result = (manifest, payloads, False, "")
-        except SnapshotValidationError:
-            if not previous_id:
+            return (*self._load_generation(head["current_generation_id"]), False, "")
+        except (ValueError, OSError):
+            if not head["previous_generation_id"]:
                 raise
-            manifest, payloads = self._load_generation(previous_id)
-            result = (manifest, payloads, True, current_id)
-        self._loaded = (current_id, *result)
-        return result
-
-    def status(self, now: datetime | None = None) -> dict[str, Any]:
+            return (*self._load_generation(head["previous_generation_id"]), True, head["current_generation_id"])
+    def open_view(self):
+        manifest, payloads, degraded, failed = self._load()
+        return DataSnapshotView(manifest, payloads, degraded, failed, self.root.parent)
+    def open_generation(self, generation_id):
+        manifest, payloads = self._load_generation(str(generation_id))
+        return DataSnapshotView(manifest, payloads, _runtime_root=self.root.parent)
+    def status(self, now=None):
         try:
             return self.open_view().status(now=now)
-        except SnapshotValidationError as exc:
-            return {"state": "unavailable", "generation_id": "", "reason": str(exc)}
-
-    def open_view(self) -> DataSnapshotView:
-        """固定并返回一代数据，供单次响应内完成全部查询。"""
-
-        manifest, payloads, degraded, failed_id = self._load()
-        runtime_root = self.root.parent if self.root.name == "snapshots" else None
-        return DataSnapshotView(manifest, payloads, degraded, failed_id, runtime_root)
-
-    def open_generation(self, generation_id: str) -> DataSnapshotView:
-        """按 ID 固定打开 immutable generation；不存在或损坏时明确失败。"""
-
-        manifest, payloads = self._load_generation(str(generation_id or ""))
-        runtime_root = self.root.parent if self.root.name == "snapshots" else None
-        return DataSnapshotView(manifest, payloads, _runtime_root=runtime_root)
-
-    def load_manifest(self) -> DataSnapshotManifest:
-        return self._load()[0]
-
-    def get_champions(self) -> list[dict[str, Any]]:
-        return self.open_view().get_champions()
-
-    def get_champion(self, champion_id_or_name: object) -> dict[str, Any] | None:
-        return self.open_view().get_champion(champion_id_or_name)
-
-    def get_champion_detail(self, champion_id_or_name: object) -> dict[str, Any] | None:
-        """返回当前 generation 中单英雄的完整 Web/Overlay 详情副本。"""
-
-        return self.open_view().get_champion_detail(champion_id_or_name)
-
-    def get_champion_augments(self, champion_id_or_name: object) -> list[dict[str, Any]]:
-        return self.open_view().get_champion_augments(champion_id_or_name)
-
-    def get_synergy_data(self) -> dict[str, Any]:
-        """返回当前 generation 内随英雄详情一起发布的联动数据。"""
-
-        return self.open_view().get_synergy_data()
-
-    def get_combo_stats(self, champion_id_or_name: object, augment_id: object) -> dict[str, Any] | None:
-        return self.open_view().get_combo_stats(champion_id_or_name, augment_id)
-
-    def resolve_augment(self, value: object) -> dict[str, Any] | None:
-        return self.open_view().resolve_augment(value)
-
-    def get_overlay_hints(self) -> dict[str, Any]:
-        return self.open_view().get_overlay_hints()
-
-    def get_identity_indexes(self) -> dict[str, Any]:
-        return self.open_view().get_identity_indexes()
+        except (OSError, ValueError) as exc:
+            reason = "migration_required" if (self.root / "current.v2.json").exists() else str(exc)
+            return {"state": "unavailable", "generation_id": "", "reason": reason}
+    def load_manifest(self):
+        return self.open_view().manifest
+    def get_champions(self, *args, **kwargs):
+        return self.open_view().get_champions(*args, **kwargs)
+    def get_champion(self, *args, **kwargs):
+        return self.open_view().get_champion(*args, **kwargs)
+    def get_champion_detail(self, *args, **kwargs):
+        return self.open_view().get_champion_detail(*args, **kwargs)
+    def get_champion_augments(self, *args, **kwargs):
+        return self.open_view().get_champion_augments(*args, **kwargs)
+    def get_synergy_data(self, *args, **kwargs):
+        return self.open_view().get_synergy_data(*args, **kwargs)
+    def get_combo_stats(self, *args, **kwargs):
+        return self.open_view().get_combo_stats(*args, **kwargs)
+    def resolve_augment(self, *args, **kwargs):
+        return self.open_view().resolve_augment(*args, **kwargs)
+    def get_overlay_hints(self, *args, **kwargs):
+        return self.open_view().get_overlay_hints(*args, **kwargs)
+    def get_identity_indexes(self, *args, **kwargs):
+        return self.open_view().get_identity_indexes(*args, **kwargs)

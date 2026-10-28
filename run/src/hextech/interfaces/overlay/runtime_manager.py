@@ -42,10 +42,10 @@ class _OverlayStartCancelled(RuntimeError):
 
 
 class OverlayRuntimeManager(VisionHandoffMixin):
-    """Supervisor 持有的游戏内显示运行态。
+    """App owner 持有的游戏内显示运行态。
 
     这里刻意只做生命周期编排和状态汇总：host、Vision sidecar、context poller
-    与模板 runtime cache 的 owner 都收敛到 Runtime Supervisor。桌面 UI 只提交
+    与模板 runtime cache 的 owner 都收敛到 App runtime owner。桌面 UI 只提交
     desired state，不再直接启动这些进程。
     """
 

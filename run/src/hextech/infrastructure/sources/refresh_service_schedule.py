@@ -9,13 +9,13 @@ from pathlib import Path
 import time
 from typing import Any, Mapping
 
-from hextech.contracts import RefreshSourceState, utc_now_iso
-from hextech.infrastructure.persistence.cohort_validation_receipt import write_validation_receipt
+from hextech.contracts import RefreshSourceState, SourceRunManifestV2, utc_now_iso
 from hextech.modules.data.freshness import parse_refresh_time
 from hextech.modules.data.generation import DataSnapshotClient
 from hextech.modules.data.catalog.versioned import sha256_file
 
 from .refresh_policy import checked_source_state
+from .refresh_service_lifecycle import read_object
 from hextech.infrastructure.observability.refresh_attempts import record_refresh_attempt
 
 
@@ -26,6 +26,8 @@ _CHECK_EVIDENCE_FIELDS = (
     "applied_revision",
     "retry_after_seconds",
     "failure_fingerprint",
+    "failure_kind",
+    "failure_stage",
     "not_modified",
     "from_cache",
 )
@@ -48,6 +50,23 @@ def _manifest_metadata(root: Path, pointer: Mapping[str, Any], source: str) -> d
 
 class RefreshScheduleMixin:
     """Mixin intentionally depends only on the coordinator's stable attributes."""
+
+    def _ranking_data_at(self) -> str:
+        """Source age is upstream age, never the local unit publication time."""
+        path = self.root / "sources/aramkit/runs" / str(self._ranking.get("run_id") or "") / "manifest.json"
+        try:
+            if sha256_file(path) != self._ranking.get("manifest_sha256"):
+                return ""
+            manifest = SourceRunManifestV2.from_mapping(read_object(path))
+            version = manifest.metadata.get("version", {})
+            stamp = version.get("buildTimeUnixMs") if isinstance(version, Mapping) else None
+            if stamp is not None and not isinstance(stamp, bool) and float(stamp) > 0:
+                return datetime.fromtimestamp(float(stamp) / 1000, timezone.utc).isoformat()
+            value = manifest.metadata.get("data_at")
+            parsed = parse_refresh_time(str(value or ""))
+            return parsed.astimezone(timezone.utc).isoformat() if parsed else ""
+        except (OSError, ValueError, TypeError, OverflowError):
+            return ""
 
     def _record_skipped_checks(self, result: Mapping[str, Any]) -> None:
         with self._lock:
@@ -150,6 +169,26 @@ class RefreshScheduleMixin:
                 applied_revision=applied,
                 capability_pending=(source == "catalog" and bool(self._catalog_capability_pending)),
             )
+            if source == "catalog":
+                sources[source] = replace(sources[source], dependency_recheck_requested=False)
+            diagnostics = evidence.get("diagnostics")
+            diagnostics = diagnostics if isinstance(diagnostics, Mapping) else {}
+            if error:
+                sources[source] = replace(sources[source],
+                    failure_catalog_generation_id=str(diagnostics.get("catalog_generation_id") or old.failure_catalog_generation_id),
+                    failure_catalog_sha256=str(diagnostics.get("catalog_sha256") or old.failure_catalog_sha256),
+                    failure_reason_code=str(diagnostics.get("reason_code") or old.failure_reason_code))
+                if source == "aramkit" and error == "validation" and diagnostics.get("reason_code") == "catalog_binding_failed":
+                    key = str(evidence.get("failure_fingerprint") or "")
+                    if key and key != old.recheck_fingerprint:
+                        catalog_state = sources["catalog"]
+                        next_due = catalog_state.next_due_at if self._backoff_pending("catalog") else datetime.now(timezone.utc).isoformat()
+                        sources["catalog"] = replace(catalog_state, dependency_recheck_requested=True, next_due_at=next_due)
+                        sources[source] = replace(sources[source], recheck_fingerprint=key)
+            else:
+                sources[source] = replace(sources[source], failure_catalog_generation_id="", failure_catalog_sha256="", failure_reason_code="")
+                if source == "catalog":
+                    sources[source] = replace(sources[source], dependency_recheck_requested=False)
             now = datetime.now(timezone.utc)
             self.schedule_store.save(
                 replace(
@@ -159,11 +198,6 @@ class RefreshScheduleMixin:
                     sources=sources,
                 )
             )
-            if (
-                self._last_candidate is not None
-                and self._last_candidate.generation_id == self.publisher.current_generation_id()
-            ):
-                write_validation_receipt(self.root, self._last_candidate)
             record_refresh_attempt(self.root, source=source, checked_at=now.isoformat(),
                                    error=error, result=evidence,
                                    generation_id=self.publisher.current_generation_id())

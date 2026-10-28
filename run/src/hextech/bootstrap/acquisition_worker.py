@@ -28,25 +28,6 @@ class SourceRefreshFailed(RuntimeError):
         super().__init__(f"{source} 未生成 candidate pointer：reason={reason}")
 
 
-def _hextech_worker_result(result: Mapping[str, Any] | bool, pointer_output: Path) -> dict[str, Any]:
-    if pointer_output.is_file():
-        return {"state": "ready", "success": bool(result)}
-
-    from hextech.infrastructure.sources.hextech.refresh_support import load_scraper_status
-
-    status = load_scraper_status()
-    last_result = str(status.get("last_result") or "failed")
-    return {
-        "state": last_result if last_result in {"fallback", "failed"} else "failed",
-        "success": False,
-        "reason_code": str(status.get("reason") or "candidate_pointer_missing"),
-        "failure_stage": str(status.get("failure_stage") or ""),
-        "fallback_used": bool(status.get("fallback_used")),
-        "last_good_available": bool(status.get("active_csv")),
-        "diagnostics": dict(status.get("failure_diagnostics") or {}),
-    }
-
-
 def _missing_pointer_payload(source_result: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "source_result": dict(source_result),
@@ -90,13 +71,17 @@ def _unexpected_failure_payload(
                 "native_path_limit": 259,
             },
         }
+    from hextech.infrastructure.sources.refresh_policy import exception_source_result
+    source_result = exception_source_result(exc)
     return {
-        "reason_code": "worker_exception",
-        "failure_stage": failure_stage,
+        "reason_code": str(getattr(exc, "reason", "") or "worker_exception"),
+        "failure_stage": str(source_result.get("failure_stage") or failure_stage),
+        "source_result": source_result,
         "fallback_used": False,
         "last_good_available": False,
         "diagnostics": {"error_type": exc.__class__.__name__},
     }
+
 
 
 def run_import_self_check() -> dict[str, Any]:
@@ -106,16 +91,19 @@ def run_import_self_check() -> dict[str, Any]:
     for module_name in (
         "curl_cffi._wrapper",
         "hextech.infrastructure.sources.aramkit.service",
-        "hextech.infrastructure.sources.blitz.service",
+        "hextech.infrastructure.sources.catalog_versioned",
     ):
         importlib.import_module(module_name)
         checks[module_name] = "ready"
     from hextech.modules.session.build_identity import current_build_id
+    from hextech.modules.data.ports.paths import get_var_dir, RUNTIME_PROFILE
 
     return {
         "schema_version": 1,
         "state": "ready",
         "build_id": current_build_id(),
+        "runtime_root": str(get_var_dir().resolve()),
+        "runtime_profile": RUNTIME_PROFILE,
         "checks": checks,
     }
 
@@ -129,14 +117,20 @@ def _reuse_current_when_not_stale(source: str, result: Mapping[str, Any], pointe
     from hextech.modules.data.ports.paths import get_var_dir
 
     root = get_var_dir()
-    current = (
-        root / "catalog" / "current.v2.json"
-        if source == "catalog"
-        else root / "sources" / source / "current.v2.json"
-    )
-    if not current.is_file():
-        return False
-    pointer = _load_pointer(current, source)
+    if source == "catalog":
+        from hextech.modules.data.catalog.versioned import load_runtime_catalog_from_pointer
+        try:
+            head=json.loads((root/"snapshots/current.v4.json").read_text(encoding="utf-8"))
+            pointer=head.get("recognition_catalog")
+        except (OSError, ValueError):
+            return False
+        if not isinstance(pointer, Mapping) or load_runtime_catalog_from_pointer(pointer, runtime_root=root) is None:
+            return False
+    else:
+        from hextech.modules.data.source_runs import load_source_current
+        pointer=load_source_current(source,verify_hash=True)
+        if not pointer:
+            return False
     atomic_write_json(pointer_output, pointer, ensure_ascii=False, indent=2)
     return True
 
@@ -228,23 +222,6 @@ def run_worker(
             catalog_binding=binding,
             **incremental_options,
         )
-    elif source == "blitz":
-        from hextech.infrastructure.sources.blitz.service import (
-            CatalogBinding as BlitzCatalogBinding,
-            refresh_blitz,
-        )
-
-        result = refresh_blitz(
-            force=force,
-            promote_current=False,
-            pointer_output=pointer_output,
-            stop_event=stop_event,
-            catalog_binding=BlitzCatalogBinding.active(
-                compatibility_pointer=catalog_compatibility_pointer
-            ),
-            coverage_policy=coverage_policy,
-            **check_options,
-        )
     elif source == "apex":
         from hextech.infrastructure.sources.apex.service import main as refresh_apex
 
@@ -307,7 +284,7 @@ def run_worker(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Hextech isolated acquisition worker")
-    parser.add_argument("--source", choices=("catalog", "aramkit", "blitz", "apex", "mayhem"))
+    parser.add_argument("--source", choices=("catalog", "aramkit", "apex", "mayhem"))
     parser.add_argument("--pointer-output", type=Path)
     parser.add_argument("--result-output", type=Path, required=True)
     parser.add_argument("--cancel-file", type=Path)

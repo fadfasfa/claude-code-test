@@ -200,43 +200,37 @@ def get_unified_log_file() -> str:
     return get_runtime_summary_log_file()
 
 
-def _packaged_runtime_base_dir() -> Path:
-    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
-    if local_app_data:
-        return Path(local_app_data) / "HextechNexus"
-    app_data = os.getenv("APPDATA", "").strip()
-    if app_data:
-        return Path(app_data) / "HextechNexus"
-    return Path.home() / ".hextech_nexus"
-
-
 def _runtime_root_dir() -> Path:
-    try:
-        from hextech.modules.data.ports.paths import get_var_dir
+    from hextech.modules.data.ports.paths import get_var_dir
 
-        return get_var_dir()
-    except Exception:
-        if getattr(sys, "frozen", False):
-            return _packaged_runtime_base_dir() / "var"
-        return Path(__file__).resolve().parents[4] / "var"
+    return get_var_dir()
 
 
-def _runtime_log_dir() -> Path:
-    log_dir = _runtime_root_dir() / "logs"
+def _runtime_path(root: Path, *parts: str) -> Path:
+    candidate = root.joinpath(*parts).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError(f"日志运行态路径越界：{'/'.join(parts)}")
+    return candidate
+
+
+def _runtime_log_dir(root: Path | None = None) -> Path:
+    root = _runtime_root_dir().resolve() if root is None else root
+    log_dir = _runtime_path(root, "logs")
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
 
 
 def get_runtime_log_paths() -> dict[str, Path]:
-    log_dir = _runtime_log_dir()
+    root = _runtime_root_dir().resolve()
+    log_dir = _runtime_log_dir(root)
     return {
-        "root": _runtime_root_dir(),
+        "root": root,
         "logs": log_dir,
-        "summary": log_dir / "hextech_runtime_summary.log",
-        "error": log_dir / "hextech_error.log",
-        "full": log_dir / "dev" / "hextech_full.jsonl",
-        "events": _runtime_root_dir() / "state" / "runtime_events.v1.jsonl",
-        "supervisor_events": _runtime_root_dir() / "state" / "supervisor_events.v1.jsonl",
+        "summary": _runtime_path(root, "logs", "hextech_runtime_summary.log"),
+        "error": _runtime_path(root, "logs", "hextech_error.log"),
+        "full": _runtime_path(root, "logs", "dev", "hextech_full.jsonl"),
+        "events": _runtime_path(root, "state", "runtime_events.v1.jsonl"),
+        "supervisor_events": _runtime_path(root, "state", "supervisor_events.v1.jsonl"),
     }
 
 

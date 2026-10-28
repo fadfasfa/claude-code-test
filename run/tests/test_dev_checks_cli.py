@@ -33,7 +33,6 @@ def test_manual_modes_live_in_dedicated_module_and_health_wrapper_keeps_patch_su
     assert dev_checks.build_hextech_scrape_health_summary() == {"healthy": True}
     assert calls == [(sentinel_store, evidence_dir)]
     assert callable(dev_check_manual.check_bundle_manifest)
-    assert callable(dev_check_manual.run_manual_web_synergy)
 
 
 @pytest.mark.parametrize(
@@ -101,12 +100,8 @@ def test_bundle_manifest_mode_returns_failure_when_validation_fails(monkeypatch,
     assert "manifest contract failed" in capsys.readouterr().err
 
 
-def test_manual_web_synergy_mode_does_not_invoke_pytest(monkeypatch) -> None:
-    monkeypatch.setattr(dev_checks, "run_manual_web_synergy", lambda _args: {"passed": True})
-    monkeypatch.setattr(
-        dev_checks.subprocess,
-        "run",
-        lambda *_args, **_kwargs: pytest.fail("manual web mode must not invoke pytest"),
-    )
 
-    assert dev_checks.main(["--manual-web-synergy"]) == 0
+
+def test_removed_manual_web_mode_is_rejected():
+    with pytest.raises(SystemExit):
+        dev_checks.build_parser().parse_args(["--manual-web-synergy"])

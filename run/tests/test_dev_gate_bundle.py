@@ -2,20 +2,15 @@
 
 import pytest
 
-from tests._dev_gate_support import (
-    Path,
-    RUN_DIR,
-    TemporaryDirectory,
-    get_runtime_log_paths,
-    install_runtime_logging,
-    install_summary_logging,
-    io,
-    json,
-    logging,
-    mkstemp,
-    os,
-    patch,
-)
+import io
+import json
+import logging
+import os
+from pathlib import Path
+from tempfile import TemporaryDirectory, mkstemp
+from unittest.mock import patch
+from hextech.infrastructure.observability.logging import get_runtime_log_paths, install_runtime_logging, install_summary_logging
+RUN_DIR = Path(__file__).resolve().parents[1]
 
 pytestmark = pytest.mark.dev_gate
 
@@ -167,9 +162,12 @@ def test_packaging_config() -> None:
     for legacy_module in ("display", "processing", "scraping", "crawler", "game_overlay"):
         assert f'"{legacy_module}"' not in build_script
 
-def test_bundle_manifest() -> None:
+def test_bundle_manifest(tmp_path, monkeypatch) -> None:
     from tooling.checks import manual as dev_check_manual
 
+    from tests.test_bundle_manifest import _package_fixture
+    base, _runtime, _manifest = _package_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(dev_check_manual, "RUN_DIR", base)
     manifest = dev_check_manual.validate_bundle_manifest_contract()
     assert manifest["seed_files"]
     assert manifest["seed_health"]["valid"] is True
@@ -178,15 +176,14 @@ def test_packaged_smoke_uses_explicit_feature_flags() -> None:
     """验证空仓烟测不依赖桌面 UI 默认开关状态。"""
 
     smoke_text = (RUN_DIR / "tooling" / "acceptance" / "smoke_packaged_startup.py").read_text(encoding="utf-8")
-    assert '"web_frontend_enabled": False' in smoke_text
     assert '"game_overlay_enabled": True' in smoke_text
     assert '"private_policy_stats_enabled": True' in smoke_text
-    assert '"auto_open_browser": False' in smoke_text
     assert "_write_smoke_feature_flags(runtime_root)" in smoke_text
     assert "OVERLAY_ANCHOR_CALIBRATION_FILENAME" in smoke_text
-    assert "package:resources/seeds/current.v2.json" in smoke_text
+    assert "package:resources/seeds/runtime.v4/snapshots/current.v4.json" in smoke_text
     assert "FORBIDDEN_PACKAGE_PATHS" in smoke_text
-    assert 'child_env["LOCALAPPDATA"]' in smoke_text
+    assert 'env["LOCALAPPDATA"]' in smoke_text
+    assert "_smoke_runtime_environment(package_dir, fixture, bundle_manifest)" in smoke_text
     assert "runtime:data absent" in smoke_text
     assert "_overlay_chain_status" in smoke_text
     assert "_wait_for_overlay_heartbeats" in smoke_text
@@ -203,24 +200,6 @@ def test_packaged_smoke_uses_explicit_feature_flags() -> None:
         assert forbidden_rel in smoke_text
     assert "_internal" in smoke_text
     assert "overlay_anchor_calibration.v1.json" in smoke_text
-
-def test_packaged_smoke_extracts_representative_champion_id_variants() -> None:
-    """验证打包烟测代表英雄提取兼容 Web API 的真实字段名。"""
-
-    import tooling.acceptance.smoke_packaged_startup as smoke_packaged_startup
-
-    champion_name, champion_id = smoke_packaged_startup._extract_representative_champion(
-        [{"英雄名称": "德玛西亚之力", "英雄 ID": "86", "英文名": "Garen"}]
-    )
-
-    assert champion_name == "德玛西亚之力"
-    assert champion_id == "86"
-
-    legacy_name, legacy_id = smoke_packaged_startup._extract_representative_champion(
-        [{"hero_name": "Garen", "hero_id": "86"}]
-    )
-    assert legacy_name == "Garen"
-    assert legacy_id == "86"
 
 def test_atomic_json_write_retries_transient_replace_conflict() -> None:
     """验证 Windows 下瞬时 replace 冲突不会让 startup_status 类 JSON 写入失败。"""

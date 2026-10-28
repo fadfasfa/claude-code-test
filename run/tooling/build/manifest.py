@@ -12,7 +12,6 @@ from tooling.build.rules import (
     BUNDLE_MANIFEST_NAME,
     FORBIDDEN_BUNDLE_PATH_PARTS,
     SEED_DIR,
-    iter_seed_files,
     iter_source_files,
 )
 from tooling.build.resource_manifest import validate_resource_manifest
@@ -75,25 +74,12 @@ def validate_snapshot_seed(snapshot_root: Path) -> dict[str, Any]:
     root = snapshot_root.resolve()
     view = DataSnapshotClient(root).open_view()
     status = view.status()
-    source_status = status.get("source_status") if isinstance(status.get("source_status"), dict) else {}
-    aramkit = source_status.get("aramkit") if isinstance(source_status.get("aramkit"), dict) else {}
-    degraded_sources = set(status.get("degraded_sources") or [])
-    optional_degraded = bool(
-        status.get("state") == "degraded"
-        and str(aramkit.get("freshness") or "") == "fresh"
-        and str(aramkit.get("data_status") or "") == "fresh"
-        and degraded_sources
-        and degraded_sources.issubset({"blitz", "apex", "mayhem"})
-    )
-    if view.manifest.schema_version == 3:
-        # A v3 seed is judged by its verified unit closure, not an optional
-        # source's availability or the age of otherwise valid statistics.
-        from hextech.infrastructure.persistence.cohort_recovery import validate_generation_cohort
-        if view.degraded or status.get("failed_generation_id"):
-            raise ValueError("v3 seed current is damaged; fallback cannot certify the requested generation")
-        validate_generation_cohort(root.parent, view.manifest.generation_id)
-        optional_degraded = status.get("state") == "degraded"
-    if status.get("state") != "ready" and not optional_degraded:
+    if view.manifest.schema_version != 4 or view.degraded or status.get("failed_generation_id"):
+        raise ValueError("seed requires intact v4 release; migrate v3 offline")
+    from hextech.modules.data.generation.release_store import closure
+    closure(root.parent, view.manifest)
+    optional_degraded = status.get("state") == "degraded"
+    if status.get("state") not in {"ready", "degraded"}:
         raise ValueError(f"seed generation invalid: {status.get('reason', 'unknown')}")
     manifest = view.manifest
     return {
@@ -122,6 +108,8 @@ def validate_bundle_manifest(manifest: dict) -> None:
             missing.append(field)
     if manifest.get("runtime_contracts") != RUNTIME_CONTRACT_VERSIONS:
         missing.append("runtime_contracts")
+    if manifest.get("runtime_profile") not in {"installed", "isolated_candidate"}:
+        missing.append("runtime_profile")
     if "ocr_resources" in manifest and not isinstance(manifest.get("ocr_resources"), list):
         missing.append("ocr_resources")
     if missing:
@@ -157,21 +145,20 @@ def _source_content_fingerprint(base_dir: Path, source_files: list[str]) -> str:
     return digest.hexdigest()
 
 
-def build_bundle_manifest(base_dir: Path, *, verified_snapshot_root: Path | None = None) -> dict:
+def build_bundle_manifest(base_dir: Path, *, verified_snapshot_root: Path | None = None,
+                          runtime_profile: str = "installed") -> dict:
+    if runtime_profile not in {"installed", "isolated_candidate"}:
+        raise ValueError("invalid runtime_profile")
     resource_report = validate_resource_manifest(base_dir)
     packaged_resources = set(resource_report["packaged_files"])
-    seed_root = (verified_snapshot_root or (base_dir / SEED_DIR)).resolve()
-    seed_sources = iter_seed_files(seed_root)
-    seed_files = [(SEED_DIR / path.relative_to(seed_root)).as_posix() for path in seed_sources]
-    if verified_snapshot_root is None:
-        missing_seed_whitelist = sorted(set(seed_files) - packaged_resources)
-        if missing_seed_whitelist:
-            raise ValueError("v2 seed 未列入 resources manifest：" + ", ".join(missing_seed_whitelist[:5]))
+    seed_root = (verified_snapshot_root or (base_dir / SEED_DIR / "runtime.v4" / "snapshots")).resolve()
+    cohort_seed = collect_cohort_seed(seed_root)
+    seed_sources = list(cohort_seed.files)
+    seed_files = [cohort_seed.bundled_name(path) for path in seed_sources]
     source_files = iter_source_files(base_dir)
     built_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     source_fingerprint = _source_content_fingerprint(base_dir, source_files)
     build_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + source_fingerprint[:12]
-    cohort_seed = collect_cohort_seed(seed_root) if verified_snapshot_root is not None else None
     cohort_seed_files = (
         [cohort_seed.bundled_name(path) for path in cohort_seed.files]
         if cohort_seed is not None
@@ -186,6 +173,7 @@ def build_bundle_manifest(base_dir: Path, *, verified_snapshot_root: Path | None
         "source_revision": _source_revision(base_dir),
         "source_fingerprint": source_fingerprint,
         "runtime_contracts": dict(RUNTIME_CONTRACT_VERSIONS),
+        "runtime_profile": runtime_profile,
         "catalog_files": sorted(path for path in packaged_resources if path.startswith("resources/catalog/")),
         "asset_files": sorted(
             path.removeprefix("resources/assets/")

@@ -22,40 +22,24 @@
 
 from __future__ import annotations
 
-import base64
 import ctypes
-import json
 import logging
 import os
-import queue
-import re
-import subprocess
-import sys
 import tempfile
-import threading
 import time
-import webbrowser
-import warnings
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-from urllib.parse import quote, urlparse
+from typing import TYPE_CHECKING
 
-import psutil
 import pywintypes
-import requests
-import urllib3
 import win32gui
 from PIL import Image, ImageDraw, ImageTk
 
-from hextech.modules.game_context.client import ClientContextProvider, parse_client_context
-from hextech.interfaces.overlay import context as overlay_context
 from hextech.interfaces.overlay.gameflow import probe_lcu_gameflow_in_progress, probe_live_client_in_progress
 from hextech.modules.vision.client_window import resolve_lol_client_window
-from hextech.modules.vision.window import find_lol_game_window, is_window_renderable, window_display_context
-from hextech.modules.data.ports.paths import BASE_DIR, CHAMPION_ASSET_DIR, var_path
+from hextech.modules.vision.window import find_lol_game_window, window_display_context
+from hextech.modules.data.ports.paths import CHAMPION_ASSET_DIR, var_path
 from hextech.modules.vision.image_validation import is_valid_png_bytes
 
 if TYPE_CHECKING:
@@ -63,22 +47,16 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-_preload_status_executor: ThreadPoolExecutor | None = None
 GAMEFLOW_VISIBILITY_POLL_SECONDS = 1.0
 LCU_LOCAL_REQUEST_TIMEOUT_SECONDS = 1.0
 
 
 
-# ruff: noqa: E402, F401, F403, F405
-from hextech.interfaces.desktop.runtime_processes import (
-    resolve_client_overlay_policy,
-)
-from hextech.interfaces.desktop.runtime_services import _web_frontend_available
+# ruff: noqa: E402
 from hextech.interfaces.desktop.runtime_interaction import (
-    _drain_preload_pending,
     _fallback_live_state,
-    _fetch_web_live_state,
-    _sync_candidate_ids,
+    normalize_candidate_groups,
+    _preserve_recent_selection_roles,
 )
 
 def lcu_polling_loop(ui: "HextechUI") -> None:
@@ -106,20 +84,21 @@ def lcu_polling_loop(ui: "HextechUI") -> None:
 
 
 def candidate_update_loop(ui: "HextechUI") -> None:
-    """列表/预热独立串行消费最新候选；HTTP与统计准备不能阻塞轻量阶段轮询。"""
+    """One worker prepares display DTOs; superseded work never enters the Tk callback queue."""
     controller = ui._desktop_window_presentation
     while not ui.stop_event.is_set():
-        groups = controller.take_candidates()
-        if groups is None or ui.stop_event.is_set():
+        request = controller.take_candidate_request()
+        if request is None or ui.stop_event.is_set():
             continue
         try:
-            _sync_candidate_ids(ui, groups, source="lcu", payload=None)
+            groups = _preserve_recent_selection_roles(ui, normalize_candidate_groups(request.groups))
+            display = ui._prepare_candidate_display(request, groups)
             if not ui.stop_event.is_set():
-                _drain_preload_pending(ui)
+                controller.publish_candidate_display(display)
         except Exception:
             logger.exception("备战席列表更新失败，下一候选继续重试。")
-        # 保留既有列表/预热的1.5s负载预算；只有轻量阶段加速到250ms，避免重复预热积压。
-        ui.stop_event.wait(1.5)
+            controller.retry_candidates(request)
+            ui.stop_event.wait(.25)
 
 
 def _apply_rounded_corner(img: "Image.Image", radius: int = 8) -> "Image.Image":
@@ -237,6 +216,28 @@ def _client_display_context(hwnd: int) -> dict[str, object]:
     return result
 
 
+def read_avatar_image(champ_id, avatar_px, session=None):
+    """Worker-only image IO. Inputs and result never contain Tk/UI objects."""
+    filename = f"{champ_id}.png"
+    cache_path = var_path("cache", "assets", "champions", filename)
+    seed_path = Path(CHAMPION_ASSET_DIR) / filename
+    readable_path = next((path for path in (cache_path, seed_path) if path.is_file()), None)
+    if readable_path is not None:
+        with Image.open(readable_path) as raw_img:
+            img = raw_img.resize((avatar_px, avatar_px), Image.Resampling.LANCZOS)
+    else:
+        if session is None:
+            return None
+        url = f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/{champ_id}.png"
+        response = session.get(url, verify=True, timeout=10)
+        if response.status_code != 200:
+            return None
+        _write_champion_icon_cache(os.fspath(cache_path), response.content)
+        with Image.open(BytesIO(response.content)) as raw_img:
+            img = raw_img.resize((avatar_px, avatar_px), Image.Resampling.LANCZOS)
+    return _apply_rounded_corner(img, radius=max(1, round(avatar_px/6))).copy()
+
+
 def load_and_set_img(ui: "HextechUI", champ_id, label, *, request_key=None) -> None:
     """按运行缓存、只读 seed 顺序加载头像；远端结果只写 ``var``。"""
     try:
@@ -256,32 +257,9 @@ def load_and_set_img(ui: "HextechUI", champ_id, label, *, request_key=None) -> N
                 label._hextech_avatar_loaded = True
                 label._hextech_avatar_loaded_key = request_key
 
-        filename = f"{champ_id}.png"
-        cache_path = var_path("cache", "assets", "champions", filename)
-        seed_path = Path(CHAMPION_ASSET_DIR) / filename
-        readable_path = next((path for path in (cache_path, seed_path) if path.is_file()), None)
-        if readable_path is not None:
-            with Image.open(readable_path) as raw_img:
-                img = raw_img.resize((avatar_px, avatar_px), Image.Resampling.LANCZOS)
-        else:
-            if champ_id in ui.downloading_imgs:
-                return
-            ui.downloading_imgs.add(champ_id)
-            url = f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/{champ_id}.png"
-            try:
-                res = ui.session.get(url, verify=True, timeout=10)
-                if res.status_code != 200:
-                    return
-                with ui.img_write_lock:
-                    _write_champion_icon_cache(os.fspath(cache_path), res.content)
-                with Image.open(BytesIO(res.content)) as raw_img:
-                    img = raw_img.resize((avatar_px, avatar_px), Image.Resampling.LANCZOS)
-            finally:
-                ui.downloading_imgs.discard(champ_id)
-
-        # 头像渲染前套圆角遮罩，削弱方框直角的生硬感
-        img = _apply_rounded_corner(img, radius=max(1, round(avatar_px / 6)))
-        safe_img = img.copy()
+        safe_img = read_avatar_image(champ_id, avatar_px, getattr(ui, "session", None))
+        if safe_img is None:
+            return
 
         def _publish_loaded(image_obj=safe_img) -> None:
             if not current_request() or not label.winfo_exists():
@@ -318,6 +296,7 @@ def window_sync_loop(ui: "HextechUI") -> None:
     previous_client_hwnd = 0
     monitors = ()
     last_monitors_at = 0.0
+    previous_probe_started = 0.0
 
     def read_gameflow() -> tuple[bool | None, float]:
         live = probe_live_client_in_progress()
@@ -330,6 +309,9 @@ def window_sync_loop(ui: "HextechUI") -> None:
     try:
         while not ui.stop_event.is_set():
             poll_delay = .1
+            probe_started = time.perf_counter()
+            loop_gap_ms = (probe_started-previous_probe_started)*1000 if previous_probe_started else 0.0
+            previous_probe_started = probe_started
             try:
                 now = time.time()
                 if now - last_monitors_at >= 1.0:
@@ -383,6 +365,9 @@ def window_sync_loop(ui: "HextechUI") -> None:
                     client_active=belongs(client, foreground),
                     overlay_active=belongs(int(getattr(ui, "_desktop_hwnd", 0)), foreground),
                     game_visible=bool(game_hwnd), gameflow_in_progress=flow_active, observed_at=now,
+                    game_window_hwnd=game_hwnd,
+                    probe_elapsed_ms=(time.perf_counter() - probe_started) * 1000.0,
+                    loop_gap_ms=loop_gap_ms, published_at=time.monotonic(),
                     gameflow_known=flow_known, gameflow_observed_at=flow_observed_at,
                     gameflow_client_hwnd=flow_client_hwnd,
                     dpi_scale=float(display.get("dpi_scale") or 0),

@@ -116,10 +116,8 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            (state / "supervisor_events.v1.jsonl").write_text(
-                json.dumps({"event": "refresh.completed", "level": "INFO", "correlation_id": "act-1"}) + "\n",
-                encoding="utf-8",
-            )
+            with (state / "runtime_events.v1.jsonl").open("a", encoding="utf-8") as events:
+                events.write(json.dumps({"event": "refresh.completed", "level": "INFO", "correlation_id": "act-1"}) + "\n")
             (state / "overlay_vision_trace_history.v1.json").write_text(
                 json.dumps(
                     {
@@ -338,6 +336,12 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            report_path = root / "reports/overlay_sessions/latest.json"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            old_event = state / "game_overlay_slots.v1.json"
+            report_path.write_text(json.dumps({"event": json.loads(old_event.read_text(encoding="utf-8"))}), encoding="utf-8")
+            old_event.unlink()
+
             summary = collect_runtime_diagnostics(
                 output_dir=output,
                 runtime_root=root,
@@ -371,10 +375,8 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
             self.assertEqual(validation["hint_cache"]["zero_stats_hint_count"], 1)
             self.assertEqual(validation["render_status"]["status_counts"]["READY"], 1)
             self.assertEqual(validation["render_status"]["context"]["champion_id"], "266")
-            self.assertEqual(summary["state"]["web_frontend"]["status"], "web_disabled_until_user_action")
-            self.assertTrue(
-                any("web_disabled_until_user_action" in item for item in validation["attention_items"])
-            )
+            self.assertNotIn("web_frontend", summary["state"])
+            self.assertFalse(any("web_disabled_until_user_action" in item for item in validation["attention_items"]))
             self.assertIn("quick_customization_scope", validation)
             self.assertTrue(trace["acceptance_observations"]["saw_multiple_hextech_selections"])
             self.assertTrue(trace["acceptance_observations"]["saw_body_shard"])

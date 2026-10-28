@@ -69,16 +69,13 @@ SENSITIVE_FILENAME_RE = re.compile(
     r")\b"
 )
 STATE_TAIL_FILES = {
-    "supervisor_events.v1.jsonl",
     "runtime_events.v1.jsonl",
     "overlay_vision_trace_history.v1.json",
 }
 TRACE_HISTORY_FILE = "overlay_vision_trace_history.v1.json"
 TRACE_CURRENT_FILE = "overlay_vision_trace.v1.json"
-OVERLAY_EVENT_FILE = "game_overlay_slots.v1.json"
 SIDECAR_STATUS_FILE = "game_overlay_sidecar_status.json"
 FEATURE_FLAGS_FILE = "ui_feature_flags.json"
-WEB_PORT_FILE = "web_server_port.txt"
 FOCUS_BLOCK_REASONS = {"game_not_foreground", "game_window_missing"}
 BLOCKING_REASONS = {"blocking_modal_present", "scoreboard_key_down"}
 CONTENT_WAIT_REASONS = {
@@ -307,19 +304,11 @@ def _state_summary(state_dir: Path) -> dict[str, Any]:
     scraper = _read_json(state_dir / "scraper_status.json")
     overlay_trace = _read_json(state_dir / TRACE_CURRENT_FILE)
     context = _read_json(state_dir / "game_overlay_context.v1.json")
-    overlay_event = _read_json(state_dir / OVERLAY_EVENT_FILE)
+    session_report = _read_json(state_dir.parent / "reports/overlay_sessions/latest.json")
+    overlay_event = session_report.get("event", {}) if isinstance(session_report, dict) else {}
     sidecar = _read_json(state_dir / SIDECAR_STATUS_FILE)
     feature_flags = _read_json(state_dir / FEATURE_FLAGS_FILE)
     flags = feature_flags if isinstance(feature_flags, dict) else {}
-    port_path = state_dir / WEB_PORT_FILE
-    web_port = ""
-    try:
-        web_port = port_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        web_port = ""
-    web_status = "running" if web_port else "web_disabled_until_user_action"
-    if flags and bool(flags.get("web_frontend_enabled", False)) and not web_port:
-        web_status = "startup_requested_no_port"
     return {
         "startup_status": startup if isinstance(startup, dict) else {},
         "scraper_status": scraper if isinstance(scraper, dict) else {},
@@ -328,12 +317,6 @@ def _state_summary(state_dir: Path) -> dict[str, Any]:
         "overlay_event": overlay_event if isinstance(overlay_event, dict) else {},
         "sidecar_status": sidecar if isinstance(sidecar, dict) else {},
         "feature_flags": flags,
-        "web_frontend": {
-            "status": web_status,
-            "enabled_intent": bool(flags.get("web_frontend_enabled", False)),
-            "port_file_present": bool(web_port),
-            "port": web_port,
-        },
     }
 
 
@@ -372,7 +355,8 @@ def _hint_cache_diagnostics(cache_dir: Path) -> dict[str, Any]:
 
 
 def _render_status_diagnostics(state_dir: Path, cache_dir: Path) -> dict[str, Any]:
-    event = _read_json(state_dir / OVERLAY_EVENT_FILE)
+    report = _read_json(state_dir.parent / "reports/overlay_sessions/latest.json")
+    event = report.get("event") if isinstance(report, Mapping) else None
     context = _read_json(state_dir / "game_overlay_context.v1.json")
     hint_cache = _read_json(cache_dir / "overlay_hint_cache.v1.json")
     if not isinstance(event, Mapping):
@@ -909,7 +893,6 @@ def _attention_items(
 ) -> list[str]:
     items: list[str] = []
     flags = state.get("feature_flags") if isinstance(state.get("feature_flags"), Mapping) else {}
-    web_frontend = state.get("web_frontend") if isinstance(state.get("web_frontend"), Mapping) else {}
     sidecar = state.get("sidecar_status") if isinstance(state.get("sidecar_status"), Mapping) else {}
     overlay_event = state.get("overlay_event") if isinstance(state.get("overlay_event"), Mapping) else {}
 
@@ -917,10 +900,6 @@ def _attention_items(
         items.append("未发现 overlay_vision_trace_history.v1.json 记录；需要先启动游戏内显示/sidecar 再打一局。")
     if flags and not bool(flags.get("game_overlay_enabled", True)):
         items.append("ui_feature_flags 显示 game_overlay_enabled=false；本局不会产生完整游戏内识别 trace。")
-    if web_frontend.get("status") == "web_disabled_until_user_action":
-        items.append("Web 前端当前为按需启用：web_disabled_until_user_action；点击 Web/详情后才会启动服务。")
-    elif web_frontend.get("status") == "startup_requested_no_port":
-        items.append("ui_feature_flags 显示 web_frontend_enabled=true，但未发现 web_server_port.txt；检查 Web 启动错误。")
     if sidecar and sidecar.get("status") not in {"running", "ready"}:
         items.append(f"Vision sidecar 当前状态不是 running/ready：{sidecar.get('status') or 'unknown'}。")
     if trace_summary.get("game_window_missing_samples") and not trace_summary.get("active_hextech_samples"):
@@ -947,7 +926,7 @@ def _attention_items(
     if refresh_counts.get("refresh.failed") or refresh_counts.get("fallback.activated"):
         items.append("refresh 出现 failed/fallback；海克斯内容缺失可能来自数据刷新链路，而不是 overlay 识别。")
     if int(refresh_actions.get("running_count") or 0) > 0:
-        items.append("存在未完成 refresh action；检查 supervisor_events 里的 correlation_id 是否卡住。")
+        items.append("存在未完成 refresh action；检查 runtime_events 里的 correlation_id 是否卡住。")
     scraper_attempt = refresh_summary.get("scraper_attempt") if isinstance(refresh_summary.get("scraper_attempt"), Mapping) else {}
     if scraper_attempt.get("startup_in_progress_tasks"):
         items.append(
@@ -1109,7 +1088,7 @@ def _game_validation_summary(
             ],
             "cannot_solve_in_one_game": [
                 "不能证明所有英雄和所有海克斯都有统计覆盖；只能证明本局遇到的组合。",
-                "不能补齐源 CSV 缺失的英雄-海克斯统计，只能定位缺口属于源数据还是 context/alias。",
+                "不能补齐来源未提供的英雄-海克斯统计，只能定位缺口属于源数据还是 context/alias。",
                 "不能覆盖所有分辨率和窗口模式，只覆盖本局实际运行环境。",
             ],
         },
@@ -1275,7 +1254,6 @@ def collect_runtime_diagnostics(
     event_paths = [
         path
         for path in (
-            state_dir / "supervisor_events.v1.jsonl",
             state_dir / "runtime_events.v1.jsonl",
             *log_paths,
         )

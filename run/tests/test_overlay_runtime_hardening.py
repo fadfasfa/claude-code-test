@@ -171,7 +171,7 @@ def test_shared_overlay_data_source_delegates_to_canonical_context_reader() -> N
 
 
 def test_desktop_visibility_reader_accepts_v1_and_v2(tmp_path: Path) -> None:
-    from hextech.interfaces.desktop import service_manager
+    from hextech.interfaces.overlay.runtime_manager import OverlayRuntimeManager
 
     status_file = tmp_path / "visibility.json"
     base = {
@@ -181,9 +181,10 @@ def test_desktop_visibility_reader_accepts_v1_and_v2(tmp_path: Path) -> None:
         "context": {},
         "decision": {"window_visible": False, "reason": "game_window_missing"},
     }
-    with patch.object(service_manager, "OVERLAY_HOST_VISIBILITY_FILE", status_file):
+    runtime = OverlayRuntimeManager(visibility_status_file=status_file)
+    if True:
         status_file.write_text(json.dumps({**base, "schema_version": 1}), encoding="utf-8")
-        old = service_manager.ServiceManager._overlay_host_visibility_status()
+        old = runtime._read_visibility_health()
         status_file.write_text(
             json.dumps(
                 {
@@ -197,8 +198,8 @@ def test_desktop_visibility_reader_accepts_v1_and_v2(tmp_path: Path) -> None:
             ),
             encoding="utf-8",
         )
-        new = service_manager.ServiceManager._overlay_host_visibility_status()
+        new = runtime._read_visibility_health()
 
-    assert old["ok"] is True and old["functional_status"] == "ready"
-    assert new["ok"] is True and new["functional_status"] == "degraded"
-    assert new["window"]["probe_status"] == "error"
+    assert old["functional_status"] == "ready"
+    assert new["functional_status"] == "degraded"
+    assert new["functional_reason"] == "window_probe_error"

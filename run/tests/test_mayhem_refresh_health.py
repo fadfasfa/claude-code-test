@@ -546,6 +546,75 @@ def test_mayhem_transport_extracts_retry_after(monkeypatch) -> None:
     assert result["transport"]["retry_after_seconds"] == 43200
 
 
+@pytest.mark.parametrize("error,status,expected", [
+    ("timeout", None, "timeout"), ("connection refused", None, "transient_network"),
+    ("rate_limited", 429, "transient_network"), ("", 200, "transient_network"),
+])
+def test_mayhem_incomplete_fetch_has_explicit_network_evidence(monkeypatch, error, status, expected):
+    from hextech.infrastructure.sources.mayhem import service, source
+    from hextech.infrastructure.sources.refresh_policy import source_failure_kind, checked_source_state
+    from hextech.infrastructure.transport.scrapling_client import ScraplingFetchResult
+    from hextech.contracts import RefreshSourceState
+    monkeypatch.setattr(source, "fetch_text", lambda url, **kw: ScraplingFetchResult(
+        url, "", status, "fixture", error, response_headers={"Retry-After": "1200"}))
+    raw = source.scrape_mayhem_combos()
+    monkeypatch.setattr(service, "load_active_catalog", lambda: SimpleNamespace(
+        generation_id="catalog", content_sha256="a" * 64))
+    monkeypatch.setattr(service, "_current_manifest", lambda: ({}, {}))
+    monkeypatch.setattr(service, "write_mayhem_refresh_status",
+        lambda **kw: {**kw, **dict(kw.get("extra") or {})})
+    result = service.run_mayhem_refresh(force=True, scraper=lambda: raw)
+    assert result["failure_stage"] == "fetch"
+    assert result["failure_kind"] == expected
+    kind = source_failure_kind(result, ValueError(result["reason"]))
+    assert kind == expected
+    state = checked_source_state(RefreshSourceState(), "mayhem", {}, result, error=kind,
+        now=datetime.fromtimestamp(0, timezone.utc), jitter=lambda *args: 1)
+    assert state.next_due_at == datetime.fromtimestamp(1200, timezone.utc).isoformat()
+
+
+def test_fingerprint_is_only_deduplication_evidence():
+    from hextech.infrastructure.sources.refresh_policy import source_failure_kind
+    assert source_failure_kind({"failure_fingerprint": "same-bytes"},
+        RuntimeError("connection refused")) == "transient_network"
+    assert source_failure_kind({"failure_fingerprint": "same-bytes"},
+        RuntimeError("worker stopped unexpectedly")) == "source_runtime"
+
+
+@pytest.mark.parametrize("kind", ["timeout", "transient_network", "io"])
+def test_explicit_failure_kind_wins_with_fingerprint(kind):
+    from hextech.infrastructure.sources.refresh_policy import source_failure_kind
+    assert source_failure_kind({"failure_fingerprint": "same-bytes", "failure_kind": kind},
+        ValueError("invalid upstream result")) == kind
+
+
+@pytest.mark.parametrize("exc,expected", [(TimeoutError("timed out"), "timeout"),
+    (ConnectionError("connection refused"), "transient_network")])
+def test_mayhem_fetch_exception_is_network(monkeypatch, exc, expected):
+    from hextech.infrastructure.sources.mayhem import service
+    monkeypatch.setattr(service, "write_mayhem_refresh_status",
+        lambda **kw: {**kw, **dict(kw.get("extra") or {})})
+    def fetch():
+        raise exc
+    result = service.run_mayhem_refresh(force=True, scraper=fetch)
+    assert result["failure_stage"] == "fetch"
+    assert result["failure_kind"] == expected
+
+
+@pytest.mark.parametrize("exc,expected", [(OSError("catalog read failed"), "io"),
+    (RuntimeError("catalog temporarily unavailable"), "source_runtime")])
+def test_mayhem_local_failure_is_not_validation_backoff(monkeypatch, exc, expected):
+    from hextech.infrastructure.sources.mayhem import service
+    def fail_catalog():
+        raise exc
+    monkeypatch.setattr(service, "load_active_catalog", fail_catalog)
+    monkeypatch.setattr(service, "write_mayhem_refresh_status",
+        lambda **kw: {**kw, **dict(kw.get("extra") or {})})
+    result = service.run_mayhem_refresh(force=True, scraper=lambda: _mayhem_raw())
+    assert result["failure_kind"] == expected
+    assert result["retry_after_seconds"] == 300
+
+
 def test_mayhem_repaired_rejects_retry_same_business_revision(tmp_path, monkeypatch) -> None:
     from hextech.infrastructure.sources.mayhem import service, source
     from hextech.infrastructure.transport.scrapling_client import ScraplingFetchResult

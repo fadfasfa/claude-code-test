@@ -95,4 +95,7 @@ def test_height_rejection_is_not_remeasured_every_grace_tick():
     assert len(changes) == 3  # original -> measure failing layout once -> restore original
     ui.current_candidate_groups = {"bench": ["changed"]}
     publish(owner, 12.1, rect=(400, 850, 1680, 1570))
+    assert len(changes) == 3  # Pending inputs do not alter the displayed controls.
+    ui._candidate_content_revision = getattr(ui, "_candidate_content_revision", 0) + 1
+    publish(owner, 12.2, rect=(400, 850, 1680, 1570))
     assert len(changes) == 5  # content changed: one fresh measure, not a permanent stale cache

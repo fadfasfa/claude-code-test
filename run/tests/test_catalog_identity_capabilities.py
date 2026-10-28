@@ -267,6 +267,14 @@ def test_packaged_smoke_accepts_verified_enabled_pool_with_name_only_identities(
     from tooling.acceptance import smoke_packaged_startup as smoke
 
     expected = _cohort_metadata(pool_count=2)
+    from tooling.build import recognition_contract
+    monkeypatch.setattr(recognition_contract, "recognition_pool_contract", lambda *_: {
+        "catalog_generation_id": expected["catalog_generation_id"],
+        "recognition_catalog_id": expected["catalog_generation_id"],
+        "production_pool_id": expected["production_pool_id"],
+        "production_pool_count": expected["production_pool_count"],
+        "full_catalog_count": expected["full_catalog_count"],
+    })
     package = tmp_path / "package"
     runtime = tmp_path / "runtime"
     def run(command, **_kwargs):

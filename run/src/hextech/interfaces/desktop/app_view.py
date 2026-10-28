@@ -53,6 +53,10 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
     def _desktop_foreground_hwnd(self) -> int:
         return int(ui_runtime.win32gui.GetForegroundWindow() or 0)
 
+    def _desktop_native_visible(self) -> bool:
+        from .client_layer import desktop_wrapper_is_visible
+        return desktop_wrapper_is_visible(self.root)
+
     def _desktop_layer_matches(self, client_hwnd: int) -> bool:
         from .client_layer import client_layer_matches, desktop_wrapper_hwnd
         return client_layer_matches(desktop_wrapper_hwnd(self.root), client_hwnd)
@@ -88,7 +92,8 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
     def _hide_overlay(self) -> None:
         if getattr(self, "_foreground_layer_lease", None) is not None:
             self._maintain_foreground_layer(int(getattr(self, "_desktop_owner_hwnd", 0)), eligible=False)
-        if not self._window_visible and not self.root.winfo_ismapped():
+        native_visible = getattr(self, "_desktop_native_visible", lambda: False)
+        if not self._window_visible and not self.root.winfo_ismapped() and not native_visible():
             return
         self._withdraw_overlay()
 
@@ -102,9 +107,25 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
                 self._name_tooltip = None
             self._set_window_topmost(False)
             self.root.withdraw()
-            self._window_visible = False
         except tk.TclError:
-            logger.debug("隐藏悬浮窗失败。", exc_info=True)
+            logger.debug("Tk 隐藏悬浮窗失败，继续核验当前 native wrapper。", exc_info=True)
+        native_visible = getattr(self, "_desktop_native_visible", lambda: False)
+        if native_visible():
+            from .client_layer import hide_desktop_wrapper
+            hide_desktop_wrapper(self.root)
+        try:
+            inner_mapped = bool(self.root.winfo_ismapped())
+        except tk.TclError:
+            try:
+                exists = bool(self.root.winfo_exists())
+            except tk.TclError:
+                exists = False
+            if exists:
+                raise RuntimeError("desktop_inner_hide_unconfirmed")
+            inner_mapped = False
+        if inner_mapped or native_visible():
+            raise RuntimeError("desktop_window_hide_unconfirmed")
+        self._window_visible = False
 
     def _reload_data_into_ui(self, status_text, status_color):
         new_champions = self.load_data()
@@ -163,10 +184,6 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
 
             self._run_on_ui_thread(refresh_ui)
 
-    def on_hero_click(self, champ_id, hero_name):
-        """处理英雄卡片点击，并触发终端输出与页面跳转。"""
-
-        ui_runtime.handle_hero_click(self, champ_id, hero_name)
 
     def lcu_polling_loop(self):
         ui_runtime.lcu_polling_loop(self)
@@ -198,7 +215,7 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
             "bench_champion_ids": normalized(values),
         }
 
-    def _build_candidate_display_list(self, hero_ids, champions: list[dict]) -> list[dict]:
+    def _build_candidate_display_list(self, hero_ids, champions: list[dict], *, snapshot_view=None) -> list[dict]:
         import time
 
         from hextech.contracts import GameContext, GameSessionId
@@ -226,7 +243,9 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
             phase=str(candidate_groups.get("context_phase") or "champ_select"),
         )
         snapshot_client = getattr(self, "_snapshot_client", None)
-        if snapshot_client is not None:
+        if snapshot_view is not None:
+            pass
+        elif snapshot_client is not None:
             snapshot_view = snapshot_client.open_view()
         else:
             # 只用于旧调用者和组件测试；生产 UI 始终从 DataSnapshotClient 打开固定代。
@@ -331,54 +350,61 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
         return TIER_COLORS.get(str(tier or "").upper(), TIER_COLORS["T3"])
 
     def update_ui(self, hero_ids):
-        if self._ui_render_in_progress:
-            self._pending_ui_refresh = hero_ids
-            return
+        """GUI only requests work; snapshot reads and recommendation projection run on desktop-candidates."""
+        controller = getattr(self, "_desktop_window_presentation", None)
+        if controller is not None and not getattr(self, "_closing", False):
+            groups = self._candidate_groups_from_input(hero_ids)
+            if hero_ids is getattr(self, "current_candidate_groups", None):
+                controller.refresh_candidates(groups)
+            else:
+                controller.publish_candidates(groups)
 
-        self._ui_render_in_progress = True
-        try:
-            self._ensure_card_state()
-            with self._champions_lock:
-                current_champions = list(self.champions)
-                is_empty = not current_champions
-
-            candidate_groups = self._candidate_groups_from_input(hero_ids)
-            has_candidates = any(candidate_groups.get(key) for key in ("selected_champion_ids", "bench_champion_ids"))
-            connection = str(candidate_groups.get("context_connection_state") or "")
-            phase = str(candidate_groups.get("context_phase") or "")
-            if not hero_ids or not has_candidates:
-                if connection == "disconnected":
-                    empty_message = "未连接客户端"
-                elif phase == "champ_select":
-                    empty_message = "当前没有备战席英雄"
-                else:
-                    empty_message = "尚未进入选人"
-            elif is_empty:
+    def _prepare_candidate_display(self, request, groups):
+        """Pure display DTO preparation, called only by the existing candidate worker."""
+        from .window_presentation import CandidateDisplay
+        with self._champions_lock:
+            champions = list(self.champions)
+        has_candidates = any(groups.get(key) for key in ("selected_champion_ids", "bench_champion_ids"))
+        connection = str(groups.get("context_connection_state") or "")
+        phase = str(groups.get("context_phase") or "")
+        generation = request.generation
+        rows = []
+        empty_message = ""
+        if not has_candidates:
+            empty_message = ("未连接客户端" if connection == "disconnected" else
+                             "当前没有备战席英雄" if phase == "champ_select" else "尚未进入选人")
+        else:
+            client = getattr(self, "_snapshot_client", None)
+            view = client.open_view() if client is not None else None
+            if view is not None:
+                generation = str(view.status().get("generation_id") or "")
+                champions = view.get_champions()
+            if not champions:
                 empty_message = "已取得英雄，统计快照加载中"
             else:
-                empty_message = ""
-            if empty_message:
-                self._show_list_placeholder(empty_message)
-                return
+                rows = self._build_candidate_display_list(groups, champions, snapshot_view=view)
+                if not rows:
+                    empty_message = "当前数据集中缺少对应英雄"
+        degraded = connection == "degraded"
+        return CandidateDisplay(request, generation, groups, tuple(rows), empty_message,
+                                "连接中断 · 保留最近选择" if degraded else "实时数据已挂载",
+                                UI_COLORS["warn"] if degraded else UI_COLORS["green"])
 
-            if connection == "degraded":
-                self._set_status("连接中断 · 保留最近选择", UI_COLORS["warn"])
-            else:
-                self._set_status("实时数据已挂载", UI_COLORS["green"])
+    def _commit_candidate_display_metadata(self, display):
+        from .candidate_application import commit_display_metadata
+        commit_display_metadata(self, display)
 
-            display_list = self._build_candidate_display_list(hero_ids, current_champions)
-            if not display_list:
-                self._show_list_placeholder("当前数据集中缺少对应英雄")
-                return
+    def _advance_candidate_display(self, display, is_current, deadline, commit_if_current):
+        from .candidate_application import advance_candidate_application, retry_visible_avatars
+        self._ensure_card_state()
+        complete = advance_candidate_application(self, display, is_current, deadline, commit_if_current)
+        retry_visible_avatars(self, deadline)
+        return complete
 
-            self._clear_list_placeholder()
-            self._render_candidate_cards(display_list)
-        finally:
-            self._ui_render_in_progress = False
-            if self._pending_ui_refresh is not None:
-                pending = self._pending_ui_refresh
-                self._pending_ui_refresh = None
-                self.root.after_idle(lambda ids=pending: self.update_ui(ids))
+    def _apply_candidate_display(self, display):
+        """Compatibility synchronous renderer; the presentation owner uses bounded staging."""
+        from .candidate_application import apply_display_synchronously
+        apply_display_synchronously(self, display)
 
     def _render_candidate_cards(self, display_list: list[dict]) -> None:
         """keyed 增量渲染：同键行原地更新，成员变化才建/销卡片，消除全量重建闪烁。"""
@@ -425,7 +451,7 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
                 card.pack(fill=tk.X, pady=scaled(2, scale), padx=(0, scaled(6, scale)))
             self._card_order = desired_keys
 
-    def _build_candidate_card(self, item: dict, scale: float) -> dict:
+    def _build_candidate_card(self, item: dict, scale: float, *, parent=None) -> dict:
         """构建紧凑英雄卡：强度在左、身份居中、角色与胜率固定在右。"""
 
         card_surface = UI_COLORS["surface"]
@@ -433,13 +459,12 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
 
         row: dict = {"id": item["id"], "name": item["name"], "tier": item["tier"], "win": None, "pick": None}
         card = tk.Frame(
-            self.list_frame,
+            self.list_frame if parent is None else parent,
             bg=card_surface,
             highlightthickness=1,
             highlightbackground=UI_COLORS["border"],
             pady=0,
             padx=0,
-            cursor="hand2",
         )
         card.pack(fill=tk.X, pady=scaled(2, scale), padx=(0, scaled(6, scale)))
         row["card"] = card
@@ -448,7 +473,6 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
             card,
             width=scaled(6, scale),
             bg=badge_style["bg"],
-            cursor="hand2",
         )
         strength_bar.pack(side=tk.LEFT, fill=tk.Y)
         row["strength_bar"] = strength_bar
@@ -458,7 +482,6 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
             bg=card_surface,
             padx=scaled(6, scale),
             pady=scaled(4, scale),
-            cursor="hand2",
         )
         content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         row["content"] = content
@@ -475,7 +498,7 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
         row["img_label"] = img_label
 
         # 固定指标列避免角色切换时胜率上下跳动；bench 使用同高空白状态位。
-        metric = tk.Frame(content, width=scaled(72, scale), bg=card_surface, cursor="hand2")
+        metric = tk.Frame(content, width=scaled(72, scale), bg=card_surface)
         row["metric"] = metric
         metric.pack(side=tk.RIGHT, fill=tk.Y)
         metric.pack_propagate(False)
@@ -505,7 +528,7 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
         win_label.pack(side=tk.BOTTOM, anchor="e")
         row["win_label"] = win_label
 
-        info = tk.Frame(content, bg=card_surface, cursor="hand2")
+        info = tk.Frame(content, bg=card_surface)
         row["info"] = info
         info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -543,14 +566,9 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
         pick_label.pack(anchor="w", pady=(scaled(2, scale), 0))
         row["pick_label"] = pick_label
 
-        self._bind_card_click(card, row)
         self._update_candidate_card(row, item, scale)
         return row
 
-    def _bind_card_click(self, widget, row: dict) -> None:
-        widget.bind("<Button-1>", lambda e: self.on_hero_click(row["id"], row["name"]))
-        for child in widget.winfo_children():
-            self._bind_card_click(child, row)
 
     def _update_candidate_card(self, row: dict, item: dict, scale: float) -> None:
         """原地刷新可变字段（名称/评级/胜率），不重建 widget。"""
@@ -597,7 +615,9 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
                 row["win"] = item["win"]
                 row["pick"] = item["pick"]
 
-            self._layout_candidate_row(row)
+            from .update_timing import gui_phase
+            with gui_phase(self, "layout_measure"):
+                self._layout_candidate_row(row)
             img_label = row.get("img_label")
             if img_label is not None and not getattr(img_label, "_hextech_avatar_loaded", False):
                 # keyed 复用不再每轮重建卡片；若建卡时头像下载在途被
@@ -691,9 +711,6 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
             return True
         return (time.time() - self._manual_move_timestamp) >= cooldown_seconds
 
-    def _restore_from_terminal(self):
-        self.pause_event.clear()
-        self.request_runtime_resume(reason="terminal_restore", show_window=True)
 
     def start_background_scraper(self):
         """启动 generation 只读 watcher；抓取和发布仍只由 DataService 执行。"""
@@ -729,7 +746,6 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
                 self._overlay_status_after_id = None
             except tk.TclError:
                 logger.debug("取消 overlay 状态轮询失败。", exc_info=True)
-        self._supervisor_lease_stop.set()
         try:
             self._hide_overlay()
         except tk.TclError:
@@ -748,8 +764,6 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
                     if remaining <= 0:
                         break
                     thread.join(timeout=min(0.2, remaining))
-                ui_runtime.close_companion_browser()
-                ui_runtime.shutdown_desktop_executors(wait=False)
                 service_manager = self._take_service_manager_for_shutdown()
                 if service_manager is not None:
                     try:
@@ -759,10 +773,7 @@ class DesktopViewMixin(DesktopForegroundLayerMixin):
                             if self._service_manager_shutdown_in_progress is service_manager:
                                 self._service_manager_shutdown_in_progress = None
                                 self._service_manager_shutdown_completed = service_manager
-                lease_thread = self._supervisor_lease_thread
-                if lease_thread is not None and lease_thread.is_alive():
-                    lease_thread.join(timeout=max(0.0, min(0.5, deadline - time.monotonic())))
-                supervisor = self.runtime_supervisor
+                supervisor = self.runtime_owner
                 if supervisor is not None and time.monotonic() < deadline:
                     supervisor.stop(timeout=max(0.1, min(1.0, deadline - time.monotonic())))
                 self.data_service = None

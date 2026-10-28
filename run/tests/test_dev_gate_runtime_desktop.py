@@ -1,17 +1,13 @@
 """runtime 域 pytest 开发门禁。"""
 
-import os
-import subprocess
 
 import pytest
 
 from tests._dev_gate_support import (
-    Any,
     RUN_DIR,
     _probe_clean_import,
     _probe_module_import,
     _top_level_import_names,
-    patch,
     threading,
 )
 
@@ -21,7 +17,6 @@ pytestmark = pytest.mark.dev_gate
 def test_desktop_ui_feature_switch_contract() -> None:
     """验证桌面 UI 不再初始化时无条件启动 Web 服务。"""
     import hextech.interfaces.desktop.runtime as ui_runtime
-    import hextech.interfaces.desktop.runtime_services as ui_runtime_services
     import hextech.interfaces.desktop.app as desktop_app
 
     desktop_dir = RUN_DIR / "src" / "hextech" / "interfaces" / "desktop"
@@ -38,7 +33,7 @@ def test_desktop_ui_feature_switch_contract() -> None:
     init_body = app_entry_text[init_start:init_end]
 
     assert "ServiceManager" in ui_text
-    assert "Web 前端" in ui_text
+    assert "Web 前端" not in ui_text
     assert "游戏内显示" in ui_text
     assert "低频监听" not in ui_text
     assert "tk.Checkbutton" not in ui_text
@@ -64,11 +59,11 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert 'self._feature_toggle_is_busy("游戏内显示")' in ui_text
     assert "set_game_overlay_enabled" in ui_text
     assert "components.get(\"game_overlay\")" in ui_text
-    assert "hextech-toggle-web" in ui_text
+    assert "hextech-toggle-web" not in ui_text
     assert "hextech-toggle-overlay" in ui_text
-    assert "hextech-overlay-watchdog" in ui_text
+    assert "hextech-overlay-watchdog" not in ui_text
     assert "hextech-toggle-private-stats" in ui_text
-    assert "正在切换 Web 前端" in ui_text
+    assert "正在切换 Web 前端" not in ui_text
     assert "_set_overlay_status_summary" in ui_text
     assert "游戏内显示: 正在提交启动请求" in ui_text
     assert "游戏内显示启动请求已提交" in ui_text
@@ -79,7 +74,7 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert "_toggle_collapse" not in ui_text
     assert "collapse_button" not in ui_text
     assert "<Double-Button-1>" not in ui_text
-    assert "self.private_stats_check.grid(row=0, column=2" in ui_text
+    assert "self.private_stats_check.grid(row=0, column=1" in ui_text
     # 几何锁 1.0 维持基线"狭长"观感（窗宽/头像/padding 不乘 DPI）；
     # 字体与几何解耦：ui_font 用正磅值由 Tk 按系统 DPI 隐式放大。
     assert "self._ui_scale = 1.0" in ui_text
@@ -94,7 +89,7 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert "overlay_status_label" not in ui_text
     assert "self.status_label" not in ui_text
     assert "resolve_overlay_follow_height" in ui_text
-    assert "manage_overlay_runtime=False" in ui_text
+    assert "manage_overlay_runtime" not in ui_text
     assert "overlay_controller=GameOverlayController(" not in ui_text
     assert "start_vision_sidecar_process" not in ui_text
     assert "self._start_web_server()" not in init_body
@@ -105,31 +100,8 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert _probe_clean_import("src/hextech/bootstrap/desktop.py") == set()
     assert _probe_module_import("hextech.interfaces.overlay.host") == set()
 
-    captured: dict[str, Any] = {}
-
-    class DummyProcess:
-        def poll(self):
-            return None
-
-    def fake_popen(command, startupinfo=None, cwd=None, env=None, creationflags=0):
-        captured["command"] = command
-        captured["cwd"] = cwd
-        captured["env"] = dict(env or {})
-        captured["creationflags"] = creationflags
-        return DummyProcess()
-
-    with (
-        patch.object(ui_runtime.subprocess, "Popen", side_effect=fake_popen),
-            patch.object(ui_runtime_services, "_clear_web_readiness_files", return_value=None),
-            patch.object(ui_runtime_services, "_wait_for_web_startup", return_value=None),
-    ):
-        ui_runtime.start_web_server_process("unused-port-file.txt", auto_open_browser=True)
-    assert captured["env"]["HEXTECH_OPEN_BROWSER"] == "0"
-    if os.name == "nt":
-        assert captured["creationflags"] & subprocess.CREATE_NO_WINDOW
-
-    assert hasattr(ui_runtime, "open_companion_browser")
-    assert hasattr(ui_runtime, "close_companion_browser")
+    assert not hasattr(ui_runtime, "open_companion_browser")
+    assert not hasattr(ui_runtime, "close_companion_browser")
     private_toggle_body = ui_text.split("    def _toggle_private_policy_stats", 1)[1].split("    def _toggle_low_frequency_listener", 1)[0]
     assert "self.data_service.set_private_stats" in private_toggle_body
     assert "build_overlay_hint_cache_from_precomputed" not in private_toggle_body
@@ -275,7 +247,10 @@ def test_compact_card_geometry_contract() -> None:
 
     desktop_dir = RUN_DIR / "src" / "hextech" / "interfaces" / "desktop"
     view_text = (desktop_dir / "app_view.py").read_text(encoding="utf-8")
-    card_body = view_text.split("    def _build_candidate_card", 1)[1].split("    def _bind_card_click", 1)[0]
+    card_body = view_text.split("    def _build_candidate_card", 1)[1].split("    def _update_candidate_card", 1)[0]
+    assert 'cursor="hand2"' not in card_body
+    assert '<Button-1>' not in card_body
+    assert "def on_hero_click" not in view_text
 
     avatar_text = (desktop_dir / "avatar_loading.py").read_text(encoding="utf-8")
     assert "return avatar_placeholder_image(self)" in view_text

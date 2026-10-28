@@ -10,19 +10,16 @@ import threading
 import time
 import uuid
 from dataclasses import replace
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from hextech.contracts import CatalogManifestV2, SourcePointerV2, SourceRunManifestV2
 from hextech.contracts.refresh import RefreshProgress
 from hextech.modules.acquisition.load_guard import BackgroundLoadGuard
-from hextech.infrastructure.persistence.cohort import CohortPromotionStore
-from hextech.infrastructure.persistence.cohort_recovery import build_recovery_point, validate_generation_cohort
+from hextech.infrastructure.persistence.cohort_recovery import validate_generation_cohort
 from hextech.infrastructure.persistence.refresh_schedule import RefreshScheduleStore
 from hextech.infrastructure.processes import run_isolated_process
 from hextech.modules.data.catalog.versioned import CatalogView, sha256_file, validate_catalog_files
-from hextech.modules.data.freshness import parse_refresh_time
 from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher
 from hextech.modules.data.ports.atomic import atomic_write_json
 from .refresh_service_schedule import REFRESH_SOURCES, RefreshScheduleMixin
@@ -46,8 +43,6 @@ class IncrementalRefreshService(RefreshScheduleMixin):
             projection_factory = IncrementalProjection
         self.projection_factory = projection_factory
         self.schedule_store = RefreshScheduleStore(self.root)
-        self.promotion = CohortPromotionStore(self.root)
-        self.promotion.recover()
         self._lock = threading.RLock()
         self._refresh_condition = threading.Condition(self._lock)
         self._refresh_active = False
@@ -76,7 +71,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
         self._context: dict[str, Any] = {"champion_id": "", "in_game": True, "pause_background": True}
         self._load_guard = BackgroundLoadGuard()
         self._restore()
-        active_catalog = _object(self.root / "catalog" / "current.v2.json")
+        active_catalog = _object(self.root / "snapshots/current.v4.json").get("recognition_catalog", {})
         try:
             self._validate_catalog(active_catalog)
             self._recognition = active_catalog
@@ -114,7 +109,7 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                     self._optional[item.source] = pointer
         except (OSError, ValueError, RuntimeError):
             # Existing current remains untouched; a refresh must validate a new candidate.
-            self._catalog = _object(self.root / "catalog" / "current.v2.json")
+            self._catalog = dict(_object(self.root / "snapshots/current.v4.json").get("recognition_catalog", {}))
             self._ranking, self._heroes, self._optional = {}, {}, {}
             self._last_candidate = None
 
@@ -164,8 +159,29 @@ class IncrementalRefreshService(RefreshScheduleMixin):
     def _publish_catalog(self, pointer: Mapping[str, Any]) -> None:
         """Publish recognition independently; statistics retain their original binding."""
         self._validate_catalog(pointer)
-        atomic_write_json(self.root / "catalog" / "current.v2.json", dict(pointer), indent=2)
+        from hextech.modules.data.generation.release_store import update_head
+        update_head(self.publisher.root, recognition_catalog=dict(pointer))
         self._recognition = dict(pointer)
+
+    def _adopt_statistics_catalog(self, catalog):
+        old = dict(self._catalog)
+        if catalog.get("catalog_generation_id") == old.get("catalog_generation_id"):
+            return
+        self._validate_catalog(catalog)
+        self._catalog = dict(catalog)
+        self._ranking, self._heroes, self._optional = {}, {}, {}
+        self._projection = None
+        # Only a binding validation against exactly the superseded Catalog may unlock.
+        schedule = self.schedule_store.load()
+        state = schedule.sources["aramkit"]
+        if (state.state == "backoff" and state.failure_kind == "validation"
+                and state.failure_reason_code == "catalog_binding_failed"
+                and state.failure_catalog_generation_id == old.get("catalog_generation_id")
+                and state.failure_catalog_sha256 == old.get("content_sha256")):
+            sources = dict(schedule.sources)
+            sources["aramkit"] = replace(state, state="due", next_due_at="", failure_kind="", failure_fingerprint="",
+                check_status="unknown", failure_catalog_generation_id="", failure_catalog_sha256="", failure_reason_code="")
+            self.schedule_store.save(replace(schedule, sources=sources))
 
     def progress(self) -> dict[str, Any]:
         # Immutable records can be copied without waiting for the publish IO lock.
@@ -240,23 +256,6 @@ class IncrementalRefreshService(RefreshScheduleMixin):
         except (OSError, ValueError, RuntimeError, TypeError):
             return False
 
-    def _ranking_data_at(self) -> str:
-        """Source age is upstream age, never the local unit publication time."""
-        path = self.root / "sources/aramkit/runs" / str(self._ranking.get("run_id") or "") / "manifest.json"
-        try:
-            if sha256_file(path) != self._ranking.get("manifest_sha256"):
-                return ""
-            manifest = SourceRunManifestV2.from_mapping(_object(path))
-            version = manifest.metadata.get("version", {})
-            stamp = version.get("buildTimeUnixMs") if isinstance(version, Mapping) else None
-            if stamp is not None and not isinstance(stamp, bool) and float(stamp) > 0:
-                return datetime.fromtimestamp(float(stamp) / 1000, timezone.utc).isoformat()
-            value = manifest.metadata.get("data_at")
-            parsed = parse_refresh_time(str(value or ""))
-            return parsed.astimezone(timezone.utc).isoformat() if parsed else ""
-        except (OSError, ValueError, TypeError, OverflowError):
-            return ""
-
     def _source_pointer(self, source: str) -> Mapping[str, Any]:
         if source == "catalog":
             return self._recognition
@@ -296,15 +295,28 @@ class IncrementalRefreshService(RefreshScheduleMixin):
             manifest = DataSnapshotClient(self.publisher.root).open_view().manifest
         except (OSError, ValueError, RuntimeError):
             return ()
-        return tuple(sorted((item.role, item.sha256) for item in manifest.files))
+        return (("release", manifest.content_fingerprint),)
 
     def _publish(self) -> str:
         if not self._ranking or self._stop.is_set():
             return ""
         with self._lock:
+            if self._last_candidate is not None:
+                published_catalog = self._last_candidate.pointers["catalog"]
+                binding_fields = ("catalog_generation_id", "content_sha256")
+                catalog_changed = any(
+                    published_catalog.get(field) != self._catalog.get(field) for field in binding_fields
+                )
+                # A recognition Catalog can advance on its own. Replacing an existing
+                # statistics binding must wait for the entire new core, otherwise a
+                # cancelled worker would replace usable details with pending entries.
+                # Same-Catalog updates and a first install retain incremental delivery.
+                if catalog_changed and not self._core_units_complete():
+                    return ""
             if self._projection is None:
                 self._projection = self.projection_factory(self._open_catalog())
-            build = self._projection.build(self._ranking, self._heroes, self._optional)
+            build_fn = self._projection.build_references
+            build = build_fn(self._ranking, self._heroes, self._optional)
             if self._stop.is_set():
                 raise RuntimeError("shutdown_requested")
             accepted_sources = {item.source for item in build.source_files}
@@ -318,37 +330,12 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                 self.publisher.last_promotion_disposition = "unchanged"
                 self._progress = self._progress.advance(generation_id=unchanged.generation_id)
                 return unchanged.generation_id
-            self.promotion.begin()
-            try:
-                self.promotion.record_target("catalog", self._recognition or self._catalog)
-                self.promotion.record_target("aramkit", self._ranking)
-                for source in ("apex", "mayhem"):
-                    self.promotion.record_target(source, self._optional.get(source, {}))
-                self.promotion.promote_dependencies()
-                if self._stop.is_set():
-                    raise RuntimeError("shutdown_requested")
-                manifest = self.publisher.publish(build.payloads, source_files=build.source_files,
-                    components=build.components, source_status=build.source_status,
-                    health="degraded" if degraded else "healthy", degraded_sources=degraded,
-                    require_complete_provenance=True)
-                candidate = validate_generation_cohort(self.root, manifest.generation_id)
-                previous = str(_object(self.publisher.previous_path).get("generation_id") or "")
-                if previous:
-                    # Publisher may have recovered from a damaged current. Bind
-                    # recovery to its actual verified fallback, not old current.
-                    DataSnapshotClient(self.publisher.root).open_generation(previous)
-                schedule = replace(self.schedule_store.load(), generation_id=manifest.generation_id)
-                recovery = build_recovery_point(candidate, previous_generation_id=previous, schedule=schedule)
-                self.promotion.stage_generation_state(schedule=schedule.to_dict(), recovery_point=recovery.to_dict())
-                if self._stop.is_set():
-                    raise RuntimeError("shutdown_requested")
-                self.promotion.record_generation_promoted(manifest.generation_id)
-                self.promotion.commit()
-                self._last_candidate = candidate
-                self._retention_pending = True
-            except Exception:
-                self.promotion.rollback()
-                raise
+            manifest = self.publisher.publish(None, source_files=build.source_files,
+                components=build.components, source_status=build.source_status,
+                health="degraded" if degraded else "healthy", degraded_sources=degraded)
+            self._last_candidate = validate_generation_cohort(self.root, manifest.generation_id)
+            self.schedule_store.save(replace(self.schedule_store.load(), generation_id=manifest.generation_id))
+            self._retention_pending = True
             self._progress = self._progress.advance(core_published_at=time.time(), generation_id=manifest.generation_id)
             return manifest.generation_id
 
@@ -552,8 +539,12 @@ class IncrementalRefreshService(RefreshScheduleMixin):
         catalog_deferred = False
         initial_identities = self._source_identities()
         initial_business_identity = self._business_content_identity()
+        if not self._context["in_game"]:
+            current_catalog = _object(self.publisher.current_path).get("recognition_catalog", {})
+            if current_catalog:
+                self._adopt_statistics_catalog(current_catalog)
         check_core = force or scope == "core"
-        if (force or not self._backoff_pending("catalog")) and (not self._catalog or self._due("catalog", check_core)):
+        if (force or not self._backoff_pending("catalog")) and (not self._catalog or self._due("catalog", check_core) or self.schedule_store.load().sources["catalog"].dependency_recheck_requested):
             attempted.add("catalog")
             try:
                 # Always check recognition's own markers, independent of ARAMKit.
@@ -561,11 +552,8 @@ class IncrementalRefreshService(RefreshScheduleMixin):
                 with self._lock:
                     self._publish_catalog(catalog)
                     adopt = not self._context["in_game"] or not self._catalog
-                    if adopt and catalog.get("catalog_generation_id") != self._catalog.get("catalog_generation_id"):
-                        self._ranking, self._heroes, self._optional = {}, {}, {}
-                        self._projection = None
                     if adopt:
-                        self._catalog = catalog
+                        self._adopt_statistics_catalog(catalog)
                 self._mark_source("catalog")
                 self._catalog_retry_at = 0.0
             except CatalogRefreshDeferred:

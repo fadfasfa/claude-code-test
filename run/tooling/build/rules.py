@@ -1,6 +1,6 @@
 """发布包资源白名单。
 
-发布包只包含只读 ``resources``、Web 静态文件和 bundle manifest。可写
+发布包只包含只读 ``resources`` 和 bundle manifest。可写
 ``var``、测试 fixture、诊断证据与 tooling 都不得进入应用包。
 """
 
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from tooling.build.resource_manifest import MANIFEST_RELATIVE_PATH, load_resource_manifest, validate_resource_manifest
+from tooling.build.resource_manifest import MANIFEST_RELATIVE_PATH, validate_resource_manifest
 from tooling.build.cohort_seed import collect_cohort_seed
 
 
@@ -58,10 +58,6 @@ class PackageData:
     target: str
 
 
-def web_static_dir(base_dir: Path) -> Path:
-    return base_dir / "src" / "hextech" / "interfaces" / "web" / "backend" / "static"
-
-
 def iter_stable_asset_files(asset_dir: Path) -> Iterable[Path]:
     if not asset_dir.exists():
         return []
@@ -89,50 +85,12 @@ def validate_asset_dir_for_package(asset_dir: Path) -> None:
     raise ValueError(f"resources/assets 包含非图片文件：{sample}{suffix}")
 
 
-def iter_seed_files(seed_root: Path) -> list[Path]:
-    """只枚举 current 指向的完整 seed generation。"""
-
-    root = seed_root.resolve()
-    pointer = root / "current.v2.json"
-    if not pointer.is_file():
-        return []
-    try:
-        payload = json.loads(pointer.read_text(encoding="utf-8"))
-        generation_id = str(payload.get("current_generation_id") or "") if isinstance(payload, dict) else ""
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return []
-    generation_dir = (root / "generations" / generation_id).resolve()
-    if not generation_id or generation_dir.parent != (root / "generations").resolve() or not generation_dir.is_dir():
-        return []
-    generation_files = sorted(
-        path
-        for path in generation_dir.rglob("*")
-        if path.is_file()
-        and generation_dir in path.resolve().parents
-        and "__pycache__" not in path.parts
-        and path.suffix.lower() not in {".pyc", ".pyo"}
-    )
-    return [pointer, *generation_files]
-
-
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _manifest_descriptors(base_dir: Path) -> dict[str, dict]:
-    payload = load_resource_manifest(base_dir)
-    items = payload.get("files")
-    if not isinstance(items, list):
-        raise ValueError("resources manifest v2 缺少 files")
-    return {
-        str(item.get("path") or ""): item
-        for item in items
-        if isinstance(item, dict) and str(item.get("path") or "")
-    }
 
 
 def iter_source_files(base_dir: Path) -> list[str]:
@@ -155,57 +113,28 @@ def iter_package_data_entries(
     """返回新布局的打包数据规则，不创建仓库内中间副本。"""
 
     base_dir = base_dir.resolve()
-    seed_root = (verified_snapshot_root or (base_dir / SEED_DIR)).resolve()
+    seed_root = (verified_snapshot_root or (base_dir / SEED_DIR / "runtime.v4" / "snapshots")).resolve()
     entries: list[PackageData] = []
-    static_dir = web_static_dir(base_dir)
-    if static_dir.is_dir():
-        entries.append(PackageData(static_dir, "static"))
-
     report = validate_resource_manifest(base_dir)
-    descriptors = _manifest_descriptors(base_dir)
-    packaged_files = report["packaged_files"]
-    seed_prefix = SEED_DIR.as_posix() + "/"
-    for rel_path in packaged_files:
-        if verified_snapshot_root is not None and rel_path.startswith(seed_prefix):
+    for rel_path in report["packaged_files"]:
+        if rel_path.startswith(SEED_DIR.as_posix() + "/"):
             continue
-        source = base_dir / rel_path
-        if rel_path.startswith(seed_prefix):
-            seed_relative = Path(rel_path).relative_to(SEED_DIR)
-            source = seed_root / seed_relative
-            if not source.is_file():
-                raise ValueError(f"verified seed 缺少 manifest 白名单文件：{seed_relative.as_posix()}")
-            expected_hash = str(descriptors[rel_path].get("sha256") or "")
-            if _sha256(source) != expected_hash:
-                raise ValueError(f"verified seed 与 manifest SHA-256 不一致：{seed_relative.as_posix()}")
-        entries.append(PackageData(source, Path(rel_path).parent.as_posix()))
-
-    if verified_snapshot_root is not None:
-        try:
-            bundle_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError(f"bundle manifest 无法读取：{manifest_path}") from exc
-        expected_hashes = bundle_manifest.get("seed_sha256") if isinstance(bundle_manifest, dict) else None
-        if not isinstance(expected_hashes, dict):
-            raise ValueError("bundle manifest 缺少 verified seed 哈希")
-        verified_files = iter_seed_files(seed_root)
-        bundled_names = [(SEED_DIR / path.relative_to(seed_root)).as_posix() for path in verified_files]
-        if set(bundled_names) != set(str(key) for key in expected_hashes):
-            raise ValueError("verified seed 文件集与 bundle manifest 不一致")
-        for source, bundled_name in zip(verified_files, bundled_names):
-            if _sha256(source) != str(expected_hashes[bundled_name]):
-                raise ValueError(f"verified seed 与 bundle manifest SHA-256 不一致：{bundled_name}")
-            entries.append(PackageData(source, Path(bundled_name).parent.as_posix()))
-        cohort_seed = collect_cohort_seed(seed_root)
-        cohort_hashes = bundle_manifest.get("cohort_seed_sha256")
-        if not isinstance(cohort_hashes, dict):
-            raise ValueError("bundle manifest 缺少 cohort seed 哈希")
-        cohort_names = [cohort_seed.bundled_name(path) for path in cohort_seed.files]
-        if set(cohort_names) != set(str(key) for key in cohort_hashes):
-            raise ValueError("cohort seed 文件集与 bundle manifest 不一致")
-        for source, bundled_name in zip(cohort_seed.files, cohort_names):
-            if _sha256(source) != str(cohort_hashes[bundled_name]):
-                raise ValueError(f"cohort seed 与 bundle manifest SHA-256 不一致：{bundled_name}")
-            entries.append(PackageData(source, Path(bundled_name).parent.as_posix()))
+        entries.append(PackageData(base_dir / rel_path, Path(rel_path).parent.as_posix()))
+    try:
+        bundle_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("bundle manifest unreadable") from exc
+    expected_hashes = bundle_manifest.get("seed_sha256")
+    if not isinstance(expected_hashes, dict):
+        raise ValueError("bundle manifest lacks v4 seed hashes")
+    seed = collect_cohort_seed(seed_root)
+    names = [seed.bundled_name(path) for path in seed.files]
+    if set(names) != set(expected_hashes):
+        raise ValueError("verified release closure differs from bundle manifest")
+    for source, name in zip(seed.files, names):
+        if _sha256(source) != expected_hashes[name]:
+            raise ValueError(f"verified seed hash mismatch: {name}")
+        entries.append(PackageData(source, Path(name).parent.as_posix()))
 
     entries.append(PackageData(base_dir / MANIFEST_RELATIVE_PATH, RESOURCE_ROOT_DIR.as_posix()))
     entries.append(PackageData(manifest_path, "."))

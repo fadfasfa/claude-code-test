@@ -36,6 +36,124 @@ def build_draft():
     return drafts[-1]
 
 
+def test_unchanged_capacity_rejection_does_not_encode_again(tmp_path, monkeypatch):
+    from hextech.infrastructure.vision import failure_evidence, selection_capture_persistence as persistence
+    draft = build_draft()
+    encode = Mock(wraps=failure_evidence._png_bytes)
+    monkeypatch.setattr(failure_evidence, "_png_bytes", encode)
+    for _ in range(2):
+        with pytest.raises(persistence.SelectionCacheCapacityError) as failure:
+            persistence.persist_selection_capture(tmp_path, draft, byte_limit=1)
+    count = encode.call_count
+    assert count > 0 and failure.value.details["retry_suppressed"] is True
+    with pytest.raises(persistence.SelectionCacheCapacityError):
+        persistence.persist_selection_capture(tmp_path, draft, byte_limit=1)
+    assert encode.call_count == count
+    # A changed capacity must be reconsidered, not permanently poison the draft.
+    result = persistence.persist_selection_capture(tmp_path, draft, byte_limit=1024 * 1024)
+    assert result["groups"] == 1
+
+
+def test_capacity_rejection_reuses_content_despite_observation_and_terminal_updates(tmp_path, monkeypatch):
+    from hextech.infrastructure.vision import failure_evidence, selection_capture_persistence as persistence
+    draft = replace(build_draft(), retention_floor="anomaly")
+    encode = Mock(wraps=failure_evidence._png_bytes)
+    monkeypatch.setattr(failure_evidence, "_png_bytes", encode)
+    with pytest.raises(persistence.SelectionCacheCapacityError):
+        persistence.persist_selection_capture(tmp_path, draft, byte_limit=1)
+    count = encode.call_count
+    latest = replace(draft, frames=tuple(replace(frame, metadata={**frame.metadata, "frame_id": 99},
+        sampled_at=99.) for frame in draft.frames), terminal={"reason": "evidence_starved", "duration": 99})
+    with pytest.raises(persistence.SelectionCacheCapacityError) as failure:
+        persistence.persist_selection_capture(tmp_path, latest, byte_limit=1)
+    assert failure.value.details["retry_suppressed"] is True
+    assert encode.call_count == count
+
+
+def test_smaller_terminal_can_fit_after_same_pixels_were_rejected(tmp_path):
+    base = replace(build_draft(), retention_floor="anomaly")
+    baseline = module.persist_selection_capture(tmp_path / "probe", base)
+    limit = baseline["bytes"] + 2048
+    large = replace(base, terminal={"detail": "x" * (limit * 2)})
+    with pytest.raises(ValueError, match="byte_budget"):
+        module.persist_selection_capture(tmp_path / "cache", large, byte_limit=limit)
+    module.persist_selection_capture(tmp_path / "cache", base, byte_limit=limit)
+    manifest = json.loads((tmp_path / "cache" / base.diagnostic_id / "manifest.json").read_text())
+    assert manifest["terminal"] == base.terminal
+
+
+def test_writer_counts_capacity_separately_and_keeps_latest_terminal(tmp_path, monkeypatch):
+    from hextech.infrastructure.vision import failure_evidence, selection_capture_persistence as persistence
+    monkeypatch.setattr(failure_evidence, "persist_selection_capture",
+        lambda root, draft: persistence.persist_selection_capture(root, draft, byte_limit=1))
+    encode = Mock(wraps=failure_evidence._png_bytes)
+    monkeypatch.setattr(failure_evidence, "_png_bytes", encode)
+    writer = FailureEvidenceWriter(tmp_path / "legacy", cache_root=tmp_path / "cache")
+    base = replace(build_draft(), retention_floor="anomaly")
+    assert writer.submit(base) and writer.wait_empty()
+    count = encode.call_count
+    final = replace(base, terminal={"reason": "evidence_starved", "unconfirmed_elapsed_ms": 1234})
+    assert writer.submit(final) and writer.wait_empty()
+    writer.close()
+    status = writer.status()
+    assert status["capacity_rejected"] == 2
+    assert status["io_failed"] == status["priority_preempted"] == status["saved"] == 0
+    assert status["selection_cache"]["last_unsaved_terminal"] == final.terminal
+    assert encode.call_count == count
+    assert writer.drain_journal_events()[0]["reason"] == "selection_cache_capacity_rejected"
+
+
+def test_writer_counts_priority_preemption_without_capacity_or_io_failure(tmp_path, monkeypatch):
+    writer = FailureEvidenceWriter(tmp_path)
+    monkeypatch.setattr(writer, "start", lambda: None)
+    base = build_draft()
+    assert writer.submit(base)
+    assert writer.submit(replace(base, diagnostic_id=uuid4().hex))
+    assert writer.submit(replace(base, diagnostic_id=uuid4().hex, retention_floor="anomaly"))
+    assert not writer.submit(replace(base, diagnostic_id=uuid4().hex))
+    status = writer.status()
+    assert status["priority_preempted"] == status["queue_rejected"] == 1
+    assert status["capacity_rejected"] == status["io_failed"] == status["failed"] == 0
+
+
+def test_atomic_manifest_failure_preserves_old_manifest_and_native_error(tmp_path, monkeypatch):
+    import errno
+    from hextech.infrastructure.vision import failure_evidence
+    root = tmp_path / "cache"
+    draft = build_draft()
+    module.persist_selection_capture(root, draft)
+    manifest_path = root / draft.diagnostic_id / "manifest.json"
+    before = manifest_path.read_bytes()
+    native_replace = failure_evidence.os.replace
+    def fail_manifest(source, target):
+        if target == manifest_path:
+            exc = OSError(errno.ENOSPC, "disk full")
+            exc.winerror = 112
+            raise exc
+        native_replace(source, target)
+    monkeypatch.setattr(failure_evidence.os, "replace", fail_manifest)
+    writer = FailureEvidenceWriter(tmp_path / "legacy", cache_root=root)
+    assert writer.submit(replace(draft, terminal={"reason": "selection_completed"})) and writer.wait_empty()
+    writer.close()
+    status = writer.status()
+    assert status["io_failed"] == 1 and status["capacity_rejected"] == 0
+    assert status["selection_cache"]["io_failure"] == {
+        "operation_stage": "manifest_write", "atomic_stage": "replace", "errno": errno.ENOSPC, "winerror": 112}
+    assert manifest_path.read_bytes() == before
+
+
+def test_impossible_capacity_does_not_rotate_even_eligible_groups(tmp_path):
+    base = build_draft()
+    module.persist_selection_capture(tmp_path, base)
+    manifest_path = tmp_path / base.diagnostic_id / "manifest.json"
+    unknown = tmp_path / "unknown"
+    unknown.mkdir()
+    (unknown / "protected.bin").write_bytes(b"x" * 100000)
+    with pytest.raises(ValueError, match="budget_exhausted"):
+        module.persist_selection_capture(tmp_path, replace(base, diagnostic_id=uuid4().hex), byte_limit=50000)
+    assert manifest_path.exists() and (unknown / "protected.bin").exists()
+
+
 def test_never_ready_slot_records_duration_and_survives_success_coalescing():
     collector, clock, drafts = buffer()
     for index in range(1, 7):

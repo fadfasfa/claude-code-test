@@ -31,7 +31,13 @@ def run_loop(
     from hextech.infrastructure.vision import sidecar as vision_sidecar
     from hextech.infrastructure.vision.mouse_transition import MouseTransitionObserver
 
-    retention_worker = get_diagnostic_retention_worker()
+    from hextech.modules.session.runtime_channel import child_channel, publish_runtime
+    class AppRetentionRequests:
+        def request(self):
+            publish_runtime("retention", {"requested": True})
+        def status(self):
+            return {"owner": "app", "state": "delegated"}
+    retention_worker = AppRetentionRequests() if child_channel() is not None else get_diagnostic_retention_worker()
     retention_worker.request()
     # Diagnostic capture availability is independent of public event-file publication.
     failure_writer = runner.FailureEvidenceWriter(retention_worker=retention_worker) if selection_capture_enabled() else None

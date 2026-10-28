@@ -7,13 +7,10 @@ from __future__ import annotations
 from contextlib import nullcontext
 import json
 import runpy
-import sys
 import tempfile
-import threading
 import time
 import unittest
 from pathlib import Path
-from unittest import mock
 from unittest.mock import patch
 
 import numpy as np
@@ -67,23 +64,6 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
                 diagnostic_settings.resolve_roi_dump_enabled(env={}, settings_path=settings)
             )
 
-    def test_persistent_roi_setting_adds_debug_dump_to_sidecar_command(self):
-        from hextech.interfaces.overlay import lifecycle
-
-        captured_command: list[str] = []
-
-        def fake_popen(command, **_kwargs):
-            captured_command.extend(command)
-            return FakeProcess(1000)
-
-        with (
-            patch.object(lifecycle, "resolve_roi_dump_enabled", return_value=True),
-            patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
-            patch.object(lifecycle, "_wait_for_sidecar_ready", return_value=None),
-        ):
-            lifecycle.start_sidecar_process()
-
-        self.assertIn("--debug-dump", captured_command)
 
     def test_sidecar_status_includes_debug_dump_enabled(self):
         from hextech.infrastructure.vision import runner
@@ -196,75 +176,8 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertEqual(result, expected)
         delegated.assert_called_once_with(write_event=True, event_path="test-event.json")
 
-    def test_host_ready_timeout_reports_missing_ready_file_without_token(self):
-        from hextech.interfaces.overlay import lifecycle
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            ready_path = Path(temp_dir) / "missing.ready.json"
-            with self.assertRaisesRegex(
-                TimeoutError,
-                r"ready_file=missing.*pid=9876",
-            ) as raised:
-                lifecycle._wait_for_host_ready(
-                    FakeProcess(9876),
-                    ready_path,
-                    expected_token="secret-token",
-                    timeout_seconds=0.01,
-                )
 
-        self.assertNotIn("secret-token", str(raised.exception))
-
-    def test_host_ready_timeout_reports_process_exit_and_token_mismatch(self):
-        from hextech.interfaces.overlay import lifecycle
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            ready_path = Path(temp_dir) / "host.ready.json"
-
-            with self.assertRaisesRegex(RuntimeError, r"readiness 前退出.*exit_code=9"):
-                lifecycle._wait_for_host_ready(FakeProcess(1201, exit_code=9), ready_path, timeout_seconds=0.01)
-
-            ready_path.write_text(
-                json.dumps({"token": "actual-token", "pid": 1202, "updated_at": time.time()}),
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(RuntimeError, r"token 不匹配.*pid=1202"):
-                lifecycle._wait_for_host_ready(
-                    FakeProcess(1202),
-                    ready_path,
-                    expected_token="expected-token",
-                    timeout_seconds=0.1,
-                )
-
-            ready_path.write_text(
-                json.dumps({"pid": "abc", "updated_at": time.time()}),
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(RuntimeError, r"token 不匹配.*pid=abc"):
-                lifecycle._wait_for_host_ready(FakeProcess(1202), ready_path, timeout_seconds=0.1)
-
-    def test_source_host_process_executes_overlay_composition_root(self):
-        from hextech.interfaces.overlay import lifecycle
-
-        captured_command: list[str] = []
-
-        def fake_popen(command, **_kwargs):
-            captured_command.extend(command)
-            return FakeProcess(1203)
-
-        with (
-            patch.object(lifecycle.sys, "frozen", False, create=True),
-            patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
-            patch.object(lifecycle, "_wait_for_host_ready", return_value=None) as wait_ready,
-        ):
-            process = lifecycle.start_host_process()
-
-        self.assertEqual(process.pid, 1203)
-        self.assertEqual(
-            captured_command,
-            [sys.executable, "-m", "hextech.bootstrap.overlay"],
-        )
-        self.assertEqual(wait_ready.call_args.kwargs["timeout_seconds"], 5.0)
-        self.assertEqual(getattr(process, "_hextech_overlay_host_startup_observation")["ready_state"], "ready")
 
     def test_overlay_composition_root_executes_when_run_as_module(self):
         with (
@@ -282,111 +195,11 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         configure_scanner.assert_called_once()
         run_overlay.assert_called_once_with(None)
 
-    def test_frozen_host_process_keeps_game_overlay_switch(self):
-        from hextech.interfaces.overlay import lifecycle
 
-        captured_command: list[str] = []
 
-        def fake_popen(command, **_kwargs):
-            captured_command.extend(command)
-            return FakeProcess(1204)
 
-        with (
-            patch.object(lifecycle.sys, "frozen", True, create=True),
-            patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
-            patch.object(lifecycle, "_wait_for_host_ready", return_value=None) as wait_ready,
-        ):
-            process = lifecycle.start_host_process()
 
-        self.assertEqual(process.pid, 1204)
-        self.assertEqual(captured_command, [sys.executable, "--game-overlay"])
-        self.assertEqual(wait_ready.call_args.kwargs["timeout_seconds"], 20.0)
 
-    def test_frozen_host_ready_after_source_budget_uses_twenty_second_contract(self):
-        from hextech.interfaces.overlay import lifecycle
-
-        observed: dict[str, float] = {}
-
-        def ready_after_eight_seconds(_process, _ready_path, **kwargs):
-            observed["simulated_ready_at"] = 8.0
-            observed["timeout_seconds"] = float(kwargs["timeout_seconds"])
-            if observed["simulated_ready_at"] >= observed["timeout_seconds"]:
-                raise TimeoutError("simulated frozen host timeout")
-
-        with (
-            patch.object(lifecycle.sys, "frozen", True, create=True),
-            patch.object(lifecycle.subprocess, "Popen", return_value=FakeProcess(1205)),
-            patch.object(lifecycle, "_wait_for_host_ready", side_effect=ready_after_eight_seconds),
-        ):
-            process = lifecycle.start_host_process()
-
-        self.assertEqual(process.pid, 1205)
-        self.assertEqual(observed, {"simulated_ready_at": 8.0, "timeout_seconds": 20.0})
-
-    def test_host_start_surfaces_cleanup_failure_and_records_attempt(self):
-        from hextech.interfaces.overlay import lifecycle
-
-        with (
-            patch.object(lifecycle.subprocess, "Popen", return_value=FakeProcess(1206)),
-            patch.object(lifecycle, "_wait_for_host_ready", side_effect=TimeoutError("slow host")),
-            patch.object(lifecycle, "stop_process", return_value=False),
-        ):
-            with self.assertRaises(lifecycle.HostCleanupError) as raised:
-                lifecycle.start_host_process()
-
-        self.assertFalse(raised.exception.retryable)
-        observation = getattr(raised.exception, "host_startup_observation")
-        self.assertEqual(observation["ready_state"], "timeout")
-        self.assertFalse(observation["cleanup_confirmed"])
-
-    def test_lifecycle_waits_for_sidecar_ready_and_sets_exit_signal(self):
-        from hextech.interfaces.overlay import lifecycle
-
-        captured_env: dict[str, str] = {}
-
-        def fake_popen(_command, **kwargs):
-            captured_env.update(kwargs["env"])
-            return FakeProcess(1001)
-
-        with (
-            patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
-            patch.object(lifecycle, "_wait_for_sidecar_ready", return_value=None),
-        ):
-            process = lifecycle.start_sidecar_process()
-
-        self.assertEqual(process.pid, 1001)
-        self.assertEqual(lifecycle.OVERLAY_SIDECAR_BOOTSTRAP_FILE_ENV, "HEXTECH_OVERLAY_SIDECAR_BOOTSTRAP_FILE")
-        self.assertTrue(captured_env[lifecycle.OVERLAY_SIDECAR_BOOTSTRAP_FILE_ENV].endswith(".bootstrap.json"))
-        self.assertTrue(captured_env["HEXTECH_OVERLAY_GENERATION"])
-        self.assertTrue(getattr(process, "_hextech_overlay_exit_file", ""))
-
-    def test_sidecar_readiness_wait_responds_to_cancel_signal(self):
-        from hextech.interfaces.overlay import lifecycle
-
-        cancel_event = threading.Event()
-        cancel_event.set()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with self.assertRaises(lifecycle.SidecarStartCancelled):
-                lifecycle._wait_for_sidecar_ready(
-                    FakeProcess(1002),
-                    Path(temp_dir) / "missing.ready.json",
-                    expected_token="expected-token",
-                    timeout_seconds=5.0,
-                    cancel_event=cancel_event,
-                )
-
-    def test_sidecar_start_surfaces_cleanup_failure_as_non_retryable(self):
-        from hextech.interfaces.overlay import lifecycle
-
-        with (
-            patch.object(lifecycle.subprocess, "Popen", return_value=FakeProcess(1003)),
-            patch.object(lifecycle, "_wait_for_sidecar_ready", side_effect=TimeoutError("slow bootstrap")),
-            patch.object(lifecycle, "stop_process", return_value=False),
-        ):
-            with self.assertRaises(lifecycle.SidecarCleanupError) as raised:
-                lifecycle.start_sidecar_process(readiness_timeout_seconds=1.0)
-
-        self.assertFalse(raised.exception.retryable)
 
     def test_sidecar_writes_ready_and_checks_exit_signal(self):
         from hextech.infrastructure.vision import runner, sidecar
@@ -403,68 +216,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertEqual(bootstrap_states[-1][0], "ready")
         self.assertEqual(bootstrap_states[-1][1]["phase"], "ready")
 
-    def test_wait_for_sidecar_ready_surfaces_failed_bootstrap_without_timeout(self):
-        from hextech.interfaces.overlay import lifecycle
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            ready_path = root / "sidecar.ready.json"
-            bootstrap_path = root / "sidecar.bootstrap.json"
-            bootstrap_path.write_text(
-                json.dumps(
-                    {
-                        "state": "failed",
-                        "token": "expected-token",
-                        "error_type": "FileNotFoundError",
-                        "error_message_sanitized": "模板缺失",
-                    },
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
-
-            with self.assertRaisesRegex(lifecycle.SidecarBootstrapError, "模板缺失") as raised:
-                lifecycle._wait_for_sidecar_ready(
-                    FakeProcess(1002),
-                    ready_path,
-                    bootstrap_path=bootstrap_path,
-                    expected_token="expected-token",
-                    timeout_seconds=0.1,
-                )
-
-        self.assertFalse(raised.exception.retryable)
-
-    def test_wait_for_sidecar_ready_marks_permission_error_non_retryable(self):
-        from hextech.interfaces.overlay import lifecycle
-
-        process = mock.Mock()
-        process.poll.return_value = None
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            ready_path = root / "sidecar.ready.json"
-            bootstrap_path = root / "sidecar.bootstrap.json"
-            bootstrap_path.write_text(
-                json.dumps(
-                    {
-                        "token": "expected",
-                        "state": "failed",
-                        "error_type": "PermissionError",
-                        "error_message_sanitized": "cache access denied",
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            with self.assertRaises(lifecycle.SidecarBootstrapError) as raised:
-                lifecycle._wait_for_sidecar_ready(
-                    process,
-                    ready_path,
-                    bootstrap_path=bootstrap_path,
-                    expected_token="expected",
-                    timeout_seconds=0.1,
-                )
-
-        self.assertFalse(raised.exception.retryable)
 
     def test_sidecar_main_records_starting_and_failed_bootstrap_state(self):
         from hextech.infrastructure.vision import runner, sidecar

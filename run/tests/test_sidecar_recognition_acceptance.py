@@ -1,14 +1,14 @@
 """Admission must consume production-generated B/B status, never a made-up A/B DTO."""
 from dataclasses import replace
-import json
 
 import pytest
 
 from hextech.infrastructure.vision import data_source, template_runtime
 from hextech.modules.data.catalog import versioned
 from hextech.modules.data.ports.atomic import atomic_write_json
+from hextech.modules.data.generation.release_store import read_head, update_head
 from test_catalog_identity_capabilities import pool
-from test_cohort_v3 import _v3_runtime, _publish_independent_recognition_catalog
+from support.v4_release import release_runtime, _publish_independent_recognition_catalog
 from tooling.build.cohort_seed import collect_cohort_seed
 from tooling.build.recognition_contract import recognition_pool_contract
 from tooling.acceptance import smoke_packaged_startup as smoke
@@ -17,7 +17,7 @@ from tooling.build import deploy
 
 @pytest.fixture
 def production_dual_catalog(tmp_path, monkeypatch):
-    runtime, generation, _ = _v3_runtime(tmp_path, details=True)
+    runtime, generation, _ = release_runtime(tmp_path, details=True)
     pointer = _publish_independent_recognition_catalog(runtime)
     catalog_dir = runtime / "catalog/generations" / pointer["catalog_generation_id"]
     # B changes both the actual pool and its identity count, not just its Catalog label.
@@ -28,7 +28,7 @@ def production_dual_catalog(tmp_path, monkeypatch):
     atomic_write_json(catalog_dir / "manifest.json", manifest.to_dict())
     pointer.update(content_sha256=manifest.content_sha256,
                    manifest_sha256=versioned.sha256_file(catalog_dir / "manifest.json"))
-    atomic_write_json(runtime / "catalog/current.v2.json", pointer)
+    update_head(runtime / "snapshots", recognition_catalog=pointer)
     monkeypatch.setattr(versioned, "catalog_root", lambda: runtime / "catalog")
     monkeypatch.setattr(data_source, "catalog_root", lambda: runtime / "catalog")
     hints = data_source.CatalogVisionDataSource(generation_id=generation).read_hint_cache()
@@ -41,8 +41,13 @@ def production_dual_catalog(tmp_path, monkeypatch):
               "phase": "once_complete", "pid": 505}
     assert status["catalog_generation_id"] == status["recognition_catalog_id"] == pointer["catalog_generation_id"]
     assert status["catalog_generation_id"] != metadata["catalog_generation_id"]
-    assert status["production_pool_id"] != metadata["production_pool_id"]
-    assert status["production_pool_count"] != metadata["production_pool_count"]
+    from hextech.modules.data.generation import DataSnapshotClient
+    statistics_pool = DataSnapshotClient(runtime / "snapshots").open_view().get_overlay_hints()["source"]["production_augment_pool"]
+    metadata["statistics_pool_id"] = statistics_pool["pool_id"]
+    metadata["statistics_pool_count"] = len(statistics_pool["canonical_ids"])
+    assert status["production_pool_id"] != statistics_pool["pool_id"]
+    assert status["production_pool_count"] != len(statistics_pool["canonical_ids"])
+    assert status["production_pool_id"] == metadata["production_pool_id"]
     return runtime, metadata, status
 
 
@@ -50,7 +55,9 @@ def production_dual_catalog(tmp_path, monkeypatch):
 def test_smoke_checks_production_recognition_pool(production_dual_catalog, monkeypatch, mutation):
     root, cohort, status = production_dual_catalog
     if mutation:
-        status[mutation] = {"icon": -1} if mutation == "matrix_rows" else cohort.get(mutation, "wrong")
+        status[mutation] = {"icon": -1} if mutation == "matrix_rows" else (
+            cohort["statistics_pool_id"] if mutation == "production_pool_id" else
+            cohort["statistics_pool_count"] if mutation == "production_pool_count" else cohort.get(mutation, "wrong"))
     def run(command, **_kwargs):
         atomic_write_json(root / "state/game_overlay_sidecar_status.json", status)
         return smoke.subprocess.CompletedProcess(command, 0, stdout=b"")
@@ -85,7 +92,7 @@ def test_deploy_checks_production_recognition_pool(production_dual_catalog, monk
     assert deploy._runtime_build_errors(expected_build_id="test-build", launch_started_at=0,
                                        sidecar_pid=505, expected_cohort=cohort) == []
     path = root / "state/game_overlay_sidecar_status.json"
-    status.update(status="running", production_pool_id=cohort["production_pool_id"])
+    status.update(status="running", production_pool_id=cohort["statistics_pool_id"])
     atomic_write_json(path, status)
     errors = deploy._runtime_build_errors(expected_build_id="test-build", launch_started_at=0,
                                           sidecar_pid=505, expected_cohort=cohort)
@@ -95,10 +102,10 @@ def test_deploy_checks_production_recognition_pool(production_dual_catalog, monk
 @pytest.mark.parametrize("drift", ["pointer", "artifact"])
 def test_recognition_contract_rejects_catalog_drift(production_dual_catalog, monkeypatch, drift):
     root, cohort, _status = production_dual_catalog
-    pointer = json.loads((root / "catalog/current.v2.json").read_text(encoding="utf-8"))
+    pointer = read_head(root / "snapshots")["recognition_catalog"]
     if drift == "pointer":
         pointer["manifest_sha256"] = "0" * 64
-        atomic_write_json(root / "catalog/current.v2.json", pointer)
+        update_head(root / "snapshots", recognition_catalog=pointer)
     else:
         path = root / "catalog/generations" / pointer["catalog_generation_id"] / "hero_version.txt"
         path.write_bytes(path.read_bytes() + b"corrupt")

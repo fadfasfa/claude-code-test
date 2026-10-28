@@ -414,8 +414,12 @@ def _event_visible(event_payload: Mapping[str, Any], error: str) -> bool:
 def read_overlay_event(path: str | Path | None = None) -> dict[str, Any]:
     """读取本地 overlay 事件，并返回带 ok/error 的渲染快照。"""
 
-    payload = load_overlay_event(path)
+    from hextech.modules.session.runtime_channel import runtime_payload
+    transported = runtime_payload("event") if path is None else None
+    payload = transported if transported is not None else load_overlay_event(path)
     error = _resolve_event_error(payload)
+    if transported is not None and payload.get("schema_version") != SCHEMA_VERSION:
+        error = "schema_mismatch"
     selection_type = normalize_selection_type(payload.get("selection_type"))
     raw_slots = payload.get("slots") if isinstance(payload.get("slots"), list) else []
     normalized_slots = [
@@ -469,7 +473,9 @@ def write_overlay_event(event_payload: Mapping[str, Any], path: str | Path | Non
     # 可变输入，避免 timeline 与落盘事件各自生成近似时间而无法绑定。
     if isinstance(event_payload, dict):
         event_payload["timing"] = dict(payload["timing"])
-    atomic_write_json(target, payload, ensure_ascii=False, indent=2)
+    from hextech.modules.session.runtime_channel import publish_runtime
+    if path is not None or not publish_runtime("event", payload):
+        atomic_write_json(target, payload, ensure_ascii=False, indent=2)
     return target
 
 

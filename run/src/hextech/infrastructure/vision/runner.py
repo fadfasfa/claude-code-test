@@ -79,6 +79,13 @@ def _write_sidecar_status(status: str, **fields: Any) -> None:
 
 
 def _write_sidecar_bootstrap_from_env(state: str, **fields: Any) -> None:
+    from hextech.modules.session.runtime_channel import child_channel
+    channel=child_channel()
+    if channel is not None:
+        channel.publish("status", {"state":state,"pid":os.getpid(),"build_id":current_build_id(),**fields})
+        if state == "failed":
+            channel.flush(.5)
+        return
     target_value = str(os.environ.get(SIDECAR_BOOTSTRAP_FILE_ENV) or "").strip()
     if not target_value:
         return
@@ -127,6 +134,9 @@ def _write_sidecar_ready_from_env(
         startup_seconds=startup_seconds,
         startup_profile=profile,
     )
+    from hextech.modules.session.runtime_channel import signal_ready
+    if signal_ready(startup_profile=profile, template_count=template_count):
+        return
     ready_path = str(os.environ.get(SIDECAR_READY_FILE_ENV) or "").strip()
     if not ready_path:
         return
@@ -145,6 +155,9 @@ def _write_sidecar_ready_from_env(
 def _sidecar_exit_requested() -> bool:
     """检查父进程写入的 graceful exit 文件。"""
 
+    from hextech.modules.session.runtime_channel import child_channel, shutdown_requested
+    if child_channel() is not None:
+        return shutdown_requested()
     exit_path = str(os.environ.get(SIDECAR_EXIT_FILE_ENV) or "").strip()
     if not exit_path:
         return False
@@ -495,7 +508,7 @@ def _run_loop_impl(
                     window_hwnd=0,
                     game_instance_id="",
                     selection_epoch=0,
-                    eligible=False,
+                    eligible=False, reason="game_window_missing",
                 )
             event, gameflow_ended = resolve_game_visibility_pause(
                 tracker,
@@ -540,7 +553,7 @@ def _run_loop_impl(
                     window_hwnd=int(hwnd),
                     game_instance_id=game_session_id,
                     selection_epoch=tracker.epoch,
-                    eligible=False,
+                    eligible=False, reason=window_mode_pause_reason,
                 )
             event = attach_window_observation(
                 tracker.pause(window_mode_pause_reason),
@@ -559,7 +572,7 @@ def _run_loop_impl(
                     window_hwnd=int(hwnd),
                     game_instance_id=game_session_id,
                     selection_epoch=tracker.epoch,
-                    eligible=False,
+                    eligible=False, reason="game_not_foreground",
                 )
             event, gameflow_ended = resolve_game_visibility_pause(
                 tracker,
@@ -590,7 +603,7 @@ def _run_loop_impl(
                     window_hwnd=int(hwnd),
                     game_instance_id=game_session_id,
                     selection_epoch=tracker.epoch,
-                    eligible=False,
+                    eligible=False, reason="scoreboard_key_down",
                 )
             event = attach_window_observation(
                 tracker.pause("scoreboard_key_down", scoreboard_key_down=True), hwnd=hwnd, rect=rect
@@ -615,6 +628,7 @@ def _run_loop_impl(
                 game_instance_id=game_session_id,
                 selection_epoch=tracker.epoch,
                 eligible=bool(tracker.scene_active and tracker.epoch > 0),
+                reason="active_scene" if tracker.scene_active else "scene_inactive",
             )
 
         dpi_scale = vision_sidecar._window_dpi_scale(hwnd)
@@ -724,6 +738,7 @@ def _run_loop_impl(
                         int(event_source.get("selection_epoch") or tracker.epoch) > 0
                         and event_scene_state in {"candidate", "active"}
                     ),
+                    reason=str(event_source.get("reason") or event_scene_state or "scene_inactive"),
                 )
             # V2 diagnostics keep suspected selections (including READY/no epoch), not only starved slots.
             maybe_dump(frame, event)

@@ -60,49 +60,6 @@ def _source_state(snapshot_status: Mapping[str, Any], source: str) -> dict[str, 
     }
 
 
-def _annotate_blitz_fallback(
-    row: dict[str, Any],
-    *,
-    fallback_reason: str,
-    requested_stage: int | None,
-    snapshot_status: Mapping[str, Any],
-    stats_generation_id: str,
-) -> dict[str, Any]:
-    source_state = _source_state(snapshot_status, "blitz")
-    stats = row.get("stats")
-    if not isinstance(stats, Mapping) or not str(stats.get("source_tier") or "").strip():
-        row["stats_fallback_reason"] = fallback_reason
-        row["requested_stage"] = requested_stage
-        return row
-    row["stats"] = {
-        **dict(stats),
-        "stats_source": "blitz",
-        "stats_scope": str(stats.get("stats_scope") or "global_tier"),
-        "requested_stage": requested_stage,
-        "fallback_reason": fallback_reason,
-        "stats_generation_id": stats_generation_id,
-        "source_run_id": source_state["run_id"],
-        "source_freshness": source_state["freshness"],
-        "data_reason": source_state["data_reason"],
-        "source_data_at": source_state["data_at"],
-    }
-    row["stats_source"] = "blitz"
-    row["stats_scope"] = str(row["stats"].get("stats_scope") or "global_tier")
-    row["stats_fallback_reason"] = fallback_reason
-    row["requested_stage"] = requested_stage
-    row["stats_generation_id"] = stats_generation_id
-    row["source_run_id"] = source_state["run_id"]
-    row["source_freshness"] = source_state["freshness"]
-    row["source_data_at"] = source_state["data_at"]
-    if source_state["data_reason"]:
-        row["data_reason"] = source_state["data_reason"]
-    if source_state["stale"] == "true":
-        # 来源 DTO 已经通过同 Catalog 和字段校验；年龄只降健康度，不删除旧排名。
-        row["data_status"] = "stale"
-        row["status_code"] = "GENERATION_DEGRADED"
-    return row
-
-
 def _scoped_source_state(view: ScopedStatsView, status: Mapping[str, Any]) -> dict[str, str]:
     """把 ranking 的检查证据严格绑定到当前英雄的 immutable component。"""
 
@@ -239,8 +196,7 @@ def apply_scoped_stage_stats(
         # An old snapshot may still contain tier-only Blitz rows. Keep identity, not its tier.
         stats = row.get("stats")
         if isinstance(stats, Mapping) and (
-            stats.get("stats_source") == "blitz"
-            or (stats.get("source_tier") and stats.get("winrate", stats.get("win_rate")) is None)
+            stats.get("source_tier") and stats.get("winrate", stats.get("win_rate")) is None
         ):
             row.update(stats={}, stats_source="", stats_scope="", data_status="missing",
                        data_reason="champion_stat_missing", status_code="CHAMPION_STAT_MISSING")

@@ -49,6 +49,10 @@ LAUNCHER_NAME = "启动 Hextech.bat"
 FIRST_RUN_GUIDE_NAME = "README_首次使用.txt"
 EXCLUDED_MODULES = [
     "tkinter.test",
+    "pandas",
+    "fastapi",
+    "uvicorn",
+    "starlette",
     "pydoc",
     "scipy",
     "matplotlib",
@@ -58,7 +62,6 @@ EXCLUDED_MODULES = [
     "jmespath",
 ]
 PYINSTALLER_HIDDEN_IMPORTS = [
-    "pandas",
     "numpy",
     "onnxruntime",
     "onnxruntime.capi._pybind_state",
@@ -75,27 +78,20 @@ PYINSTALLER_HIDDEN_IMPORTS = [
     "win32gui",
     "win32con",
     "psutil",
-    "fastapi",
-    "uvicorn",
     "filelock",
     "bs4",
     "scrapling.fetchers",
     "hextech",
     "hextech.interfaces.desktop.app",
-    "hextech.interfaces.web.backend.app",
     "hextech.modules.data.overlay_source",
     "hextech.interfaces.overlay.host",
     "hextech.interfaces.overlay.lifecycle",
     "hextech.interfaces.overlay.renderer",
     "hextech.infrastructure.vision.sidecar",
-    "hextech.bootstrap.data_service_runtime",
     "hextech.modules.data.generation",
 ]
 PYINSTALLER_COLLECT_SUBMODULES = [
     "tkinter",
-    "fastapi",
-    "starlette",
-    "uvicorn",
     "scrapling",
     "hextech",
 ]
@@ -206,17 +202,19 @@ VSVersionInfo(
     return version_file
 
 
-def write_generated_manifest(build_root: Path, *, verified_snapshot_root: Path | None = None) -> Path:
+def write_generated_manifest(build_root: Path, *, verified_snapshot_root: Path | None = None,
+                             runtime_profile: str = "installed") -> Path:
     """把本次 bundle manifest 写入临时 staging 目录。"""
 
     print_step("生成资源清单")
     staging_dir = build_root / "staging"
     staging_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = staging_dir / "bundle_manifest.json"
-    manifest = build_bundle_manifest(BASE_DIR, verified_snapshot_root=verified_snapshot_root)
+    manifest = build_bundle_manifest(BASE_DIR, verified_snapshot_root=verified_snapshot_root,
+                                     runtime_profile=runtime_profile)
 
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    print_check("静态页面、稳定 data、快照和 assets 已按源路径加入打包规则")
+    print_check(f"v4 seed、资源和运行目录配置已加入打包规则：{runtime_profile}")
     print_warn("不会在 run/build/_bundle_runtime 创建资源副本")
     return manifest_path
 
@@ -465,7 +463,7 @@ def prepare_runtime_data_for_package(
         state = str(result.get("state") or "")
         failures = result.get("failures")
         optional_only = (state == "degraded" and isinstance(failures, dict) and bool(failures)
-                         and set(failures).issubset({"blitz", "apex", "mayhem"})
+                         and set(failures).issubset({"apex", "mayhem"})
                          and bool(result.get("generation_id")))
         if state != "ready" and not optional_only:
             reason_code = str(result.get("reason_code") or "unknown")
@@ -477,7 +475,7 @@ def prepare_runtime_data_for_package(
     else:
         print_step("离线校验打包 seed")
         print_check("未指定 --refresh-data，跳过远端刷新")
-        seed_root = (verified_snapshot_root or (BASE_DIR / "resources" / "seeds")).resolve()
+        seed_root = (verified_snapshot_root or (BASE_DIR / "resources" / "seeds" / "runtime.v4" / "snapshots")).resolve()
 
     seed_health = validate_snapshot_seed(seed_root)
     print_check(
@@ -626,8 +624,9 @@ def write_first_run_guide(final_dir: Path, *, isolated_candidate: bool = False) 
 """
     if isolated_candidate:
         guide_content = ("隔离诊断候选，未部署、未完成真机验收。\n"
-                         "先退出正式 Hextech，仅通过“启动 Hextech.bat”启动本候选；不要直接双击 EXE。\n"
-                         "启动器将 HEXTECH_VAR_DIR 固定到包内 var，子进程继承；不修改正式快捷方式或运行数据。\n"
+                         "先退出正式 Hextech，再通过 EXE、桌面测试快捷方式或“启动 Hextech.bat”启动。\n"
+                         "本候选由包内构建清单固定使用 EXE 同级 var，所有子进程使用同一目录。\n"
+                         "目录不可写或清单损坏时启动会明确失败，不回退到正式运行目录。\n"
                          "OCR 备用预处理未启用，需真实 ROI、人工真值及 holdout 验证。\n")
     guide_path.write_text(guide_content, encoding="utf-8")
     return guide_path
@@ -874,6 +873,7 @@ def main(argv: list[str] | None = None) -> None:
         manifest_path = write_generated_manifest(
             build_root,
             verified_snapshot_root=injected_snapshot_root,
+            runtime_profile="isolated_candidate" if args.isolated_candidate else "installed",
         )
         version_file = generate_version_info(build_root)
         exe_dir = build_exe(

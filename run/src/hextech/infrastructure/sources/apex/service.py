@@ -21,7 +21,6 @@ from hextech.infrastructure.sources.apex.common import (
     _atomic_write_json,
     _load_existing_synergy_stats,
     _load_json_file,
-    _safe_exception_label,
     _validate_publish_size,
     argparse,
     build_champion_lookup,
@@ -29,7 +28,6 @@ from hextech.infrastructure.sources.apex.common import (
     build_core_info,
     classify_apex_page,
     datetime,
-    get_latest_csv,
     load_active_catalog,
     load_apexlol_slug_map,
     load_augment_manifest_entries,
@@ -109,21 +107,6 @@ def build_augment_name_map_from_static(catalog_root: Path | None = None) -> dict
     if name_map:
         return name_map
 
-    latest_csv = get_latest_csv()
-    if not latest_csv or not os.path.exists(latest_csv):
-        logger.warning("最新 runtime CSV 不存在，无法构建海克斯名称映射")
-        return {}
-
-    try:
-        import pandas as pd
-
-        df = pd.read_csv(latest_csv, usecols=["海克斯名称"])
-        for _, row in df.iterrows():
-            name = str(row.get("海克斯名称") or "").strip()
-            if name:
-                add_mapping(name, name)
-    except Exception as exc:
-        logger.warning("读取最新 CSV 构建海克斯名称映射失败：%s", _safe_exception_label(exc))
     return name_map
 
 

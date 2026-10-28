@@ -162,9 +162,9 @@ def test_visibility_fails_closed_for_fullscreen() -> None:
 
 
 def test_desktop_explains_borderless_requirement() -> None:
-    from hextech.interfaces.desktop.app_shared import _format_supervisor_game_overlay_status
+    from hextech.interfaces.desktop.app_shared import _format_runtime_game_overlay_status
 
-    text, _color = _format_supervisor_game_overlay_status(
+    text, _color = _format_runtime_game_overlay_status(
         {
             "status": "running",
             "functional_status": "degraded",
@@ -178,7 +178,7 @@ def test_desktop_explains_borderless_requirement() -> None:
 def test_unknown_window_mode_stays_fail_closed_without_persistent_desktop_warning() -> None:
     from hextech.interfaces.desktop.app_shared import (
         UI_COLORS,
-        _format_supervisor_game_overlay_status,
+        _format_runtime_game_overlay_status,
     )
     from hextech.interfaces.overlay.host_visibility import decide_visibility
 
@@ -194,7 +194,7 @@ def test_unknown_window_mode_stays_fail_closed_without_persistent_desktop_warnin
         ready_slots=3,
         game_window_mode_status="unknown",
     )
-    text, color = _format_supervisor_game_overlay_status(
+    text, color = _format_runtime_game_overlay_status(
         {
             "status": "running",
             "functional_status": "degraded",

@@ -72,7 +72,7 @@ def _retention_priority(retention_class: str) -> int:
 
 
 def _slots(event: Mapping[str, Any]) -> list[dict[str, Any]]:
-    return [
+    result = [
         {
             key: deepcopy(slot[key])
             for key in (
@@ -84,6 +84,15 @@ def _slots(event: Mapping[str, Any]) -> list[dict[str, Any]]:
         for slot in event.get("slots", [])[:3]
         if isinstance(slot, Mapping)
     ]
+    raw_slots = event.get("_raw_slots")
+    for index, slot in enumerate(result):
+        raw = raw_slots[index] if isinstance(raw_slots, list) and index < len(raw_slots) else {}
+        production = raw.get("ocr_production") if isinstance(raw, Mapping) else {}
+        if isinstance(production, Mapping):
+            slot["ocr_evidence"] = {key: str(production[key])[:80] if isinstance(production[key], str)
+                else production[key] for key in ("state", "reason", "match_rule", "matched_id", "confidence", "raw_text")
+                if key in production and isinstance(production[key], (str, int, float, bool, type(None)))}
+    return result
 
 
 def _event_generations(event: Mapping[str, Any]) -> tuple[int, ...]:
@@ -178,7 +187,8 @@ def _metadata(event: Mapping[str, Any]) -> dict[str, Any]:
     timing = event.get("timing") or {}
     fields = ("session_id", "game_instance_id", "selection_epoch", "frame_id", "scene_state",
               "scene_kind", "scene_present", "selection_button_present", "reason", "build_id",
-              "sidecar_instance_id", "layout_id", "capture_size", "button_box")
+              "sidecar_instance_id", "layout_id", "capture_size", "button_box",
+              "catalog_generation_id", "vision_pool_generation_id", "production_pool_id")
     result = {key: source[key] for key in fields if key in source}
     result["captured_at"] = timing.get("captured_at")
     result["slots"] = _slots(event)

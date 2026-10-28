@@ -12,11 +12,10 @@ from hextech.interfaces.desktop.app_shared import (  # noqa: F401 - 保留历史
     DesktopInstanceOwner,
     StartupTimingProbe,
     UI_COLORS,
-    WEB_PORT_FILE,
     WINDOW_BASE_HEIGHT,
     WINDOW_EXPANDED_WIDTH,
     _format_game_overlay_host_reason,
-    _format_supervisor_game_overlay_status,
+    _format_runtime_game_overlay_status,
     ctypes,
     load_ui_feature_flags,
     logger,
@@ -47,17 +46,17 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
     def __init__(self):
         self.startup_timing = StartupTimingProbe()
         self.startup_timing.mark("init_start")
-        self._cohort_seed_installer: Callable[[], None] = lambda: None
+        self._seed_initializer: Callable[[], None] = lambda: None
+        self._data_runtime_factory = None
+        self._runtime_owner_factory = None
         configure_process_dpi_awareness()
 
         self.stop_event = threading.Event()
         self.pause_event = threading.Event()
         self.threads = []
         self._threads_lock = threading.Lock()
-        self.web_port_file = WEB_PORT_FILE
         self.feature_flags = load_ui_feature_flags()
-        self.web_process = None
-        self.runtime_supervisor = None
+        self.runtime_owner = None
         self.data_service = None
         self.service_manager: ServiceManager | None = None
         self._service_manager_lock = threading.Lock()
@@ -75,8 +74,6 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._post_visible_bootstrap_started = False
         self._post_visible_bootstrap_done = False
         self._control_instance_id = f"ui-{os.getpid()}-{int(time.time() * 1000)}"
-        self._supervisor_lease_stop = threading.Event()
-        self._supervisor_lease_thread: threading.Thread | None = None
         self.current_hero_ids = set()
         self.current_candidate_groups = {"selected_champion_ids": [], "bench_champion_ids": []}
         # champ-select 结束瞬间的己方/队友角色短暂保留缓存，见 _preserve_recent_selection_roles。
@@ -86,7 +83,6 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._lcu_token = None
         self._client_context_provider = None
 
-        self.last_click_time = 0
         self.img_write_lock = threading.Lock()
         self.downloading_imgs = set()
         self._champions_lock = threading.Lock()
@@ -98,17 +94,9 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._last_overlay_target_pos = None
         # 首次显示是否已完成吸附定位，用于解决"必须先移动客户端窗口才会跟随"的体感问题
         self._overlay_position_initialized = False
-        self._hero_preload_ready = {}
-        self._hero_preload_pending = set()
-        self._hero_preload_lock = threading.Lock()
-        self._hero_click_gate_timeout = 1.2
-        self._hero_click_gate_poll_interval = 0.05
-        self._hero_click_status = ""
         self._last_live_state_version = -1
         self._last_live_state_updated_at = 0.0
         self._last_live_state_source = ""
-        self._last_redirect_success_base = ""
-        self._last_redirect_success_at = 0.0
         self._ui_render_in_progress = False
         self._pending_ui_refresh = None
         self._overlay_status_after_id = None
@@ -132,16 +120,6 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._data_created_ts = 0.0
         self._overlay_watchdog_lock = threading.Lock()
         self._overlay_operation_lock = threading.Lock()
-        self._web_operation_lock = threading.Lock()
-        self._fallback_web_lock = threading.Lock()
-        self._fallback_web_owned = False
-        self._fallback_web_starting = False
-        self._fallback_web_stopping = False
-        self._fallback_web_cleanup_requested = False
-        self._fallback_web_user_adopted = False
-        self._fallback_web_error = ""
-        self._fallback_web_generation = 0
-        self._fallback_web_failed_key = ""
         self._game_overlay_desired_enabled = bool(self.feature_flags.get("game_overlay_enabled"))
         self._feature_toggle_busy: set[str] = set()
         self._feature_toggle_lock = threading.Lock()
@@ -237,14 +215,16 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
             if thread.name in {"desktop-client-context", "desktop-window-probe", "desktop-candidates"} and thread.is_alive():
                 thread.join(timeout=1.2)
 
-def run_desktop(*, cohort_seed_installer: Callable[[], None] | None = None):
+def run_desktop(*, seed_initializer: Callable[[], None] | None = None, data_runtime_factory=None, runtime_owner_factory=None):
     """启动桌面伴生窗口。"""
 
     try:
         with DesktopInstanceOwner() as instance_owner:
             ui = HextechUI()
-            if cohort_seed_installer is not None:
-                ui._cohort_seed_installer = cohort_seed_installer
+            ui._data_runtime_factory = data_runtime_factory
+            ui._runtime_owner_factory = runtime_owner_factory
+            if seed_initializer is not None:
+                ui._seed_initializer = seed_initializer
             ui.attach_instance_owner(instance_owner)
             try:
                 ui.root.mainloop()

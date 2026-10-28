@@ -11,38 +11,6 @@ import pytest
 from hextech.bootstrap import acquisition_worker
 
 
-def test_hextech_fallback_is_not_reported_as_refresh_success(tmp_path: Path) -> None:
-    pointer = tmp_path / "hextech.pointer.v2.json"
-    status = {
-        "last_result": "fallback",
-        "reason": "schema_changed",
-        "failure_stage": "champion_catalog",
-        "fallback_used": True,
-        "active_csv": str(tmp_path / "last-good.csv"),
-        "failure_diagnostics": {
-            "missing_count": 60,
-            "missing_ids": ["60001", "60002"],
-        },
-    }
-
-    with patch(
-        "hextech.infrastructure.sources.hextech.refresh_support.load_scraper_status",
-        return_value=status,
-    ):
-        result = acquisition_worker._hextech_worker_result(True, pointer)
-
-    assert result == {
-        "state": "fallback",
-        "success": False,
-        "reason_code": "schema_changed",
-        "failure_stage": "champion_catalog",
-        "fallback_used": True,
-        "last_good_available": True,
-        "diagnostics": {
-            "missing_count": 60,
-            "missing_ids": ["60001", "60002"],
-        },
-    }
 
 
 def test_worker_missing_pointer_raises_structured_source_failure(tmp_path: Path) -> None:
@@ -102,24 +70,6 @@ def test_worker_cli_writes_structured_failure_result(tmp_path: Path) -> None:
     assert payload["last_good_available"] is True
 
 
-def test_worker_cli_forwards_blitz_coverage_policy(tmp_path: Path) -> None:
-    result_path = tmp_path / "blitz.result.json"
-    expected = {"state": "ready", "source": "blitz", "pointer": {"schema_version": 2}}
-
-    with patch.object(acquisition_worker, "run_worker", return_value=expected) as worker:
-        exit_code = acquisition_worker.main(
-            [
-                "--source", "blitz",
-                "--pointer-output", str(tmp_path / "pointer.json"),
-                "--result-output", str(result_path),
-                "--cancel-file", str(tmp_path / "cancel"),
-                "--coverage-policy", "active_partial",
-            ]
-        )
-
-    assert exit_code == 0
-    assert worker.call_args.kwargs["coverage_policy"] == "active_partial"
-    assert json.loads(result_path.read_text(encoding="utf-8")) == expected
 
 
 def test_worker_cli_unexpected_error_keeps_fixed_failure_contract(tmp_path: Path) -> None:

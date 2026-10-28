@@ -19,7 +19,7 @@ from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import var_path
 
 
-KNOWN_SOURCES = frozenset({"hextech", "aramkit", "blitz", "apex", "mayhem"})
+KNOWN_SOURCES = frozenset({"aramkit", "apex", "mayhem"})
 SOURCE_POINTER_VERSION = 2
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -162,16 +162,28 @@ def publish_source_run(
 
 
 def load_source_current(source: str, *, verify_hash: bool = True) -> dict[str, Any]:
-    pointer_path = source_current_path(source)
-    if not pointer_path.is_file():
+    normalized = _validate_source(source)
+    from hextech.modules.data.generation import DataSnapshotClient
+    snapshot_root = var_path("snapshots")
+    if not (snapshot_root / "current.v4.json").exists():
         return {}
     try:
-        payload = json.loads(pointer_path.read_text(encoding="utf-8"))
-        if not isinstance(payload, Mapping):
-            raise SourceRunValidationError(f"来源 pointer 必须是对象：{pointer_path}")
-        pointer = SourcePointerV2.from_mapping(payload)
-    except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SourceRunValidationError(f"来源 pointer 无效：{pointer_path}: {exc}") from exc
+        view = DataSnapshotClient(snapshot_root).open_view()
+        candidates = [ref for ref in view.manifest.source_files if ref.source == normalized
+                      and (normalized != "aramkit" or ref.artifact_role == "hero_rankings")]
+        if not candidates:
+            return {}
+        if len(candidates) != 1:
+            raise SourceRunValidationError("release source reference is ambiguous")
+        ref = candidates[0]
+        manifest = load_source_run_manifest(normalized, ref.run_id)
+        if manifest is None or manifest.artifact is None:
+            raise SourceRunValidationError("release source manifest missing")
+        pointer = SourcePointerV2(normalized, ref.run_id, manifest.catalog_generation_id,
+            manifest.catalog_sha256, ref.manifest_sha256, manifest.artifact,
+            manifest.completed_at, manifest.completed_at)
+    except (OSError, TypeError, ValueError) as exc:
+        raise SourceRunValidationError(f"release source pointer 无效: {exc}") from exc
     if pointer.source != _validate_source(source):
         raise SourceRunValidationError(f"来源 pointer 身份错误：expected={source} actual={pointer.source}")
     run_dir = source_run_dir(pointer.source, pointer.run_id)

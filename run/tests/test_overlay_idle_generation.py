@@ -104,11 +104,11 @@ def test_real_snapshot_fallback_does_not_relabel_idle_bootstrap(tmp_path):
     try:
         assert worker.request_idle_refresh(now=100)
         wait_for(lambda: worker.status()["bootstrap_generation_id"] == data["generation_id"])
-        # Isolated fixture pointers only; original immutable fixture remains intact.
-        (runtime / "snapshots/previous.v2.json").write_text(json.dumps({
-            "schema_version": 2, "generation_id": data["generation_id"]}), encoding="utf-8")
-        (runtime / "snapshots/current.v2.json").write_text(json.dumps({
-            "schema_version": 2, "current_generation_id": "20990101T000000-aaaaaaaaaa"}), encoding="utf-8")
+        # Both role references stay in the same atomic v4 head.
+        from hextech.modules.data.generation.release_store import read_head
+        head = read_head(runtime / "snapshots")
+        head.update(current_generation_id="20990101T000000-aaaaaaaaaa", previous_generation_id=data["generation_id"])
+        (runtime / "snapshots/current.v4.json").write_text(json.dumps(head), encoding="utf-8")
         assert client.open_view().status()["failed_generation_id"] == "20990101T000000-aaaaaaaaaa"
         assert worker.request_idle_refresh(now=101)
         wait_for(lambda: worker.status()["error_type"] == "current_snapshot_invalid")

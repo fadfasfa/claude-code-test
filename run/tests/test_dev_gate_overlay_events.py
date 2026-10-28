@@ -158,6 +158,16 @@ def test_overlay_event_channel_contract() -> None:
         assert unknown_snapshot["visible"] is False
         assert unknown_snapshot["error"] == "selection_type_unknown"
 
+    from hextech.modules.session.runtime_channel import install_app_transport
+    publications = []
+    install_app_transport(lambda kind,payload: publications.append((kind,payload)))
+    try:
+        overlay_event_channel.write_overlay_event(event)
+        assert overlay_event_channel.read_overlay_event()["slots"][0]["name"] == "珠光护手"
+        assert publications[-1][0] == "event"
+    finally:
+        install_app_transport(None)
+
     module_text = (RUN_DIR / "src" / "hextech" / "modules" / "vision" / "events.py").read_text(encoding="utf-8")
     assert "requests" not in module_text
     assert "cv2" not in module_text

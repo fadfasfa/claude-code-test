@@ -180,7 +180,7 @@ class _FakeUI(DesktopBackgroundRuntimeMixin):
         self._overlay_operation_lock = threading.Lock()
         self._supervisor_lease_stop = threading.Event()
         self._supervisor_lease_thread = None
-        self.runtime_supervisor = SimpleNamespace(name="supervisor")
+        self.runtime_owner = SimpleNamespace(name="supervisor", stop=lambda: self.calls.append("stop_supervisor"))
         self.calls: list[str] = []
         self.supervisor_restore_arguments: list[bool] = []
         self.service_manager = _FakeManager(self.calls)
@@ -196,7 +196,7 @@ class _FakeUI(DesktopBackgroundRuntimeMixin):
     def _set_overlay_status_summary(self, text: str, color: str) -> None:
         del text, color
 
-    def _start_runtime_supervisor(
+    def _start_runtime_owner(
         self,
         *,
         restore_persisted_game_overlay: bool = True,
@@ -205,8 +205,9 @@ class _FakeUI(DesktopBackgroundRuntimeMixin):
         del startup_timeout
         self.supervisor_restore_arguments.append(restore_persisted_game_overlay)
         self.calls.append("start_supervisor")
-        self.runtime_supervisor = SimpleNamespace(
+        self.runtime_owner = SimpleNamespace(
             name="resumed",
+            stop=lambda: self.calls.append("stop_supervisor"),
             set_game_overlay_enabled=lambda enabled: self.calls.append(f"restore_overlay:{enabled}")
             or {"status": "accepted"},
         )
@@ -223,21 +224,18 @@ def test_suspend_and_resume_stop_and_restore_heavy_services(monkeypatch) -> None
         assert handle.name == "supervisor"
         ui.calls.append("stop_supervisor")
 
-    monkeypatch.setattr(
-        "hextech.interfaces.desktop.background_runtime.ui_runtime.stop_runtime_supervisor_process",
-        stop_supervisor,
-    )
+    ui.runtime_owner.stop = lambda: stop_supervisor(ui.runtime_owner)
     ui._suspend_background_runtime()
 
     assert ui._background_runtime_state == "suspended"
     assert ui.pause_event.is_set()
-    assert ui.calls == ["stop_web", "stop_data", "stop_supervisor"]
-    assert ui.runtime_supervisor is None
+    assert ui.calls == ["stop_data", "stop_supervisor"]
+    assert ui.runtime_owner is None
 
     ui._resume_background_runtime(reason="test")
     assert ui._background_runtime_state == "running"
     assert not ui.pause_event.is_set()
-    assert ui.calls[-4:] == ["start_data", "start_supervisor", "restore_overlay:True", "start_web"]
+    assert ui.calls[-3:] == ["start_data", "start_supervisor", "restore_overlay:True"]
     assert ui.supervisor_restore_arguments == [False]
     assert ui.data_service == "data-handle"
 
@@ -259,12 +257,12 @@ def test_background_health_requires_current_host_and_sidecar_build_ids(monkeypat
             }
         }
 
-    ui.runtime_supervisor = SimpleNamespace(get_status=lambda: status(host_build="", sidecar_build=""))
+    ui.runtime_owner = SimpleNamespace(get_status=lambda: status(host_build="", sidecar_build=""))
     missing_identity = ui._background_runtime_health()
     assert missing_identity["overlay"] == "starting"
     assert missing_identity["sidecar"] == "starting"
 
-    ui.runtime_supervisor = SimpleNamespace(
+    ui.runtime_owner = SimpleNamespace(
         get_status=lambda: status(host_build="build-current", sidecar_build="build-current")
     )
     verified_identity = ui._background_runtime_health()
@@ -272,15 +270,6 @@ def test_background_health_requires_current_host_and_sidecar_build_ids(monkeypat
     assert verified_identity["sidecar"] == "ready"
 
 
-def test_background_health_rejects_exited_web_handle_but_allows_unverified_fake() -> None:
-    ui = _FakeUI()
-
-    unverified = ui._background_runtime_health()
-    assert unverified["web"] == "unverified"
-
-    ui.service_manager.web = SimpleNamespace(process="stale-handle", is_running=lambda: False)
-    stale_handle = ui._background_runtime_health()
-    assert stale_handle["web"] == "starting"
 
 
 def test_hide_to_tray_never_exits_process() -> None:
@@ -362,10 +351,7 @@ def test_resume_failure_cleans_partial_services_before_next_probe(monkeypatch) -
         "hextech.interfaces.desktop.background_runtime.probe_league_process_state",
         lambda: _state(),
     )
-    monkeypatch.setattr(
-        "hextech.interfaces.desktop.background_runtime.ui_runtime.stop_runtime_supervisor_process",
-        lambda _handle: ui.calls.append("stop_supervisor"),
-    )
+    ui.runtime_owner.stop = lambda: ui.calls.append("stop_supervisor")
     ui._suspend_background_runtime()
     ui.calls.clear()
     ui._wait_for_background_runtime_health = lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("sidecar timeout"))  # type: ignore[method-assign]
@@ -374,15 +360,12 @@ def test_resume_failure_cleans_partial_services_before_next_probe(monkeypatch) -
 
     assert ui._background_runtime_state == "resume_failed"
     assert ui.pause_event.is_set()
-    assert ui.runtime_supervisor is None
+    assert ui.runtime_owner is None
     assert ui.data_service is None
-    assert ui.web_process is None
     assert ui.calls == [
         "start_data",
         "start_supervisor",
         "restore_overlay:True",
-        "start_web",
-        "stop_web",
         "stop_data",
         "stop_supervisor",
     ]
@@ -394,7 +377,7 @@ def test_auto_resume_does_not_start_late_supervisor_after_bootstrap_budget_expir
     ui = _FakeUI()
     ui._background_runtime_state = "suspended"
     # ``_FakeUI`` 默认模拟运行态；这里必须与真实轻量待机一致，不能留下旧 Supervisor。
-    ui.runtime_supervisor = None
+    ui.runtime_owner = None
     ui.data_service = None
     ui.web_process = None
     clock = {"now": 100.0}
@@ -416,52 +399,6 @@ def test_auto_resume_does_not_start_late_supervisor_after_bootstrap_budget_expir
     assert "start_supervisor" not in ui.calls
 
 
-def test_auto_resume_passes_remaining_deadline_to_web_before_health_check(monkeypatch) -> None:
-    """DataService、Supervisor、Web 必须共享一次恢复预算，不能各自重置超时。"""
-
-    ui = _FakeUI()
-    ui._background_runtime_state = "suspended"
-    ui.runtime_supervisor = None
-    ui.data_service = None
-    ui.web_process = None
-    clock = {"now": 100.0}
-    data_timeouts: list[float] = []
-    supervisor_timeouts: list[float] = []
-    web_timeouts: list[float] = []
-
-    def start_data(*, timeout: float | None = None):
-        data_timeouts.append(float(timeout or 0.0))
-        clock["now"] = 104.0
-        ui.calls.append("start_data")
-        return "data-handle"
-
-    def start_supervisor(*, restore_persisted_game_overlay: bool, startup_timeout: float | None = None) -> None:
-        assert restore_persisted_game_overlay is False
-        supervisor_timeouts.append(float(startup_timeout or 0.0))
-        clock["now"] = 108.0
-        ui.calls.append("start_supervisor")
-        ui.runtime_supervisor = SimpleNamespace(
-            name="resumed",
-            set_game_overlay_enabled=lambda _enabled: {"status": "accepted"},
-            stop=lambda: None,
-        )
-
-    def start_web(*, timeout: float | None = None) -> None:
-        web_timeouts.append(float(timeout or 0.0))
-        clock["now"] = 113.1
-        ui.calls.append("start_web")
-
-    ui.service_manager.start_data_service = start_data  # type: ignore[method-assign]
-    ui.service_manager.start_web = start_web  # type: ignore[method-assign]
-    ui._start_runtime_supervisor = start_supervisor  # type: ignore[method-assign]
-    monkeypatch.setattr("hextech.interfaces.desktop.background_runtime.time.monotonic", lambda: clock["now"])
-
-    ui._resume_background_runtime(reason="league_process_detected")
-
-    assert data_timeouts == [BACKGROUND_RESUME_HEALTH_TIMEOUT_SECONDS]
-    assert supervisor_timeouts == [BACKGROUND_RESUME_HEALTH_TIMEOUT_SECONDS - 4.0]
-    assert web_timeouts == [BACKGROUND_RESUME_HEALTH_TIMEOUT_SECONDS - 8.0]
-    assert ui._background_runtime_state == "resume_failed"
 
 
 def test_complete_exit_cancels_inflight_resume_before_supervisor_start(monkeypatch) -> None:
@@ -469,7 +406,7 @@ def test_complete_exit_cancels_inflight_resume_before_supervisor_start(monkeypat
 
     ui = _FakeUI()
     ui._background_runtime_state = "suspended"
-    ui.runtime_supervisor = None
+    ui.runtime_owner = None
     ui.data_service = None
     ui.web_process = None
     data_started = threading.Event()
@@ -501,7 +438,7 @@ def test_complete_exit_cancels_inflight_resume_before_supervisor_start(monkeypat
 
     assert not worker.is_alive()
     assert "start_supervisor" not in ui.calls
-    assert ui.runtime_supervisor is None
+    assert ui.runtime_owner is None
     assert ui.data_service is None
     assert ui.pause_event.is_set()
 
@@ -529,7 +466,7 @@ def test_background_health_caps_supervisor_status_request_to_remaining_deadline(
             }
         }
 
-    ui.runtime_supervisor = SimpleNamespace(get_status=get_status, is_running=lambda: True)
+    ui.runtime_owner = SimpleNamespace(get_status=get_status, is_running=lambda: True)
 
     health = ui._background_runtime_health(deadline=100.25)
 
@@ -547,7 +484,7 @@ def test_background_resume_caps_overlay_enable_request_to_remaining_deadline(mon
         captured.append(timeout)
         return {"status": "accepted"}
 
-    ui.runtime_supervisor = SimpleNamespace(set_game_overlay_enabled=set_enabled)
+    ui.runtime_owner = SimpleNamespace(set_game_overlay_enabled=set_enabled)
 
     ui._restore_game_overlay_after_background_resume(deadline=100.125)
 
@@ -556,17 +493,14 @@ def test_background_resume_caps_overlay_enable_request_to_remaining_deadline(mon
 
 def test_failed_supervisor_cleanup_blocks_next_resume_until_stopped(monkeypatch) -> None:
     ui = _FakeUI()
-    stale_supervisor = ui.runtime_supervisor
+    stale_supervisor = ui.runtime_owner
     ui._background_runtime_state = "resume_cleanup_pending"
-    monkeypatch.setattr(
-        "hextech.interfaces.desktop.background_runtime.ui_runtime.stop_runtime_supervisor_process",
-        lambda _handle: (_ for _ in ()).throw(OSError("still running")),
-    )
+    ui.runtime_owner.stop = lambda: (_ for _ in ()).throw(OSError("still running"))
 
     ui._resume_background_runtime(reason="league_process_detected")
 
     assert ui._background_runtime_state == "resume_cleanup_pending"
-    assert ui.runtime_supervisor is stale_supervisor
+    assert ui.runtime_owner is stale_supervisor
     assert "start_supervisor" not in ui.calls
 
 

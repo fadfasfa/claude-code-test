@@ -80,15 +80,16 @@ def resolve_overlay_context_error(payload: Mapping[str, Any], *, now: float | No
 def read_overlay_context(path: str | Path | None = None) -> dict[str, Any]:
     """读取并标准化当前英雄上下文；不可用时不返回过期英雄。"""
 
-    target = Path(path) if path is not None else OVERLAY_CONTEXT_FILE
-    try:
-        raw_text = target.read_text(encoding="utf-8")
-    except OSError:
-        return empty_overlay_context("context_missing")
-    try:
-        payload = json.loads(raw_text)
-    except json.JSONDecodeError:
-        return empty_overlay_context("context_damaged")
+    from hextech.modules.session.runtime_channel import runtime_payload
+    payload = runtime_payload("context") if path is None else None
+    if payload is None:
+        target = Path(path) if path is not None else OVERLAY_CONTEXT_FILE
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+        except OSError:
+            return empty_overlay_context("context_missing")
+        except json.JSONDecodeError:
+            return empty_overlay_context("context_damaged")
     if not isinstance(payload, Mapping):
         return empty_overlay_context("context_damaged")
 

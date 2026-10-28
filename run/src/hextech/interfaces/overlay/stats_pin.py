@@ -22,6 +22,20 @@ from hextech.modules.game_context.stage_context import StageContextV1, resolve_s
 DEFAULT_STAGE_CONTEXT_WAIT_SECONDS = 2.0
 
 
+@dataclass(frozen=True)
+class StageConfirmation:
+    """仅在输入到达时生成的有界内存凭据；不携带数据代或统计数值。"""
+
+    selection_key: SelectionKey
+    game_instance_id: str
+    window_hwnd: int
+    sidecar_instance_id: str
+    stage_context: StageContextV1
+    boundary_at: float
+    confirmed_at: float
+    details: Mapping[str, Any]
+
+
 def _generation_id(view: SnapshotViewPort | None) -> str:
     if view is None:
         return ""
@@ -106,6 +120,8 @@ class SelectionStatsPin:
         self._last_seq = 0
         self._last_sample = 0.0
         self._confirmation: dict[str, Any] = {}
+        self._input_confirmation: StageConfirmation | None = None
+        self._identity: tuple[Any, ...] | None = None
 
     def reset(self) -> None:
         self._key = None
@@ -116,6 +132,49 @@ class SelectionStatsPin:
         self._last_seq = 0
         self._last_sample = 0.0
         self._confirmation = {}
+        self._input_confirmation = None
+        self._identity = None
+
+    def _begin(self, event: Mapping[str, Any], boundary: float | None) -> SelectionKey | None:
+        key = selection_key(event)
+        source = event.get("source") or {}
+        identity = (key, source.get("game_instance_id"), source.get("window_hwnd"), source.get("sidecar_instance_id"))
+        if key is None:
+            self.reset()
+            return None
+        if identity != self._identity:
+            self.reset()
+            self._identity, self._key = identity, key
+            self._boundary = boundary if boundary is not None else self._wall_now()
+            self._started_at = self._now() - max(0.0, self._wall_now() - self._boundary)
+        return key
+
+    def observe(
+        self, event: Mapping[str, Any], context: Mapping[str, Any], *,
+        completed_selection_count: int | None, confirmation_started_at: float | None = None,
+    ) -> StageConfirmation | None:
+        """纯内存取证；调用者串行化输入，不等待 snapshot 或 scoped 文件。"""
+
+        key = self._begin(event, confirmation_started_at)
+        if key is None:
+            return None
+        if self._input_confirmation is not None:
+            if self._input_confirmation.stage_context.champion_id == str(context.get("champion_id") or ""):
+                return self._input_confirmation
+            # 英雄身份改变也不能复用第一份样本，更不能重新获得两秒预算。
+            self._input_confirmation = None
+            self._candidate = None
+        elapsed = max(0.0, self._now() - self._started_at)
+        stage = resolve_stage_context(context, completed_selection_count=completed_selection_count)
+        if elapsed > self.wait_seconds or not self._confirmed(event, context, stage):
+            return None
+        source = event.get("source") or {}
+        self._input_confirmation = StageConfirmation(
+            key, str(source.get("game_instance_id") or ""), int(source.get("window_hwnd") or 0),
+            str(source.get("sidecar_instance_id") or ""),
+            stage, self._boundary, self._wall_now(), dict(self._confirmation),
+        )
+        return self._input_confirmation
 
     def _confirmed(self, event: Mapping[str, Any], context: Mapping[str, Any], stage: StageContextV1) -> bool:
         source = event.get("source") or {}
@@ -162,19 +221,12 @@ class SelectionStatsPin:
         *,
         completed_selection_count: int | None,
         confirmation_started_at: float | None = None,
+        input_confirmation: StageConfirmation | None = None,
     ) -> PinnedStatsScope:
-        key = selection_key(event)
+        key = self._begin(event, confirmation_started_at)
         if key is None:
             self.reset()
             return self._latest
-        now = self._now()
-        if key != self._key:
-            self.reset()
-            self._key = key
-            self._started_at = now
-            self._boundary = confirmation_started_at if confirmation_started_at is not None else self._wall_now()
-            # A slow snapshot preparation does not grant a fresh two-second budget.
-            self._started_at -= max(0.0, self._wall_now() - self._boundary)
         if self._pinned is not None:
             self._latest = self._pinned
             return self._pinned
@@ -184,8 +236,25 @@ class SelectionStatsPin:
             context,
             completed_selection_count=completed_selection_count,
         )
-        elapsed = max(0.0, now - self._started_at)
-        confirmed = elapsed <= self.wait_seconds and self._confirmed(event, context, stage_context)
+        source = event.get("source") or {}
+        receipt = input_confirmation
+        receipt_matches = bool(
+            isinstance(receipt, StageConfirmation) and receipt.selection_key == key
+            and receipt.game_instance_id == str(source.get("game_instance_id") or "")
+            and receipt.window_hwnd == source.get("window_hwnd")
+            and receipt.sidecar_instance_id == str(source.get("sidecar_instance_id") or "")
+            and context.get("ok") and not context.get("source_conflict")
+            and context.get("game_instance_id") == receipt.game_instance_id
+            and context.get("window_hwnd") == receipt.window_hwnd
+            and receipt.stage_context.champion_id == stage_context.champion_id
+            and receipt.boundary_at == self._boundary
+            and self._boundary <= receipt.confirmed_at <= self._boundary + self.wait_seconds
+        )
+        elapsed = max(0.0, self._now() - self._started_at)
+        confirmed = receipt_matches or elapsed <= self.wait_seconds and self._confirmed(event, context, stage_context)
+        if receipt_matches and receipt is not None:
+            stage_context = receipt.stage_context
+            self._confirmation = dict(receipt.details)
         if not confirmed and elapsed < self.wait_seconds:
             self._latest = PinnedStatsScope(
                 selection_key=key,
@@ -247,5 +316,6 @@ class SelectionStatsPin:
 __all__ = [
     "DEFAULT_STAGE_CONTEXT_WAIT_SECONDS",
     "PinnedStatsScope",
+    "StageConfirmation",
     "SelectionStatsPin",
 ]

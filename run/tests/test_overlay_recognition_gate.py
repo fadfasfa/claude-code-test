@@ -157,7 +157,8 @@ class OverlayRecognitionGateTests(unittest.TestCase):
 
         from hextech.infrastructure.vision import sidecar
         from hextech.infrastructure.vision.matcher import candidate_from_slot
-        from hextech.modules.data.generation import DataSnapshotClient
+        from hextech.modules.data.generation.query import ReleaseQuery
+        from hextech.modules.data.catalog.version_catalog import load_augment_manifest_entries
 
         run_dir = Path(__file__).resolve().parents[1]
         template_index = sidecar.load_default_template_index(run_dir)
@@ -167,7 +168,20 @@ class OverlayRecognitionGateTests(unittest.TestCase):
             {entry.augment_id for entry in matrices.observed_name_templates},
             {"1020", "1045", "1332", "2089"},
         )
-        snapshot = DataSnapshotClient(run_dir / "resources" / "seeds").open_view()
+        # Historical image/canonical-name contract; release IO has separate v4 tests.
+        # Do not load a retired on-disk seed just to resolve the four fixture identities.
+        snapshot = object.__new__(ReleaseQuery)
+        import threading
+        snapshot._lock = threading.RLock()
+        expected_ids = {"1020", "1045", "1332", "2089"}
+        rows = [row for row in load_augment_manifest_entries(run_dir / "resources/catalog")
+                if str(row.get("cdragon_id")) in expected_ids]
+        self.assertEqual({str(row["cdragon_id"]) for row in rows}, expected_ids)
+        snapshot.allowed = expected_ids
+        snapshot.pool = {"identities": [{"canonical_id": str(row["cdragon_id"]), "name": row["name"],
+            "tier": row.get("tier", ""), "augment_name_id": row.get("augment_name_id", "")} for row in rows]}
+        snapshot.optional = {}
+        snapshot._hints_cache = None
         cases = (
             (
                 run_dir
@@ -218,7 +232,7 @@ class OverlayRecognitionGateTests(unittest.TestCase):
                 self.assertIsNotNone(candidate)
                 self.assertEqual(candidate.name, expected_name)
                 self.assertEqual(candidate.rule, "observed_name")
-                self.assertEqual(snapshot.resolve_augment(candidate.name)["canonical_id"], expected_id)
+                self.assertEqual(snapshot.resolve(candidate.name)["canonical_id"], expected_id)
 
     def test_name_roi_accuracy_does_not_masquerade_as_frame_accuracy(self):
         from tooling.diagnostics import vision_eval

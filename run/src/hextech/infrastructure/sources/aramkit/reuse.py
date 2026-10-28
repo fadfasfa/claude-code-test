@@ -38,6 +38,26 @@ def load_reusable_current(
         return pointer, False
     if catalog_sha256 and str(pointer.get("catalog_sha256") or "") != catalog_sha256:
         return pointer, False
+    if pointer.get("artifact", {}).get("role") == "hero_rankings":
+        from hextech.modules.data.source_runs import source_root
+        from hextech.modules.data.generation import DataSnapshotClient
+        from hextech.modules.data.generation.release_store import closure
+        from .schema import version_marker
+        try:
+            runtime = source_root("aramkit").parent.parent
+            view = DataSnapshotClient(runtime / "snapshots").open_view()
+            _catalog, ranking, heroes, _optional = closure(runtime, view.manifest)
+            if (ranking["run_id"] != pointer["run_id"] or not heroes
+                    or set(heroes) != set(view.manifest.components["champions"])):
+                return pointer, False
+            if any(component.get("source_version") != marker.get("dataPath") for component in view.manifest.components["champions"].values()):
+                return pointer, False
+            manifest = load_source_run_manifest("aramkit", pointer["run_id"])
+            if manifest is None or version_marker(manifest.metadata.get("version", {})) != dict(marker):
+                return pointer, False
+            return pointer, True
+        except (OSError, ValueError, RuntimeError):
+            return {}, False
     try:
         validator(pointer)
     except (OSError, SourceRunValidationError, ValueError):

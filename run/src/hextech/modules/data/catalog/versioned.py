@@ -217,17 +217,17 @@ def catalog_root() -> Path:
 
 
 def catalog_current_path() -> Path:
-    return catalog_root() / CATALOG_CURRENT_FILENAME
+    return catalog_root().parent / "snapshots/current.v4.json"
 
 
-def load_runtime_catalog_from_pointer(pointer: Mapping[str, Any]) -> CatalogView | None:
+def load_runtime_catalog_from_pointer(pointer: Mapping[str, Any], *, runtime_root: Path | None = None) -> CatalogView | None:
     """校验并打开调用方已经按 cohort 语义解析出的 Catalog pointer。"""
 
     try:
         if pointer.get("schema_version") != 2:
             return None
         generation_id = require_identifier(pointer["catalog_generation_id"], field_name="catalog_generation_id")
-        root = catalog_root() / "generations" / generation_id
+        root = (Path(runtime_root) / "catalog" if runtime_root is not None else catalog_root()) / "generations" / generation_id
         manifest_path = root / "manifest.json"
         if not manifest_path.is_file() or sha256_file(manifest_path) != str(pointer["manifest_sha256"]):
             return None
@@ -243,7 +243,7 @@ def load_runtime_catalog_from_pointer(pointer: Mapping[str, Any]) -> CatalogView
             return None
         validate_catalog_files(root, manifest)
         return CatalogView(root=root, manifest=manifest, manifest_sha256=str(pointer["manifest_sha256"]))
-    except (KeyError, TypeError, ValueError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+    except (CatalogValidationError, KeyError, TypeError, ValueError, OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
 
 
@@ -260,7 +260,18 @@ def _load_runtime_catalog_pointer(pointer_path: Path) -> CatalogView | None:
 
 
 def load_runtime_catalog() -> CatalogView | None:
-    return _load_runtime_catalog_pointer(catalog_current_path())
+    from hextech.modules.data.generation.release_store import read_head
+    snapshot_root = catalog_root().parent / "snapshots"
+    if not (snapshot_root / "current.v4.json").exists():
+        return None
+    head = read_head(snapshot_root)
+    for role in ("recognition_catalog", "previous_recognition_catalog"):
+        pointer = head[role]
+        if pointer:
+            catalog = load_runtime_catalog_from_pointer(pointer)
+            if catalog is not None:
+                return catalog
+    raise CatalogValidationError("unified head contains no valid recognition Catalog")
 
 
 def load_active_catalog() -> CatalogView:

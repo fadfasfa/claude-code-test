@@ -99,9 +99,22 @@ def test_candidate_export_is_explicit_immutable_and_not_promoted(tmp_path, monke
              "frames": [{"frame_index": 0, "expected_slots": ["123", None, None]}]}
     monkeypatch.setattr(paths, "get_var_dir", lambda: tmp_path)
     output = tmp_path / "recognition/corpus/samples/candidate-one"
-    result = export_labelled_candidate(group, truth, output)
+    binding = {"123": {"canonical_id": "123", "internal_name": "Internal123", "full_name": "完整名称！"}}
+    with pytest.raises(ValueError, match="complete_identity_binding"):
+        export_labelled_candidate(group, truth, output)
+    assert not output.exists()
+    result = export_labelled_candidate(group, truth, output, identity_bindings=binding)
     assert result["state"] == "candidate_requires_holdout_review"
     assert not result["automatic_exemplar_eligible"]
+    assert result["requires_manual_truth"] is True
+    assert result["minimum_required_frames"] == 3 and result["evidence_window"] == 5
+    assert result["identity_bindings"] == binding
+    assert result["samples"][0]["internal_name"] == "Internal123"
+    assert result["samples"][0]["full_name"] == "完整名称！"
+    assert result["required_validation"] == {
+        "min_games": 3, "min_epochs": 10, "independent_holdout": True,
+        "minimum_confidence": .92, "minimum_margin": .08,
+    }
     assert (output / "candidate.json").is_file()
     with pytest.raises(ValueError, match="new_corpus_directory"):
         export_labelled_candidate(group, truth, output)

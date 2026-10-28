@@ -168,7 +168,7 @@ def _snapshot_provenance(snapshot_view: SnapshotViewPort, champion_id: str = "")
     source_files = getattr(manifest, "source_files", ())
     components = getattr(manifest, "components", {})
     expected_run = ""
-    if getattr(manifest, "schema_version", 2) == 3:
+    if getattr(manifest, "schema_version", 0) == 4:
         component = components.get("champions", {}).get(champion_id, {})
         if not component.get("complete"):
             return generation_id, None
@@ -287,6 +287,7 @@ class ScopedStatsCache:
         run_dir_resolver: Callable[[str], Path] | None = None,
     ) -> None:
         self.capacity = max(1, int(capacity))
+        self._explicit_run_resolver = run_dir_resolver is not None
         self._run_dir_resolver = run_dir_resolver or (lambda run_id: source_run_dir("aramkit", run_id))
         self._cache: OrderedDict[tuple[str, str, str], ScopedStatsLoadResult] = OrderedDict()
 
@@ -305,7 +306,8 @@ class ScopedStatsCache:
             result = ScopedStatsLoadResult(None, generation_id, run_id, champion_key, "champion_context_missing")
         else:
             try:
-                result = self._load_view(generation_id, provenance, champion_key)
+                result = self._load_view(generation_id, provenance, champion_key,
+                    runtime_root=None if self._explicit_run_resolver else getattr(snapshot_view, "_runtime_root", None))
             except ScopedStatsError as exc:
                 result = ScopedStatsLoadResult(None, generation_id, run_id, champion_key, exc.code)
         self._cache[key] = result
@@ -319,9 +321,11 @@ class ScopedStatsCache:
         generation_id: str,
         provenance: SourceProvenance,
         champion_id: str,
+        runtime_root: Path | None = None,
     ) -> ScopedStatsLoadResult:
         run_id = provenance.run_id
-        run_dir = self._run_dir_resolver(run_id).resolve()
+        run_dir = (Path(runtime_root) / "sources/aramkit/runs" / run_id if runtime_root is not None
+                   else self._run_dir_resolver(run_id)).resolve()
         manifest_path = run_dir / "manifest.json"
         manifest_sha, _ = _sha256_size(manifest_path)
         if manifest_sha != provenance.manifest_sha256:

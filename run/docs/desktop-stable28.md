@@ -12,14 +12,19 @@
 - r12桌面使用独立 popup，原生 owner 必须为0，客户端仅是只读视觉跟随目标；只在有效客户端前台且面板允许显示期间持有 TOPMOST 租约，遮挡维护独立于布局稳定短路。持续 NOACTIVATE 和 WM_MOUSEACTIVATE=MA_NOACTIVATE 保留点击但不夺取前台，不把面板自己处于前台当作客户端前台；所有层级写入仅针对已验证的本进程TkTopLevel wrapper，携带NOOWNERZORDER，不修改客户端或遮挡窗口。
 - 层级探针仅向面板前方检查矩形，每100ms最多24个窗口/2ms，不读取标题或内容；相交只表示潜在遮挡。滚动1秒最多3次纠正，超额记`layer_conflict`，不无限争抢。自身tooltip不参与争抢，遍历未完记`layer_probe_incomplete`，不能冒充无遮挡。
 - 失前台/用户隐藏/局中硬门/退出立即撤销TOPMOST并隐藏，不受纠正次数限额和三秒几何宽限影响。`layer`诊断包含desired/actual topmost、owner match、有限occlusion、次数及耗时；背景检测相同不重排不重绘。
+- 隐藏同时核验 Tk inner 与当前自有 native wrapper。Tk 撤窗后外层仍可见时，只对经过身份校验的本进程 wrapper 执行 `SW_HIDE` 并回读；撤窗未确认须明确报告并重试，不能仅凭逻辑标记记录隐藏成功。诊断分别保存 `native_visible`、`inner_mapped`、`hide_confirmed`，并在已有状态转移日志附带窗口扫描耗时和局中探针时钟，不新增逐帧日志。
 - Tk 显隐/改尺寸期间只恢复自己的原始 wrapper WNDPROC，完成后重新取得当前wrapper并安装鼠标回调；不建立、清除或恢复跨进程owner。样式写入检查原生错误码及回读，不能以pywin32未抛异常证明成功。隐藏同时检查实际映射，不让半成功映射绕过撤窗。
 - 初始化须先 materialize 隐藏 Tk wrapper；所有外层写操作只接受本进程、`TkTopLevel`、非 `WS_CHILD` 的 `wm frame` 句柄。禁止把尚无 wrapper 的 Tk inner 交给 `GWLP_HWNDPARENT`，也不得从污染后的 `GA_ROOT` 继续写外部客户端。客户端自身样式/父子关系不可修改。
 - 相同观察/内容在装饰器外短路，不重复布局、WNDPROC切换、移动、显隐；真实布局变更使整个自有 child subtree 完整重绘，防 layered surface 复用旧文字像素。region 恢复使所有 children 失效，不只更新外框。
 - 三处客户端发现统一使用可信LeagueClientUx进程、可见顶层RCLIENT及有效客户区，拒绝隐藏/最小化/cloaked/工具/子窗口和微型辅助窗；前台优先，其次保留有效旧窗作后台观察，再接受唯一候选，多候选不任取。诊断记录选择原因、候选数和PID。
 - 冻结包必须执行`--desktop-presentation-smoke`：实际HextechUI/controller布局、owner=0、关键控件映射、不透明背景像素、普通/置顶自有遮挡恢复、首显≤300ms和隐藏≤100ms。合成前台输入明确标识，不代替真实League及双屏人工验收。
 - 头像按英雄 ID、物理尺寸、revision 冻结提交身份；单 worker、有界32个在途请求合并，旧尺寸/身份回流不得创建 PhotoImage 或改标签，退出取消排队工作。GUI 只消费已解码图片。
+- 头像 worker 只持普通参数、PIL、队列和弱引用，工作线程不解引用 UI/标签；GUI 回调才创建 PhotoImage。关闭时取消 token 并丢弃待消费回调，慢读取不能成为 Tk 对象最后引用的释放线程，也不延长关闭等待。
 - 对高度不足的候选按布局与候选内容身份缓存测高失败；宽限内不来回应用窄幅/历史宽幅布局，内容或几何变化后才重新测量。
 - 所有 Tk 显隐、重排和 `SetWindowPos` 仍只由 `DesktopWindowPresentation` 所属 GUI 线程执行；托盘线程只投递回调。
+- 候选数据读取和推荐投影由既有 `desktop-candidates` 后台线程执行。GUI 仅消费带请求 revision、数据 generation 和客户端/阶段身份的展示结果；请求/结果各只保留最新一份，过期结果和关闭后的结果拒绝应用。普通 GUI 回调每轮最多 8 项、4ms 时间预算，硬隐藏先于普通回调。
+- 候选控件创建、更新和回收与普通回调共用 4ms 预算，隐藏列表构建完整后才替换当前列表；最多保留展示/构建或展示/待回收两代，过期任务不能混入当前显示。相同布局与内容复用测量结果。已有诊断分别记录候选应用、控件、布局、原生操作和层级维护，单次不可抢占调用超预算时明确保留阶段证据，不延长窗口观察 TTL。
+- 游戏窗口枚举首先跳过本进程及已确认的非游戏进程，只对外部且身份不可读的进程使用标题兜底，避免 `GetWindowText` 向本进程 GUI 同步发送 `WM_GETTEXT`。窗口观察 TTL 保持一秒；扫描间隔、发布等待与 GUI 回调耗时只进入已有诊断，不延长过期门限掩盖阻塞。
 
 ## 多屏与 DPI
 

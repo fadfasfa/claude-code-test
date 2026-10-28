@@ -32,6 +32,7 @@ from .selection_capture_cache import (
     SelectionCaptureBuffer, SelectionCaptureDraft, coalesce_selection_drafts,
     persist_selection_capture, selection_cache_status,
 )
+from .selection_capture_persistence import SelectionCacheCapacityError
 
 
 FAILURE_EVIDENCE_SCHEMA_VERSION = 1
@@ -79,20 +80,29 @@ def _png_bytes(image: RoiImage) -> bytes:
 
 
 def _atomic_write_bytes(path: Path, content: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     temporary: str | None = None
+    stage = "mkdir"
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stage = "temporary_create"
         descriptor, temporary = tempfile.mkstemp(
             prefix=f".{path.name}-",
             suffix=".tmp",
             dir=path.parent,
         )
+        stage = "temporary_write"
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(content)
+            stage = "temporary_flush"
             stream.flush()
+            stage = "temporary_fsync"
             os.fsync(stream.fileno())
+        stage = "replace"
         os.replace(temporary, path)
         temporary = None
+    except OSError as exc:
+        exc.atomic_stage = stage
+        raise
     finally:
         if temporary and os.path.exists(temporary):
             os.unlink(temporary)
@@ -155,6 +165,10 @@ class FailureEvidenceWriter:
         self._completed_count = 0
         self._dropped_count = 0
         self._failed_count = 0
+        self._capacity_rejected_count = 0
+        self._priority_preempted_count = 0
+        self._queue_rejected_count = 0
+        self._io_failed_count = 0
         self._last_error = ""
         self._saved_count = 0
         self._last_reported_error = ""
@@ -187,11 +201,14 @@ class FailureEvidenceWriter:
                     lowest = min(queued_captures, key=lambda item: item.priority)
                     if draft.priority <= lowest.priority:
                         self._dropped_count += 1
+                        self._queue_rejected_count += 1
                         self._last_error = "selection_cache_queue_full"
                         return False
                     self._tasks.remove(lowest)
-                    self._journal.append(_journal(lowest.slot_key, "selection_cache_preempted_by_priority"))
+                    self._journal.append(_journal(lowest.slot_key, "selection_cache_preempted_by_priority",
+                                                 reason="selection_cache_priority_preempted"))
                     self._dropped_count += 1
+                    self._priority_preempted_count += 1
             duplicate = next((item for item in self._tasks if item.fingerprint == draft.fingerprint), None)
             if duplicate is not None:
                 # queued duplicate 只保留首张 ROI；slot_key 会在持久层 occurrence 中补入。
@@ -246,20 +263,36 @@ class FailureEvidenceWriter:
                     with self._condition:
                         self._saved_count += 1
             except Exception as exc:
+                capacity_rejected = isinstance(exc, SelectionCacheCapacityError)
                 detail = (str(exc) if isinstance(draft, SelectionCaptureDraft) and isinstance(exc, ValueError)
                           and str(exc).startswith("selection_cache_") else exc.__class__.__name__)
                 with self._condition:
                     observed = time.monotonic()
                     if detail != self._last_reported_error or observed - self._last_error_report_at >= 60:
-                        self._journal.append(_journal(draft.slot_key, detail))
+                        self._journal.append(_journal(draft.slot_key, detail,
+                            reason="selection_cache_capacity_rejected" if capacity_rejected
+                            else "failure_evidence_write_failed"))
                         self._last_reported_error = detail
                         self._last_error_report_at = observed
                     else:
                         self._suppressed_errors += 1
                     self._failed_count += 1
+                    self._capacity_rejected_count += int(capacity_rejected)
+                    self._io_failed_count += int(isinstance(exc, OSError))
                     self._last_error = detail
-                    self._cache_status.update(save_state="not_saved", reason=detail,
+                    self._cache_status.update(save_state="capacity_rejected" if capacity_rejected else "not_saved", reason=detail,
                                               unsaved_count=self._failed_count)
+                    if isinstance(draft, SelectionCaptureDraft):
+                        self._cache_status["last_unsaved_diagnostic_id"] = draft.diagnostic_id
+                        self._cache_status["last_unsaved_terminal"] = deepcopy(draft.terminal)
+                    if isinstance(exc, OSError):
+                        self._cache_status["io_failure"] = {
+                            "operation_stage": str(getattr(exc, "selection_cache_stage", "persist")),
+                            "atomic_stage": str(getattr(exc, "atomic_stage", "")),
+                            "errno": exc.errno, "winerror": getattr(exc, "winerror", None),
+                        }
+                    if isinstance(getattr(exc, "details", None), dict):
+                        self._cache_status["capacity_rejection"] = dict(exc.details)
             finally:
                 with self._condition:
                     self._completed_count += 1
@@ -376,15 +409,19 @@ class FailureEvidenceWriter:
                 "saved": self._saved_count,
                 "dropped": self._dropped_count,
                 "failed": self._failed_count,
+                "capacity_rejected": self._capacity_rejected_count,
+                "priority_preempted": self._priority_preempted_count,
+                "queue_rejected": self._queue_rejected_count,
+                "io_failed": self._io_failed_count,
                 "last_error": self._last_error,
                 "suppressed_error_logs": self._suppressed_errors,
                 "selection_cache": dict(self._cache_status),
             }
 
 
-def _journal(slot_key: str, detail: str) -> dict[str, Any]:
+def _journal(slot_key: str, detail: str, *, reason: str = "failure_evidence_write_failed") -> dict[str, Any]:
     return {
-        "reason": "failure_evidence_write_failed",
+        "reason": reason,
         "detail": detail,
         "slot_key": slot_key,
         "recorded_at": time.time(),

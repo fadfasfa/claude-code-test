@@ -7,7 +7,6 @@ from hextech.infrastructure.persistence.refresh_schedule import RefreshScheduleS
 
 
 @pytest.mark.parametrize("source,module,entry", [
-    ("blitz", "hextech.infrastructure.sources.blitz.service", "refresh_blitz"),
     ("apex", "hextech.infrastructure.sources.apex.service", "main"),
     ("mayhem", "hextech.infrastructure.sources.mayhem.service", "run_mayhem_refresh"),
 ])
@@ -23,8 +22,6 @@ def test_incremental_worker_passes_check_cache_and_failed_identity(tmp_path, mon
     store.save(replace(old, sources={**old.sources, source: RefreshSourceState(failure_fingerprint="previous")}))
     monkeypatch.setattr(worker, "_watch_cancel", lambda *args: None)
     target = importlib.import_module(module)
-    if source == "blitz":
-        monkeypatch.setattr(target.CatalogBinding, "active", lambda **kwargs: object())
     if source == "apex":
         monkeypatch.setattr("hextech.modules.data.catalog.versioned.load_active_catalog",
                             lambda: SimpleNamespace(generation_id="catalog"))

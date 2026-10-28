@@ -51,22 +51,12 @@ def _iter_files(root: Path) -> Iterable[Path]:
 
 
 def _seed_files(resource_root: Path) -> list[Path]:
-    """只选择 v2 pointer 指向的 immutable seed generation。"""
-
-    seed_root = resource_root / "seeds"
-    pointer = seed_root / "current.v2.json"
-    if not pointer.is_file():
+    """Select only the exact immutable v4 seed closure; historical seeds stay excluded."""
+    runtime = resource_root / "seeds" / "runtime.v4"
+    if not (runtime / "snapshots/current.v4.json").is_file():
         return []
-    try:
-        payload = json.loads(pointer.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"v2 seed pointer 无法读取：{pointer}") from exc
-    generation_id = str(payload.get("current_generation_id") or "") if isinstance(payload, dict) else ""
-    generation_root = (seed_root / "generations" / generation_id).resolve()
-    expected_parent = (seed_root / "generations").resolve()
-    if not generation_id or generation_root.parent != expected_parent or not generation_root.is_dir():
-        raise ValueError("v2 seed pointer 未指向有效 generation")
-    return [pointer, *_iter_files(generation_root)]
+    from tooling.build.cohort_seed import collect_cohort_seed
+    return list(collect_cohort_seed(runtime / "snapshots").files)
 
 
 def _descriptor(run_dir: Path, path: Path, *, category: str, package_role: str) -> dict[str, Any]:

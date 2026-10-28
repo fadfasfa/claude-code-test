@@ -129,9 +129,9 @@ def test_recognition_summary_marks_truncation_and_excludes_pause_probes():
     assert summary["observations"] == 1
     assert summary["truncated"] is True
     assert all(slot["first_ready_ms"] is None for slot in summary["slots"])
-    assert epoch_diagnostics.build_epoch_recognition_summary([paused, truncated]) == {
-        "observations": 0, "slots": [], "truncated": True,
-    }
+    empty = epoch_diagnostics.build_epoch_recognition_summary([paused, truncated])
+    assert empty["observations"] == 0 and empty["slots"] == [] and empty["truncated"] is True
+    assert empty["metric_scope"] == "selection_epoch" and empty["card_latency_qualified"] is False
 
 
 def test_selection_timeline_appends_real_observations_without_images(tmp_path: Path) -> None:
@@ -391,7 +391,7 @@ def test_epoch_latency_excludes_visibility_probes(tmp_path: Path) -> None:
     }
 
 
-def test_trace_history_ignores_cursor_flapping_between_frames(tmp_path: Path) -> None:
+def test_trace_state_changes_do_not_create_duplicate_history(tmp_path: Path) -> None:
     """光标划过卡片区域逐帧翻转 cursor_over_cards，不得视为状态变化写历史。
 
     真机曾出现空闲期 4 分钟写满 256 条历史（相邻条目只差 cursor_over_cards），
@@ -409,18 +409,18 @@ def test_trace_history_ignores_cursor_flapping_between_frames(tmp_path: Path) ->
     second["source"]["cursor_over_cards"] = False
     second["source"]["hover_occluded"] = True
 
-    sidecar_diagnostics.write_vision_trace_if_changed(first, trace_path, history_path=history_path)
-    sidecar_diagnostics.write_vision_trace_if_changed(second, trace_path, history_path=history_path)
+    sidecar_diagnostics.write_vision_trace_if_changed(first, trace_path)
+    sidecar_diagnostics.write_vision_trace_if_changed(second, trace_path)
 
-    entries = json.loads(history_path.read_text(encoding="utf-8"))["entries"]
-    assert len(entries) == 1
+    assert not history_path.exists()
+    assert trace_path.exists()
 
     changed = _event(epoch=0, observed_at=1.4, active=False)
     changed["source"]["reason"] = "game_window_missing"
-    sidecar_diagnostics.write_vision_trace_if_changed(changed, trace_path, history_path=history_path)
+    sidecar_diagnostics.write_vision_trace_if_changed(changed, trace_path)
 
-    entries = json.loads(history_path.read_text(encoding="utf-8"))["entries"]
-    assert len(entries) == 2
+    assert not history_path.exists()
+    assert "game_window_missing" in trace_path.read_text(encoding="utf-8")
 
 
 def test_timeline_is_bounded_and_reserves_terminal_marker(tmp_path: Path) -> None:
@@ -441,3 +441,24 @@ def test_timeline_is_bounded_and_reserves_terminal_marker(tmp_path: Path) -> Non
     assert len(entries) <= 512
     assert sum(entry.get("observation_kind") == "diagnostic_truncated" for entry in entries) == 1
     assert entries[-1]["source_reason"] == "gameflow_ended"
+    assert entries[-1]["epoch_recognition"]["observations"] == 600
+    assert entries[-1]["epoch_recognition"]["history_complete"] is True
+
+
+def test_ready_after_timeline_truncation_remains_in_terminal_summary(tmp_path, monkeypatch):
+    monkeypatch.setattr(sidecar_diagnostics, "VISION_TIMELINE_DATA_ENTRY_LIMIT", 2)
+    trace = tmp_path / "trace.json"
+    for i in range(6):
+        payload = _event(epoch=751, observed_at=100.0 + i)
+        if i == 5:
+            for slot in payload["slots"]:
+                slot.update(state="ready", acceptance_rule="ocr_exact_fallback")
+        sidecar_diagnostics.write_selection_timeline_observation(payload, trace)
+    ended = _event(epoch=751, observed_at=107.0, active=False)
+    ended["source"]["reason"] = "selection_completed"
+    path = sidecar_diagnostics.write_selection_timeline_observation(ended, trace)
+    summary = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])["epoch_recognition"]
+    assert summary["observations"] == 6
+    assert summary["truncated"] is True and summary["history_complete"] is True
+    assert all(slot["first_ready_ms"] == 5020.0 for slot in summary["slots"])
+    assert summary["first_full_ready_ms"] == 5020.0

@@ -341,8 +341,9 @@ def test_background_preparation_key_includes_viewport_and_display_mode() -> None
     )
 
     assert compact != expanded
-    assert compact[-2:] == ((1920, 1080), "compact")
-    assert expanded[-2:] == ((2560, 1600), "expanded")
+    assert compact[-3:-1] == ((1920, 1080), "compact")
+    assert expanded[-3:-1] == ((2560, 1600), "expanded")
+    assert compact[-1] == expanded[-1] == str(event["source"].get("sidecar_instance_id") or "")
 
 
 def test_legacy_summary_derivation_runs_on_the_single_preparation_worker(monkeypatch) -> None:

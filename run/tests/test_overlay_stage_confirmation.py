@@ -105,6 +105,83 @@ def test_bounded_sampling_and_no_retrigger_on_heartbeat_or_old_epoch():
     assert cadence.due(12.2, ("game", "sidecar", 6))
 
 
+def test_new_sidecar_restarts_sampling_after_same_game_epoch_rolls_back():
+    from hextech.interfaces.overlay.context_poll_schedule import SelectionContextCadence
+    cadence = SelectionContextCadence(1.5)
+    assert cadence.due(100, ("game", "session", 11, "vision-a"))
+    cadence.completed(102.1)
+    assert not cadence.due(102.2, ("game", "session", 4, "vision-a"))
+    assert cadence.due(102.2, ("game", "session", 4, "vision-b"))
+    cadence.completed(102.2)
+    assert not cadence.due(102.3, ("game", "session", 3, "vision-b"))
+
+
+def test_fresh_selection_key_includes_sidecar_identity_and_reads_old_events():
+    from hextech.interfaces.overlay.context_poll_schedule import fresh_selection_key
+    payload = event(4)
+    payload.update(generated_at=100, selection_type="hextech")
+    payload["source"]["sidecar_instance_id"] = "vision-b"
+    ctx = context()
+    assert fresh_selection_key(payload, ctx, 100.1) == ("game", "sidecar", 4, "vision-b")
+    del payload["source"]["sidecar_instance_id"]
+    assert fresh_selection_key(payload, ctx, 100.1) == ("game", "sidecar", 4, "")
+
+
+def test_timely_input_confirmation_survives_slow_snapshot_without_loading_on_input():
+    clock = [100.25]
+    scope = pin(clock)
+    scope.cache.load = lambda *_a: pytest.fail("input observation must not load scoped stats")
+    assert scope.observe(event(), context(start=100.2), completed_selection_count=None,
+                         confirmation_started_at=100) is None
+    clock[0] = 100.65
+    receipt = scope.observe(event(), context(seq=2, start=100.6), completed_selection_count=None,
+                            confirmation_started_at=100)
+    assert receipt is not None and receipt.confirmed_at == 100.65
+    # 模拟 snapshot 读完才进行绑定；数字在这之前没有数据来源。
+    clock[0] = 103
+    scope.cache.load = lambda *_a: SimpleNamespace(available=True, view=None, run_id="verified-unit", reason="")
+    loaded = scope.resolve(event(), context(seq=2, start=100.6), VIEW,
+        completed_selection_count=None, confirmation_started_at=100, input_confirmation=receipt)
+    assert loaded.status == "ready" and loaded.stage == 3
+    assert loaded.confirmation["publication_seq"] == 2
+
+
+@pytest.mark.parametrize("change,arrival", [
+    ({"publication_seq": 1}, 100.65), ({"sample_started_at": 99}, 100.65),
+    ({"game_instance_id": "other"}, 100.65), ({"window_hwnd": 43}, 100.65),
+    ({"champion_id": "1"}, 100.65), ({"publisher_instance_id": "new"}, 100.65),
+    ({"player_level": 7}, 100.65), ({"source_conflict": True}, 100.65),
+    ({}, 102.01),
+])
+def test_input_confirmation_rejects_duplicate_late_or_different_bindings(change, arrival):
+    clock = [100.25]
+    scope = pin(clock)
+    scope.observe(event(), context(start=100.2), completed_selection_count=None, confirmation_started_at=100)
+    clock[0] = arrival
+    assert scope.observe(event(), {**context(seq=2, start=100.6), **change},
+        completed_selection_count=None, confirmation_started_at=100) is None
+
+
+@pytest.mark.parametrize("event_change,context_change", [
+    ({"selection_epoch": 2}, {}), ({"game_instance_id": "other"}, {}),
+    ({"window_hwnd": 43}, {}), ({"sidecar_instance_id": "new"}, {}),
+    ({}, {"champion_id": "1"}), ({}, {"game_instance_id": "other"}),
+])
+def test_input_confirmation_cannot_be_reused_for_other_selection(event_change, context_change):
+    clock = [100.25]
+    observer = pin(clock)
+    observer.observe(event(), context(start=100.2), completed_selection_count=None, confirmation_started_at=100)
+    clock[0] = 100.65
+    receipt = observer.observe(event(), context(seq=2, start=100.6), completed_selection_count=None,
+                               confirmation_started_at=100)
+    clock[0] = 103
+    other = event()
+    other["source"].update(event_change)
+    result = pin(clock).resolve(other, {**context(seq=2, start=100.6), **context_change}, VIEW,
+        completed_selection_count=None, confirmation_started_at=100, input_confirmation=receipt)
+    assert result.status == "unavailable" and result.reason == "stage_unconfirmed"
+
+
 def test_confirmation_timeout_clears_all_percentages():
     from test_overlay_stage_projection import _state, _view, _record, _context
     from hextech.modules.recommendation.stage_projection import apply_scoped_stage_stats

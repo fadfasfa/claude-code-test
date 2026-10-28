@@ -56,6 +56,7 @@ def apply_completed_ocr_evidence(
     session_id: str,
     selection_epoch: int,
     current_candidates: Sequence[Any] = (),
+    frozen_slots: set[int] | None = None,
 ) -> None:
     """只替换最近窗口中的同一帧票，不确认 READY 或改变 revision。"""
 
@@ -97,11 +98,19 @@ def apply_completed_ocr_evidence(
         if scene_negative.get("state") == "admitted":
             outcomes.append("scene_negative_consumed")
             continue
+        if index in (frozen_slots or set()):
+            outcomes.append("frozen_slot")
+            continue
+        track = slots[index]
+        position = next((position for position, observation in enumerate(track.observations)
+                         if observation.frame_id == frame_id), -1)
+        if position >= 0:
+            from .identity_revocation import bind_lexical_evidence
+            track.observations[position] = bind_lexical_evidence(track.observations[position], evidence)
         if candidate is None:
             outcomes.append(str(evidence.get("reason") or "ocr_exact_gate_rejected"))
             continue
         identity = _identity(candidate)
-        track = slots[index]
         current = current_candidates[index] if index < len(current_candidates) else None
         if current is not None and current.evidence_grade == "strong" and _identity(current) != identity:
             outcomes.append("ocr_template_conflict")
@@ -177,13 +186,7 @@ def apply_completed_ocr_evidence(
                 )
             outcomes.append("cross_slot_identity_conflict")
             continue
-        track.observations[observation_index] = CandidateEvidence(
-            original.observed_at,
-            candidate,
-            original.frame_id,
-            original.fingerprint,
-            original.rgb_sha256,
-        )
+        track.observations[observation_index] = replace(original, candidate=candidate)
         outcomes.append("upgraded")
 
 

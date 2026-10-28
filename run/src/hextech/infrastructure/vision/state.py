@@ -68,6 +68,8 @@ class SelectionTracker:
     residue_hold_frames: int = 0       # 非真实场景下沿用上一帧的连续帧数
     selection_click_armed: bool = False  # 场景内卡片点击后，场景消失即确认为本轮选择完成
     scene_lost_at: float = 0.0          # 有稳定槽后场景门丢失的真实观察时间
+    # Explicit offline replay seam. Production never enables this policy.
+    identity_revocation_enabled: bool = False
     _revision_changed: bool = False
     slots: list[SlotTrack] = field(default_factory=lambda: [SlotTrack() for _ in range(SLOT_COUNT)])
     _scene_negative_state: SceneNegativeState = field(default_factory=SceneNegativeState)

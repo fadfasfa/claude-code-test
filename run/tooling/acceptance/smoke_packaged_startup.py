@@ -1,7 +1,7 @@
 """打包产物空仓首启烟测。
 
 这个文件用于验证 PyInstaller 便携包在隔离目录首次启动时，是否能真实拉起
-Desktop → DataService → Runtime Supervisor → Overlay Host → Vision Sidecar 全链。
+App → Overlay Host + Vision Sidecar 三进程全链。
 它只负责本地验收，不负责构建产物、不替代真实 League 窗口验收、不修改业务数据。
 
 调用方: dev_checks; 关键依赖: 见 imports。
@@ -15,13 +15,11 @@ import os
 import secrets
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -42,7 +40,7 @@ from tooling.build.manifest import BUNDLE_MANIFEST_SCHEMA_VERSION, RUNTIME_CONTR
 REQUIRED_PACKAGE_DIRS = (
     "resources/catalog",
     "resources/assets",
-    "resources/seeds/generations",
+    "resources/seeds/runtime.v4/snapshots/generations",
 )
 
 REQUIRED_RUNTIME_DIRS = (
@@ -64,9 +62,7 @@ FORBIDDEN_PACKAGE_PATHS = (
 )
 FORBIDDEN_PACKAGE_GENERATED_SUFFIXES = (".pyc", ".pyo")
 SMOKE_FEATURE_FLAGS = {
-    "web_frontend_enabled": False,
     "game_overlay_enabled": True,
-    "auto_open_browser": False,
     "private_policy_stats_enabled": True,
     "low_frequency_listener_enabled": True,
 }
@@ -112,21 +108,23 @@ def _validate_bundle_contract(package_dir: Path) -> dict[str, object]:
         raise SmokeFailure("bundle manifest 缺少 build_id")
     if payload.get("runtime_contracts") != RUNTIME_CONTRACT_VERSIONS:
         raise SmokeFailure("bundle manifest 运行契约不匹配")
+    if payload.get("runtime_profile") not in {"installed", "isolated_candidate"}:
+        raise SmokeFailure("bundle manifest 必须声明有效 runtime_profile")
     cohort = payload.get("cohort_seed")
     if cohort:
         if (
             not isinstance(cohort, dict)
-            or int(cohort.get("schema_version") or 0) not in {1, 2}
+            or int(cohort.get("schema_version") or 0) != 3
             or int(cohort.get("production_pool_count") or 0) <= 0
             or not payload.get("cohort_seed_files")
             or not payload.get("cohort_seed_sha256")
         ):
             raise SmokeFailure("bundle manifest cohort seed 合同无效")
-        if int(cohort["schema_version"]) == 2 and (
-            cohort.get("snapshot_schema_version") != 3 or not isinstance(cohort.get("units"), dict)
+        if int(cohort["schema_version"]) == 3 and (
+            cohort.get("snapshot_schema_version") != 4 or not isinstance(cohort.get("units"), dict)
             or not cohort["units"]
         ):
-            raise SmokeFailure("v3 cohort seed 必须声明完整 units 闭包")
+            raise SmokeFailure("v4 cohort seed 必须声明完整 units 闭包")
         if "recognition_catalog_generation_id" in cohort and not str(
             cohort.get("recognition_catalog_generation_id") or ""
         ).strip():
@@ -182,7 +180,7 @@ def _find_launcher(package_dir: Path) -> Path:
 
 
 def _get_packaged_runtime_root(env: dict[str, str] | None = None) -> Path:
-    source_env = env or os.environ
+    source_env = os.environ if env is None else env
     local_app_data = source_env.get("LOCALAPPDATA", "").strip()
     if local_app_data:
         return Path(local_app_data) / "HextechNexus" / "var"
@@ -192,12 +190,44 @@ def _get_packaged_runtime_root(env: dict[str, str] | None = None) -> Path:
     return Path.home() / ".hextech_nexus" / "var"
 
 
-def _read_port(runtime_root: Path) -> str | None:
-    port_file = runtime_root / "state/web_server_port.txt"
-    if not port_file.exists():
-        return None
-    port = port_file.read_text(encoding="utf-8", errors="replace").strip()
-    return port or None
+def _smoke_runtime_environment(
+    package_dir: Path, fixture: str, manifest: dict[str, object],
+) -> tuple[dict[str, str], Path]:
+    """候选靠 frozen profile 隔离；installed 才使用 AppData sandbox。"""
+    env = os.environ.copy()
+    env.pop("HEXTECH_VAR_DIR", None)
+    if manifest.get("runtime_profile") == "isolated_candidate":
+        return env, package_dir.resolve() / "var"
+    if manifest.get("runtime_profile") != "installed":
+        raise SmokeFailure("bundle manifest 必须声明有效 runtime_profile")
+    appdata_root = package_dir.parent / f"appdata-{fixture}"
+    env["LOCALAPPDATA"] = str(appdata_root / "Local")
+    env["APPDATA"] = str(appdata_root / "Roaming")
+    return env, _get_packaged_runtime_root(env)
+
+
+def _runtime_metadata_snapshot(root: Path) -> dict[str, tuple[int, int, int]]:
+    """只记录正式 var 的元数据；不打开文件内容，不跟随链接或 junction。"""
+    snapshot: dict[str, tuple[int, int, int]] = {}
+    try:
+        try:
+            root_metadata = root.lstat()
+        except FileNotFoundError:
+            return {}
+        pending = [(root, root_metadata)]
+        while pending:
+            path, metadata = pending.pop()
+            snapshot[path.relative_to(root).as_posix()] = (metadata.st_mode, metadata.st_size, metadata.st_mtime_ns)
+            is_reparse = bool(getattr(metadata, "st_file_attributes", 0) & 0x400)
+            if is_reparse or stat.S_ISLNK(metadata.st_mode):
+                raise SmokeFailure("正式 runtime 包含链接；无法在限定元数据范围证明未变更")
+            if stat.S_ISDIR(metadata.st_mode):
+                # scandir 的 Windows 元数据来自目录枚举，避免每个文件反复 stat。
+                with os.scandir(path) as entries:
+                    pending.extend((Path(entry.path), entry.stat(follow_symlinks=False)) for entry in entries)
+    except OSError as exc:
+        raise SmokeFailure(f"正式 runtime 元数据快照失败：{type(exc).__name__}") from exc
+    return snapshot
 
 
 def _packaged_data_root(package_dir: Path) -> Path:
@@ -205,15 +235,15 @@ def _packaged_data_root(package_dir: Path) -> Path:
 
 
 def _has_verified_snapshot_seed(package_dir: Path) -> bool:
-    return (_packaged_data_root(package_dir) / "resources" / "seeds" / "current.v2.json").is_file()
+    return (_packaged_data_root(package_dir) / "resources" / "seeds" / "runtime.v4" / "snapshots" / "current.v4.json").is_file()
 
 
 def _has_verified_cohort_seed(package_dir: Path) -> bool:
-    return (_packaged_data_root(package_dir) / "resources" / "cohort-seed" / "catalog" / "current.v2.json").is_file()
+    return (_packaged_data_root(package_dir) / "resources" / "seeds" / "runtime.v4" / "snapshots" / "current.v4.json").is_file()
 
 
 def _write_smoke_feature_flags(runtime_root: Path) -> None:
-    """烟测显式打开 Overlay/私用统计并关闭 Web，隔离固定端口干扰。"""
+    """烟测显式打开 Overlay/私用统计。"""
 
     state_dir = runtime_root / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -247,24 +277,6 @@ def _process_alive(pid_value: object) -> bool:
     return pid > 0 and psutil.pid_exists(pid)
 
 
-def _read_supervisor_events(path: Path, *, started_at_wall: float) -> list[dict[str, object]]:
-    try:
-        if path.stat().st_mtime < started_at_wall:
-            return []
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
-    events: list[dict[str, object]] = []
-    for line in lines[-200:]:
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            events.append(dict(payload))
-    return events
-
-
 def _overlay_chain_status(
     runtime_root: Path,
     bundle_manifest: dict[str, object],
@@ -279,32 +291,12 @@ def _overlay_chain_status(
     startup_path = runtime_root / "state" / "startup_status.json"
     host_path = runtime_root / "state" / "game_overlay_visibility.v1.json"
     sidecar_path = runtime_root / "state" / "game_overlay_sidecar_status.json"
-    events_path = runtime_root / "state" / "supervisor_events.v1.jsonl"
     report_path = runtime_root / "reports" / "overlay_sessions" / "latest.json"
-    selection_path = runtime_root / "state" / "data-service" / "cohort_selection.v1.json"
     startup = _read_json_file(startup_path)
     host = _read_json_file(host_path)
     sidecar = _read_json_file(sidecar_path)
     report = _read_json_file(report_path)
-    selection = _read_json_file(selection_path)
     snapshot = startup.get("data_snapshot") if isinstance(startup.get("data_snapshot"), dict) else {}
-    events = _read_supervisor_events(events_path, started_at_wall=started_at_wall)
-    started_correlations = {
-        str(event.get("correlation_id") or "")
-        for event in events
-        if event.get("event") == "game_overlay.started"
-        and str(event.get("build_id") or "") == expected_build
-    }
-    completed_events = [
-        event
-        for event in events
-        if event.get("event") == "game_overlay.completed"
-        and str(event.get("build_id") or "") == expected_build
-        and str(event.get("correlation_id") or "") in started_correlations
-        and event.get("result_status") == "running"
-        and event.get("host_ready_state") == "ready"
-    ]
-    completed = completed_events[-1] if completed_events else {}
     raw_stats_scope = report.get("stats_scope")
     stats_scope: dict[str, object] = dict(raw_stats_scope) if isinstance(raw_stats_scope, dict) else {}
     sidecar_matrix_rows = sidecar.get("matrix_rows") if isinstance(sidecar.get("matrix_rows"), dict) else {}
@@ -313,14 +305,9 @@ def _overlay_chain_status(
     report_recorded = float(report.get("recorded_at") or 0.0)
     checks = {
         "desktop_pid_alive": _process_alive(desktop_pid),
-        "data_service_snapshot_ready": snapshot.get("state") in {"ready", "degraded"},
-        "data_service_generation": bool(expected_generation)
-        and str(snapshot.get("generation_id") or "") == expected_generation,
-        "supervisor_started_and_completed": bool(completed),
-        "host_startup_within_existing_budget": bool(completed)
-        and float(completed.get("host_startup_seconds") or 0.0) <= 20.0,
-        "desktop_is_unique_seed_writer": int(selection.get("schema_version") or 0) == 2
-        and str(selection.get("writer_role") or "") == "desktop_seed",
+        "app_snapshot_ready": snapshot.get("state") in {"ready", "degraded"},
+        "app_generation": bool(expected_generation) and str(snapshot.get("generation_id") or "") == expected_generation,
+        "three_distinct_processes": len({desktop_pid, int(host.get("pid") or 0), int(sidecar.get("pid") or 0)}) == 3,
         "host_schema": int(host.get("schema_version") or 0) == 2,
         "host_build": str(host.get("build_id") or "") == expected_build,
         "host_pid_alive": _process_alive(host.get("pid")),
@@ -351,18 +338,18 @@ def _overlay_chain_status(
         == expected_generation
         and str(report.get("vision_pool_generation_id") or "") == expected_generation
         and isinstance(report.get("generation_roles"), dict),
-        "web_disabled": not (runtime_root / "state" / "web_server_port.txt").exists(),
     }
+    if bundle_manifest.get("runtime_profile") == "isolated_candidate":
+        timing = _read_json_file(runtime_root / "state" / "startup_timing.v1.json")
+        for label, payload in (("app", timing), ("host", host), ("sidecar", sidecar)):
+            actual_root = str(payload.get("runtime_root") or "").strip()
+            checks[f"{label}_runtime_root"] = bool(actual_root) and Path(actual_root).resolve() == runtime_root.resolve()
     details: dict[str, object] = {
         "expected_build_id": expected_build,
         "expected_generation_id": expected_generation,
         "snapshot_generation_id": str(snapshot.get("generation_id") or ""),
-        "supervisor_instance_id": str(completed.get("supervisor_instance_id") or ""),
         "host_pid": int(host.get("pid") or 0),
         "host_updated_at": host_updated,
-        "host_startup_seconds": float(completed.get("host_startup_seconds") or 0.0),
-        "host_startup_attempts": completed.get("host_startup_attempts") or [],
-        "cohort_selection_writer": str(selection.get("writer_role") or ""),
         "sidecar_pid": int(sidecar.get("pid") or 0),
         "sidecar_heartbeat_at": sidecar_heartbeat,
         "vision_pool_generation_id": str(
@@ -439,22 +426,16 @@ def _write_populated_runtime_fixture(package_dir: Path, runtime_root: Path) -> N
 
     data_root = _packaged_data_root(package_dir)
     manifest = _read_json_file(data_root / "bundle_manifest.json")
-    for raw in manifest.get("cohort_seed_files", []):
-        relative = Path(str(raw).replace("\\", "/"))
-        parts = relative.parts
-        if len(parts) < 3 or parts[:2] != ("resources", "cohort-seed"):
-            continue
-        source = data_root.joinpath(*parts)
-        target = runtime_root.joinpath(*parts[2:])
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+    prefix = "resources/seeds/runtime.v4/"
     for raw in manifest.get("seed_files", []):
-        relative = Path(str(raw).replace("\\", "/"))
-        parts = relative.parts
-        if len(parts) < 3 or parts[:2] != ("resources", "seeds"):
-            continue
-        source = data_root.joinpath(*parts)
-        target = runtime_root / "snapshots" / Path(*parts[2:])
+        relative = str(raw).replace("\\", "/")
+        if not relative.startswith(prefix):
+            raise SmokeFailure("seed file outside v4 runtime prefix")
+        local = Path(relative.removeprefix(prefix))
+        if local.is_absolute() or ".." in local.parts:
+            raise SmokeFailure("seed path escapes isolated runtime")
+        source = data_root / relative
+        target = runtime_root / local
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
     generations = runtime_root / "snapshots" / "generations"
@@ -483,55 +464,32 @@ def _write_populated_runtime_fixture(package_dir: Path, runtime_root: Path) -> N
         (broken / "manifest.json").write_text("{broken", encoding="utf-8")
 
 
-def _fetch(url: str, timeout: float = 8.0, headers: dict[str, str] | None = None) -> tuple[int, bytes]:
-    request = urllib.request.Request(url, headers=headers or {})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.status, response.read()
-
-
 def _required_paths_ready(package_dir: Path, runtime_root: Path, started_at_wall: float) -> dict[str, bool]:
     checks: dict[str, bool] = {}
     packaged_data_root = _packaged_data_root(package_dir)
     for rel in REQUIRED_PACKAGE_DIRS:
         checks[f"package:{rel}"] = (packaged_data_root / rel).is_dir()
     if _has_verified_snapshot_seed(package_dir):
-        checks["package:resources/seeds/current.v2.json"] = (
-            packaged_data_root / "resources" / "seeds" / "current.v2.json"
+        checks["package:resources/seeds/runtime.v4/snapshots/current.v4.json"] = (
+            packaged_data_root / "resources" / "seeds" / "runtime.v4" / "snapshots" / "current.v4.json"
         ).is_file()
     if _has_verified_cohort_seed(package_dir):
-        checks["package:resources/cohort-seed/catalog/current.v2.json"] = (
-            _packaged_data_root(package_dir) / "resources" / "cohort-seed" / "catalog" / "current.v2.json"
+        checks["package:v4_cohort_head"] = (
+            packaged_data_root / "resources/seeds/runtime.v4/snapshots/current.v4.json"
         ).is_file()
-        source_pointers = (
-            "catalog/current.v2.json",
-            "sources/aramkit/current.v2.json",
-            "sources/blitz/current.v2.json",
-            "sources/apex/current.v2.json",
-            "sources/mayhem/current.v2.json",
-        )
-        seed_root = _packaged_data_root(package_dir) / "resources" / "cohort-seed"
-        cohort = _read_json_file(_packaged_data_root(package_dir) / "bundle_manifest.json").get("cohort_seed")
-        incremental = (isinstance(cohort, dict)
-                       and cohort.get("schema_version") == 2
-                       and cohort.get("snapshot_schema_version") == 3
-                       and bool(cohort.get("units")))
-        for rel in source_pointers:
-            # v3 消费快照固定的 unit closure；不存在的 Optional current 不是合同。
-            # seed 已携带的指针仍须安装，v2 保留原来的全来源要求。
-            if incremental and rel != "catalog/current.v2.json" and not (seed_root / rel).is_file():
-                continue
-            checks[f"runtime:{rel}"] = (runtime_root / rel).is_file()
     for rel in REQUIRED_RUNTIME_DIRS:
         checks[f"runtime:{rel}"] = (runtime_root / rel).is_dir()
     for rel in REQUIRED_RUNTIME_FILES:
         path = runtime_root / rel
         checks[f"runtime:{rel}"] = path.is_file() and path.stat().st_mtime >= started_at_wall
-    checks["runtime:snapshots/current.v2.json"] = (runtime_root / "snapshots" / "current.v2.json").is_file()
+    checks["runtime:snapshots/current.v4.json"] = (runtime_root / "snapshots" / "current.v4.json").is_file()
     package_roots = [("package", package_dir)]
     if packaged_data_root != package_dir:
         package_roots.append(("_internal", packaged_data_root))
     for label, root in package_roots:
         for rel in FORBIDDEN_PACKAGE_PATHS:
+            if rel == "var" and root == package_dir and runtime_root.resolve() == (package_dir / "var").resolve():
+                continue
             checks[f"{label}:{rel} absent"] = not (root / Path(rel)).exists()
         checks[f"{label}:__pycache__ absent"] = not any(
             path.is_dir() and path.name == "__pycache__"
@@ -547,102 +505,6 @@ def _required_paths_ready(package_dir: Path, runtime_root: Path, started_at_wall
         for path in package_dir.rglob(OVERLAY_ANCHOR_CALIBRATION_FILENAME)
     )
     return checks
-
-
-def _read_json(body: bytes) -> object:
-    return json.loads(body.decode("utf-8", errors="replace"))
-
-
-def _truthy_status(payload: dict[str, object], *keys: str) -> bool:
-    return any(bool(payload.get(key)) for key in keys)
-
-
-def _first_present(mapping: dict[str, object], keys: tuple[str, ...]) -> str:
-    for key in keys:
-        value = mapping.get(key)
-        text = str(value or "").strip()
-        if text:
-            return text
-    return ""
-
-
-def _compact_hextech_card(card: object) -> dict[str, object]:
-    if not isinstance(card, dict):
-        return {}
-    return {
-        "id": _first_present(card, ("id", "海克斯ID", "augment_id", "augmentId")),
-        "name": _first_present(card, ("name", "海克斯名称", "augment_name", "augmentName")),
-        "win_rate": card.get("海克斯胜率", card.get("win_rate", card.get("winrate"))),
-        "pick_rate": card.get("海克斯出场率", card.get("pick_rate", card.get("pickrate"))),
-    }
-
-
-def _extract_representative_champion(champions: object) -> tuple[str, str]:
-    """从 `/api/champions` 真实 payload 中提取烟测代表英雄。"""
-
-    if not isinstance(champions, list):
-        return "", ""
-    for champion in champions:
-        if not isinstance(champion, dict):
-            continue
-        representative_name = _first_present(
-            champion,
-            ("英雄名称", "hero_name", "heroName", "name", "champion_name", "championName"),
-        )
-        representative_id = _first_present(
-            champion,
-            ("英雄 ID", "英雄ID", "hero_id", "heroId", "champion_id", "championId", "id"),
-        )
-        if representative_name or representative_id:
-            return representative_name, representative_id
-    return "", ""
-
-
-def _business_ready(
-    startup_status: object,
-    champions: object,
-    detail_payload: object,
-    synergy_payload: object,
-    representative_asset: object,
-    *,
-    require_snapshot_status: bool = False,
-) -> dict[str, bool]:
-    startup = startup_status if isinstance(startup_status, dict) else {}
-    snapshot_value = startup.get("data_snapshot")
-    snapshot = snapshot_value if isinstance(snapshot_value, dict) else {}
-    champion_list = champions if isinstance(champions, list) else []
-    detail = detail_payload if isinstance(detail_payload, dict) else {}
-    synergy = synergy_payload if isinstance(synergy_payload, dict) else {}
-    asset = representative_asset if isinstance(representative_asset, dict) else {}
-    snapshot_generation = str(snapshot.get("generation_id") or "")
-    detail_generation = str(detail.get("generation_id") or "")
-    snapshot_ready = snapshot.get("state") in {"ready", "degraded"} and bool(snapshot_generation)
-    return {
-        "startup_status_reachable": bool(startup),
-        "snapshot_generation_ready": snapshot_ready if require_snapshot_status else True,
-        "web_generation_matches_snapshot": (
-            bool(detail_generation) and detail_generation == snapshot_generation
-            if require_snapshot_status
-            else bool(detail_generation)
-        ),
-        "champions_non_empty": len(champion_list) > 0,
-        "detail_user_visible": bool(detail.get("comprehensive")) or bool(detail.get("ready")) or bool(detail.get("loading")),
-        "synergy_api_reachable": isinstance(synergy, dict),
-        "synergy_payload_present": isinstance(synergy.get("synergies"), list),
-        "representative_asset_reachable": asset.get("code") == 200 and int(asset.get("bytes") or 0) > 0,
-    }
-
-
-def _read_runtime_auth_token(runtime_root: Path) -> str:
-    try:
-        return (runtime_root / "state" / "auth_token.txt").read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-
-
-def _local_auth_headers(base: str, runtime_root: Path) -> dict[str, str]:
-    token = _read_runtime_auth_token(runtime_root)
-    return {"Origin": base, "X-Hextech-Token": token}
 
 
 def _overlay_self_check(exe: Path, package_dir: Path, env: dict[str, str]) -> dict[str, object]:
@@ -882,81 +744,6 @@ def _diagnostic_retention_smoke(
     return payload
 
 
-def _web_ready(port: str, runtime_root: Path, *, require_snapshot_status: bool = False) -> dict[str, object]:
-    base = f"http://127.0.0.1:{port}"
-    result: dict[str, object] = {}
-
-    root_code, root_body = _fetch(base + "/")
-    result["root"] = {"code": root_code, "bytes": len(root_body)}
-
-    startup_code, startup_body = _fetch(base + "/api/startup_status", headers=_local_auth_headers(base, runtime_root))
-    startup_status = _read_json(startup_body)
-    result["startup_status"] = {"code": startup_code, "bytes": len(startup_body), "json": startup_status}
-
-    champions_code, champions_body = _fetch(base + "/api/champions")
-    champions = _read_json(champions_body)
-    champion_sample_keys: list[str] = []
-    if isinstance(champions, list) and champions and isinstance(champions[0], dict):
-        champion_sample_keys = list(champions[0].keys())
-    result["champions"] = {
-        "code": champions_code,
-        "bytes": len(champions_body),
-        "count": len(champions) if isinstance(champions, list) else 0,
-        "sample_keys": champion_sample_keys,
-    }
-
-    detail_code, detail_body = _fetch(base + "/detail.html?champion=1")
-    result["detail"] = {"code": detail_code, "bytes": len(detail_body)}
-
-    representative_name, representative_id = _extract_representative_champion(champions)
-    result["representative"] = {"hero": representative_name, "hero_id": representative_id}
-    detail_payload: object = {}
-    if representative_name:
-        api_detail_code, api_detail_body = _fetch(base + f"/api/champion/{urllib.parse.quote(representative_name)}/hextechs")
-        detail_payload = _read_json(api_detail_body)
-        cards = detail_payload.get("comprehensive") if isinstance(detail_payload, dict) else []
-        result["representative_detail"] = {
-            "code": api_detail_code,
-            "bytes": len(api_detail_body),
-            "hero": representative_name,
-            "generation_id": str(detail_payload.get("generation_id") or "") if isinstance(detail_payload, dict) else "",
-            "status": str(detail_payload.get("status") or "") if isinstance(detail_payload, dict) else "",
-            "card_count": len(cards) if isinstance(cards, list) else 0,
-            "first_card": _compact_hextech_card(cards[0]) if isinstance(cards, list) and cards else {},
-        }
-    else:
-        result["representative_detail"] = {"code": 0, "bytes": 0, "hero": ""}
-
-    if representative_id:
-        synergy_code, synergy_body = _fetch(base + f"/api/synergies/{urllib.parse.quote(representative_id)}")
-        synergy_payload = _read_json(synergy_body)
-        result["synergy_fallback"] = {"code": synergy_code, "bytes": len(synergy_body), "hero_id": representative_id, "json": synergy_payload}
-    else:
-        synergy_payload = {}
-        result["synergy_fallback"] = {"code": 0, "bytes": 0, "hero_id": "", "json": synergy_payload}
-
-    if representative_id:
-        asset_code, asset_body = _fetch(base + f"/assets/champions/{urllib.parse.quote(representative_id)}.png")
-        representative_asset = {"code": asset_code, "bytes": len(asset_body), "hero_id": representative_id}
-    else:
-        representative_asset = {"code": 0, "bytes": 0, "hero_id": ""}
-    result["representative_asset"] = representative_asset
-
-    business_checks = _business_ready(
-        startup_status,
-        champions,
-        detail_payload,
-        synergy_payload,
-        representative_asset,
-        require_snapshot_status=require_snapshot_status,
-    )
-    result["business_ready"] = business_checks
-    if not all(business_checks.values()):
-        missing = [name for name, ok in business_checks.items() if not ok]
-        raise SmokeFailure("业务数据未就绪：" + ", ".join(missing))
-    return result
-
-
 def _terminate_process_tree(proc: subprocess.Popen[bytes]) -> None:
     if proc.poll() is not None:
         return
@@ -1106,7 +893,7 @@ def _acquisition_worker_import_smoke(
     required = {
         "curl_cffi._wrapper",
         "hextech.infrastructure.sources.aramkit.service",
-        "hextech.infrastructure.sources.blitz.service",
+        "hextech.infrastructure.sources.catalog_versioned",
     }
     valid = bool(
         completed.returncode == 0
@@ -1120,6 +907,12 @@ def _acquisition_worker_import_smoke(
     if not valid:
         reason = str(payload.get("reason_code") or payload.get("error_type") or "self_check_failed")
         raise SmokeFailure(f"Acquisition worker self-check 失败：{reason}")
+    if bundle_manifest.get("runtime_profile") == "isolated_candidate":
+        actual_root = str(payload.get("runtime_root") or "").strip()
+        if not actual_root or Path(actual_root).resolve() != runtime_root.resolve():
+            raise SmokeFailure("Acquisition worker 实际 runtime_root 与候选包 var 不一致")
+        if payload.get("runtime_profile") != "isolated_candidate":
+            raise SmokeFailure("Acquisition worker 实际 runtime_profile 与候选不一致")
     return dict(payload)
 
 
@@ -1135,22 +928,42 @@ def run_smoke(
     if conflict:
         return {"ok": False, "fixture": fixture, "package_dir": str(package_dir),
                 "blocked_reason": conflict, "last_error": conflict}
+    # 覆盖所有子进程与失败出口；正式 runtime 从父环境定位，绝不从 sandbox 推导。
+    protected_root = _get_packaged_runtime_root(os.environ).resolve()
+    before = _runtime_metadata_snapshot(protected_root)
+    try:
+        result = _run_smoke_fixture(package_dir, timeout_seconds, fixture=fixture, bundle_manifest=bundle_manifest)
+    except (OSError, subprocess.TimeoutExpired, SmokeFailure) as exc:
+        result = {"ok": False, "fixture": fixture, "package_dir": str(package_dir), "last_error": str(exc)}
+    after = _runtime_metadata_snapshot(protected_root)
+    changed = sorted(key for key in before.keys() | after.keys() if before.get(key) != after.get(key))
+    result["formal_runtime_unchanged"] = not changed
+    result["formal_runtime_metadata"] = {
+        "root": str(protected_root), "before_entries": len(before), "after_entries": len(after),
+        "changed_paths": changed,
+    }
+    if changed:
+        result.update(ok=False, last_error="正式 runtime 元数据在 smoke 期间发生变化")
+    return result
+
+
+def _run_smoke_fixture(
+    package_dir: Path, timeout_seconds: int, *, fixture: str, bundle_manifest: dict[str, object],
+) -> dict[str, object]:
+    exe = _find_exe(package_dir)
     _find_launcher(package_dir)
     _validate_windows_gui_subsystem(exe)
-    stdout_path = package_dir / f"smoke_startup_{fixture}_stdout.log"
     overall_started_at = time.monotonic()
-    child_env = os.environ.copy()
-    appdata_root = package_dir.parent / f"appdata-{fixture}"
-    child_env["LOCALAPPDATA"] = str(appdata_root / "Local")
-    child_env["APPDATA"] = str(appdata_root / "Roaming")
-    # Parent build/test overrides must never merge the three isolated runtime fixtures.
-    child_env["HEXTECH_VAR_DIR"] = str(_get_packaged_runtime_root(child_env))
-    child_env["HEXTECH_DATA_SERVICE_SKIP_AUTO_REFRESH"] = "1"
+    child_env, runtime_root = _smoke_runtime_environment(package_dir, fixture, bundle_manifest)
+    if runtime_root.exists():
+        raise SmokeFailure("fixture runtime 已存在；请使用新的独立包副本/隔离目录")
+    child_env["HEXTECH_APP_SKIP_AUTO_REFRESH"] = "1"
     child_env["PYTHONDONTWRITEBYTECODE"] = "1"
     child_env["HEXTECH_LAUNCHER_WAIT"] = "1"
     child_env["HEXTECH_EXPECTED_BUILD_ID"] = str(bundle_manifest.get("build_id") or "")
     verified_snapshot_seeded = _has_verified_snapshot_seed(package_dir)
-    runtime_root = _get_packaged_runtime_root(child_env)
+    stdout_path = runtime_root / "logs" / f"smoke_startup_{fixture}_stdout.log"
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
     _write_smoke_feature_flags(runtime_root)
     if fixture == "stale_sidecar":
         _write_stale_sidecar_fixture(runtime_root)
@@ -1354,19 +1167,23 @@ def main() -> int:
     args = parser.parse_args()
 
     source = args.package_dir or _latest_package(args.dist_dir)
-    target = _copy_clean_package(source.resolve(), args.smoke_root.resolve())
+    smoke_root = args.smoke_root.resolve()
+    if smoke_root.exists() and any(smoke_root.iterdir()):
+        raise SmokeFailure("smoke root 已有证据；请使用新的隔离目录")
+    smoke_root.mkdir(parents=True, exist_ok=True)
     fixture_results: dict[str, dict[str, object]] = {}
     for fixture in ("clean", "stale_sidecar", "populated_runtime"):
+        target = _copy_clean_package(source.resolve(), smoke_root / fixture)
         fixture_results[fixture] = run_smoke(target, args.timeout, fixture=fixture)
     result: dict[str, object] = {
         "ok": all(item.get("ok") is True for item in fixture_results.values()),
-        "package_dir": str(target),
+        "package_dir": str(smoke_root),
         "fixtures": fixture_results,
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if result["ok"] and not args.keep:
-        if not _cleanup_smoke_root(target.parent):
-            raise SmokeFailure(f"烟测进程退出后仍无法清理隔离目录：{target.parent}")
+        if not _cleanup_smoke_root(smoke_root):
+            raise SmokeFailure(f"烟测进程退出后仍无法清理隔离目录：{smoke_root}")
     return 0 if result["ok"] else 1
 
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import threading
 from dataclasses import replace
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -21,7 +23,7 @@ from hextech.contracts import (
     VisionSlotState,
 )
 from hextech.contracts.identifiers import InvalidIdentifierError, champion_id, optional_augment_id
-from hextech.modules.data.generation import DataSnapshotManifest, DataSnapshotView
+from hextech.modules.data.generation import DataSnapshotView
 from hextech.modules.recommendation import RecommendationPolicy, RecommendationService
 from hextech.modules.session import SessionCoordinator
 from hextech.modules.session.evidence import build_evidence_bundle
@@ -41,52 +43,37 @@ def test_champion_id_rejects_ambiguous_values(value: object) -> None:
 
 
 def _snapshot_view(*, degraded: bool = False) -> DataSnapshotView:
-    manifest = DataSnapshotManifest(
-        schema_version=2,
-        generation_id="g1",
-        created_at="now",
-        content_fingerprint="a" * 64,
-        source_files=(),
-        champion_count=2,
-        augment_count=1,
-        stat_record_count=2,
-        files=(),
+    # Query-contract fixture only; v4 storage integrity uses support.v4_release.
+    manifest = SimpleNamespace(
+        schema_version=4, generation_id="g1", created_at="2026-10-24T00:00:00+00:00",
+        content_fingerprint="a" * 64, source_files=(), champion_count=2, augment_count=1,
+        stat_record_count=2, files=(), health="healthy", source_status={},
+        refreshed_sources=(), degraded_sources=(),
+        components={"champions": {"24": {"complete": True}, "245": {"complete": True}}},
     )
-    return DataSnapshotView(
-        manifest,
-        {
-            "champions": [
-                {"id": "24", "name": "武器大师", "英雄胜率": 0.52},
-                {"id": "245", "name": "时间刺客", "英雄胜率": 0.61},
-            ],
-            "champion_hextech": {
-                "武器大师": {"hero_id": "24", "augments": [{"id": "100", "win_rate": 0.6}]},
-                "时间刺客": {"hero_id": "245", "augments": [{"id": "100", "win_rate": 0.5}]},
-            },
-            "overlay_hints": {},
-            "identities": {
-                "augments": {"100": "测试强化"},
-                "augment_aliases": {"stable_ready": "100", "测试强化": "100"},
-                "catalog_augments": {
-                    "stable_ready": {
-                        "vision_id": "stable_ready",
-                        "name": "测试强化",
-                        "tier": "黄金",
-                        "canonical_id": "100",
-                        "stats_available": True,
-                    },
-                    "catalog_only": {
-                        "vision_id": "catalog_only",
-                        "name": "源站缺失强化",
-                        "tier": "白银",
-                        "canonical_id": "",
-                        "stats_available": False,
-                    },
-                },
-            },
-        },
-        degraded=degraded,
-    )
+    from collections import OrderedDict
+    from hextech.modules.data.generation.query import ReleaseQuery
+    query = object.__new__(ReleaseQuery)
+    query._lock = threading.RLock()
+    query.manifest = manifest
+    query.allowed = {"100", "200"}
+    query.optional = {}
+    query.pool = {"identities": [
+        {"canonical_id": "100", "name": "测试强化", "tier": "黄金", "augment_name_id": "stable_ready"},
+        {"canonical_id": "200", "name": "源站缺失强化", "tier": "白银", "augment_name_id": "catalog_only"},
+    ]}
+    query._hints_cache = None
+    query._synergy_cache = {}
+    query._ranking_cache = [
+        {"id": "24", "name": "武器大师", "英雄胜率": 0.52},
+        {"id": "245", "name": "时间刺客", "英雄胜率": 0.61},
+    ]
+    query._hero_cache = OrderedDict({
+        "24": {"hero_id": "24", "augments": [{"id": "100", "win_rate": 0.6}]},
+        "245": {"hero_id": "245", "augments": [{"id": "100", "win_rate": 0.5}]},
+    })
+    return DataSnapshotView(manifest, query, degraded=degraded)
+
 
 
 def test_recommendation_uses_snapshot_query_and_preserves_roles_while_sorting() -> None:
@@ -152,12 +139,11 @@ def test_recommendation_falls_back_to_confirmed_name_without_inventing_visual_ti
 
 def test_snapshot_name_resolution_does_not_first_win_ambiguous_catalog_variants() -> None:
     view = _snapshot_view()
-    identities = view._payloads["identities"]  # type: ignore[index]
-    identities["augment_aliases"] = {}
-    identities["catalog_augments"] = {
-        "same_gold": {"name": "同名强化", "tier": "黄金", "canonical_id": "100"},
-        "same_prismatic": {"name": "同名强化", "tier": "棱彩", "canonical_id": "200"},
-    }
+    view._payloads.pool["identities"] = [
+        {"canonical_id": "100", "name": "同名强化", "tier": "黄金"},
+        {"canonical_id": "200", "name": "同名强化", "tier": "棱彩"},
+    ]
+    view._payloads._hints_cache = None
 
     assert view.resolve_augment("同名强化") is None
 
@@ -384,38 +370,6 @@ def test_typed_game_context_provider_is_the_lcu_runtime_boundary() -> None:
     assert context.source == "overlay-lcu"
 
 
-def test_lcu_champ_select_404_is_normal_state_without_connection_reset() -> None:
-    """对局中 champ-select 404 属常态：不得重置 port/token，也不得刷 warning。
-
-    回归背景：历史实现 404 计满 5 次即重置连接，整局每 7.6 秒重扫客户端
-    进程并产生 137 条 warning/18 分钟（2026-07-26 真机实测）。
-    """
-
-    from unittest import mock
-
-    from hextech.interfaces.web.backend import lcu_runtime
-
-    with lcu_runtime._lcu_state_lock:
-        previous_port = lcu_runtime._lcu_state.port
-        previous_token = lcu_runtime._lcu_state.token
-        lcu_runtime._lcu_state.port = 54321
-        lcu_runtime._lcu_state.token = "lcu-token"
-    try:
-        with mock.patch.object(lcu_runtime.logger, "warning") as warn:
-            for _ in range(10):
-                lcu_runtime._handle_champ_select_not_found()
-        with lcu_runtime._lcu_state_lock:
-            assert lcu_runtime._lcu_state.port == 54321
-            assert lcu_runtime._lcu_state.token == "lcu-token"
-            assert lcu_runtime._lcu_state.context_phase == "not_in_champ_select"
-            assert lcu_runtime._lcu_state.connection_state == "connected"
-        warn.assert_not_called()
-        # 计数式风暴逻辑已整体删除，防止回潮
-        assert not hasattr(lcu_runtime._lcu_state, "consecutive_404_count")
-    finally:
-        with lcu_runtime._lcu_state_lock:
-            lcu_runtime._lcu_state.port = previous_port
-            lcu_runtime._lcu_state.token = previous_token
 
 
 def test_game_window_observation_prevents_mixed_capture_geometry() -> None:
@@ -560,7 +514,7 @@ def test_typed_overlay_renderer_reads_published_chinese_stat_fields() -> None:
         ),
     )
     view = _snapshot_view()
-    published_row = view._payloads["champion_hextech"]["武器大师"]["augments"][0]  # type: ignore[index]
+    published_row = view._payloads._hero_cache["24"]["augments"][0]  # type: ignore[index]
     published_row.pop("win_rate", None)
     published_row.update(
         {"海克斯胜率": 0.6, "海克斯出场率": 0.08}

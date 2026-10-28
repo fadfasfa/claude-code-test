@@ -371,31 +371,36 @@ def probe_lol_game_window(
     process_match: list[tuple[int, tuple[int, int, int, int]]] = []
     title_match: list[tuple[int, tuple[int, int, int, int]]] = []
 
+    own_pid = os.getpid()
+
     def collect(hwnd: int, _extra: object) -> bool:
-        if not is_window_renderable(hwnd):
-            # 桌面伴生窗需要知道最小化游戏仍存在；默认捕获/Overlay调用仍只接受可渲染窗口。
-            if not include_nonrenderable:
-                return True
-            try:
-                hidden_title = str(gui.GetWindowText(hwnd) or "").strip().casefold()
-            except Exception:
-                # EnumWindows 后其他应用关闭了句柄，不应使整次游戏窗口探测失败。
-                return True
-            if hidden_title not in accepted_titles:
-                return True
-        rect = _window_client_rect(hwnd)
-        if rect is None:
-            return True
-        candidate = (int(hwnd), rect)
-        if _window_process_name(hwnd) in accepted_processes:
-            process_match.append(candidate)
+        # GetWindowText sends synchronous WM_GETTEXT for our own process. Never ask
+        # Tk/our GUI thread for titles from a window-probe worker.
+        if win32process is None:
             return True
         try:
-            title = str(gui.GetWindowText(hwnd) or "").strip().casefold()
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            if int(pid or 0) <= 0 or int(pid) == own_pid:
+                return True
         except Exception:
-            title = ""
-        if title in accepted_titles:
-            title_match.append(candidate)
+            return True
+        process_name = _window_process_name(hwnd)
+        if process_name and process_name not in accepted_processes:
+            return True
+        if not include_nonrenderable and not is_window_renderable(hwnd):
+            return True
+        if not process_name:
+            # Title fallback is only for an external process whose identity cannot be read.
+            try:
+                title = str(gui.GetWindowText(hwnd) or "").strip().casefold()
+            except Exception:
+                return True
+            if title not in accepted_titles:
+                return True
+        rect = _window_client_rect(hwnd)
+        if rect is not None:
+            candidate = (int(hwnd), rect)
+            (process_match if process_name else title_match).append(candidate)
         return True
 
     try:

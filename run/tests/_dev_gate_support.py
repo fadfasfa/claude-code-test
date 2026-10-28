@@ -47,9 +47,7 @@ RUN_DIR = Path(__file__).resolve().parents[1]
 
 import requests
 
-import pandas as pd
 
-WEB_STATIC_DIR = RUN_DIR / "src" / "hextech" / "interfaces" / "web" / "backend" / "static"
 
 DATA_DIR = RUN_DIR / "resources"
 
@@ -75,11 +73,9 @@ HEXTECH_HEALTH_REQUIRED_COLUMNS = (
 
 import hextech.modules.data.catalog.aliases as alias_search
 
-import hextech.modules.data.catalog.precomputed_cache as precomputed_cache
 
 import hextech.modules.data.catalog.runtime_store as runtime_store
 
-import hextech.infrastructure.sources.hextech.service as hextech_scraper
 
 import hextech.infrastructure.sources.apex.service as synergy_scraper
 
@@ -89,22 +85,14 @@ import hextech.infrastructure.sources.version_sync as version_sync
 
 import hextech.infrastructure.transport.scrapling_client as scrapling_client
 
-import hextech.interfaces.web.backend.runtime as web_runtime
 
-from hextech.interfaces.web.backend.synergy_api import (
-    _build_synergy_api_payload,
-    _normalize_synergy_items,
-    _synergy_item_to_display_string,
-)
 
 from hextech.modules.data.catalog.version_catalog import (
     load_augment_manifest_entries,
     load_augment_name_to_icon_map,
 )
 
-from hextech.modules.data.catalog.view_adapter import process_hextechs_data
 
-from hextech.infrastructure.sources.hextech.parsing import extract_champion_stats
 
 from hextech.infrastructure.sources.apex.service import (
     SYNERGY_REFRESH_META_VERSION,
@@ -131,34 +119,8 @@ from hextech.infrastructure.observability.logging import get_runtime_log_paths, 
 
 TIER_IDS = ("Prismatic", "Gold", "Silver")
 
-ORIGINAL_SYNC_HERO_DATA = version_sync.sync_hero_data
 
-VERSION_SYNC_WRITE_GUARDED_CHECKS = frozenset(
-    {
-        "test_hextech_scraper_fallback_contract",
-        "test_hextech_cooldown_allows_forced_permission",
-        "test_hextech_failed_refresh_never_overwrites_csv",
-        "test_hextech_success_clears_fallback_state",
-    }
-)
 
-def _write_runtime_csv(path: Path, row_count: int = 300) -> None:
-    """生成满足运行态 schema 的最小离线样本。"""
-
-    row = {
-        "英雄ID": "1",
-        "英雄名称": "测试英雄",
-        "英雄评级": "S",
-        "英雄胜率": 0.5,
-        "英雄出场率": 0.1,
-        "海克斯阶级": "Gold",
-        "海克斯名称": "测试海克斯",
-        "海克斯胜率": 0.51,
-        "海克斯出场率": 0.02,
-        "胜率差": 0.01,
-        "综合得分": 1.0,
-    }
-    pd.DataFrame([row] * row_count).to_csv(path, index=False, encoding=runtime_store.CSV_ENCODING)
 
 def _top_level_import_names(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))

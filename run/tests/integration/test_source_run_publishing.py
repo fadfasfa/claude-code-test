@@ -41,10 +41,23 @@ def _manifest(
 
 
 def _install_formal_pointer(manifest: SourceRunManifest) -> None:
-    """模拟已经由 cohort store 提升的正式 pointer；publisher 本身不得直写。"""
-
+    """Publish an actual v4 release; no mutable source-current test shortcut."""
+    from dataclasses import replace
+    from support.v4_release import make_release
+    from hextech.modules.data.generation import DataSnapshotPublisher
+    from hextech.modules.data.generation.release_store import closure
+    from hextech.contracts import SourceProvenance
+    runtime = source_runs.source_root(manifest.source).parent.parent
+    with pytest.MonkeyPatch.context() as patch:
+        base = make_release(runtime, patch)
+    catalog, _, _, _ = closure(runtime, base)
+    manifest = replace(manifest, catalog_generation_id=catalog.generation_id, catalog_sha256=catalog.content_sha256)
     pointer = source_runs.publish_source_run(manifest)
-    atomic_write_json(source_runs.source_current_path(manifest.source), pointer)
+    ref = SourceProvenance(manifest.source, manifest.run_id, catalog.generation_id,
+        manifest.artifact.role, manifest.artifact.sha256, manifest.artifact.record_count,
+        pointer["manifest_sha256"], manifest.artifact.content_schema_version)
+    DataSnapshotPublisher(runtime / "snapshots").publish(None, source_files=(*base.source_files, ref),
+        components=base.components, source_status=base.source_status, health="degraded", degraded_sources=("mayhem",))
 
 
 def test_failed_source_run_never_replaces_last_good(tmp_path, monkeypatch) -> None:
@@ -128,7 +141,7 @@ def test_source_publisher_rejects_direct_current_promotion(tmp_path, monkeypatch
 
 def test_malformed_current_is_not_treated_as_missing(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(source_runs, "var_path", lambda *parts: tmp_path.joinpath(*parts))
-    pointer = source_runs.source_current_path("apex")
+    pointer = tmp_path / "snapshots/current.v4.json"
     pointer.parent.mkdir(parents=True)
     pointer.write_text("{broken", encoding="utf-8")
 

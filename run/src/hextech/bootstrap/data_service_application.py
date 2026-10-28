@@ -1,9 +1,8 @@
-"""DataService 的有界串行 action 队列与 loopback 控制面状态。"""
+"""App 内唯一的有界数据 action 队列与进度。"""
 
 from __future__ import annotations
 
 import queue
-import secrets
 import threading
 import time
 import uuid
@@ -13,16 +12,11 @@ from typing import Any
 from hextech.bootstrap.game_refresh_gate import REFRESH_SCOPES, normalize_refresh_scope
 
 
-DATA_SERVICE_NONCE_HEADER = "X-Hextech-Data-Service-Nonce"
-
-
 class DataServiceApplication:
-    """只绑定 loopback 的 DataService 控制面。"""
+    """直接调用的串行数据执行面。"""
 
-    def __init__(self, *, core: Any, parent_pid: int, nonce: str | None = None) -> None:
+    def __init__(self, *, core: Any) -> None:
         self.core = core
-        self.parent_pid = int(parent_pid)
-        self.nonce = nonce or secrets.token_urlsafe(24)
         self.shutdown_requested = threading.Event()
         self._actions: queue.Queue[tuple[str, str, dict[str, Any]]] = queue.Queue(maxsize=8)
         self._action_state_lock = threading.Lock()
@@ -34,7 +28,8 @@ class DataServiceApplication:
         self._pending_refresh_force = False
         self._pending_refresh_scope = "due"
         self._queued_refresh_scope = "due"
-        threading.Thread(target=self._run_actions, name="hextech-data-actions", daemon=True).start()
+        self._action_thread = threading.Thread(target=self._run_actions, name="hextech-data-actions", daemon=True)
+        self._action_thread.start()
 
     def submit_action(
         self,
@@ -191,6 +186,14 @@ class DataServiceApplication:
         with self._action_state_lock:
             self._clear_pending_refresh_locked()
             self._queued_refresh_scope = "due"
+            self._queued_action_types.clear()
+            while True:
+                try:
+                    self._actions.get_nowait()
+                except queue.Empty:
+                    break
+                else:
+                    self._actions.task_done()
 
     def _clear_pending_refresh_locked(self) -> None:
         self._pending_refresh_recheck = False
@@ -225,6 +228,9 @@ class DataServiceApplication:
                 continue
             started_at = time.time()
             with self._action_state_lock:
+                if self.shutdown_requested.is_set():
+                    self._actions.task_done()
+                    return
                 self._queued_action_types.discard(action_type)
                 if action_type == "refresh":
                     self._queued_refresh_scope = "due"
@@ -275,10 +281,15 @@ class DataServiceApplication:
                     self._queue_pending_refresh_locked()
                 self._actions.task_done()
 
-    def handler(self):
-        from hextech.bootstrap.data_service_http import build_data_service_handler
+    def get_action(self, action_id: str):
+        with self._action_state_lock:
+            return dict(self._completed_actions.get(action_id) or {})
 
-        return build_data_service_handler(self, nonce_header=DATA_SERVICE_NONCE_HEADER)
+    def close(self, timeout: float = 5.0) -> bool:
+        self.request_shutdown()
+        if self._action_thread is not threading.current_thread():
+            self._action_thread.join(max(0.0, timeout))
+        return not self._action_thread.is_alive()
 
 
 def _terminal_refresh_state(result: Mapping[str, Any], reason: str) -> str:
@@ -348,4 +359,4 @@ def _refresh_status_payload(
     }
 
 
-__all__ = ["DATA_SERVICE_NONCE_HEADER", "DataServiceApplication"]
+__all__ = ["DataServiceApplication"]

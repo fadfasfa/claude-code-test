@@ -1,7 +1,6 @@
 """ARAMKit ``dataset=all`` 的静态抓取、Catalog 绑定与候选发布。
 
-本模块只走既有 ``scrapling_client.fetch_text`` 静态 HTTP 路径。它不保存上游
-raw，不独立切换正式 current；完整候选由 cohort promotion 决定是否晋升。
+本模块只走既有 ``scrapling_client.fetch_text`` 静态 HTTP 路径。固定版本原文进入已验证缓存；本模块不切换正式发布 head。
 """
 
 from __future__ import annotations
@@ -375,6 +374,7 @@ def _write_failure(
     bytes_used: int,
     response: _Response | None = None,
     failure_fingerprint: str = "",
+    published_champions: int = 0,
 ) -> dict[str, Any]:
     outcomes: list[ItemOutcome] = []
     if rankings:
@@ -431,6 +431,18 @@ def _write_failure(
         "successful_champions": successful,
         "failed_champions": len(outcomes) - successful,
         "downloaded_bytes": bytes_used,
+        "downloaded_champions": sum(bool(item.response and item.response.status_code == 200
+                                           and not item.response.failure_kind) for item in results.values()),
+        "parsed_champions": sum(item.success for item in results.values()),
+        "published_champions": published_champions,
+        "diagnostics": {
+            "reason_code": reason, "catalog_generation_id": binding.generation_id,
+            "catalog_sha256": binding.content_sha256,
+            "unknown_augment_ids": sorted({identity for item in results.values()
+                for identity in _all_augment_ids(item.normalized or {})
+                if identity not in binding.augment_ids and identity not in binding.compatible_extra_augment_ids})[:512],
+            "unknown_champion_ids": sorted({str(row["id"]) for row in rankings} - binding.champion_ids)[:512],
+        },
         "check_status": "unknown",
         "upstream_revision": str((marker or {}).get("dataPath") or ""),
         "upstream_marker": dict(marker or {}),
@@ -479,6 +491,7 @@ def refresh_aramkit(
     started_at = utc_now_iso()
     rankings: list[dict[str, Any]] = []
     results: dict[str, _DetailResult] = {}
+    published_ids: set[str] = set()
     marker: dict[str, Any] = {}
     validation_fingerprint = ""
     try:
@@ -574,6 +587,7 @@ def refresh_aramkit(
             ):
                 return
             on_detail(version, champion_id, normalized_detail)
+            published_ids.add(champion_id)
         stop_event = stop_event or threading.Event()
         if stop_event.is_set():
             raise AramkitRefreshError("cancelled", "ARAMKit worker 已取消")
@@ -635,6 +649,7 @@ def refresh_aramkit(
                 marker=marker,
                 bytes_used=budget.used,
                 failure_fingerprint=(validation_fingerprint if reason == "schema_changed" else ""),
+                published_champions=len(published_ids),
             )
         unknown_augments = {
             augment_id
@@ -771,19 +786,12 @@ def refresh_aramkit(
             bytes_used=budget.used,
             response=response,
             failure_fingerprint=validation_fingerprint if validation_failure else "",
+            published_champions=len(published_ids),
         )
 
 
 __all__ = [
-    "AramkitRefreshError",
-    "CatalogBinding",
-    "DATA_BASE_URL",
-    "DEFAULT_CONCURRENCY",
-    "MAX_CONCURRENCY",
-    "MAX_RESPONSE_BYTES",
-    "MAX_TOTAL_BYTES",
-    "RETRY_CONCURRENCY",
-    "probe_aramkit_upstream_marker",
-    "refresh_aramkit",
-    "validate_scoped_stats_artifact",
+    "AramkitRefreshError", "CatalogBinding", "DATA_BASE_URL", "DEFAULT_CONCURRENCY",
+    "MAX_CONCURRENCY", "MAX_RESPONSE_BYTES", "MAX_TOTAL_BYTES", "RETRY_CONCURRENCY",
+    "probe_aramkit_upstream_marker", "refresh_aramkit", "validate_scoped_stats_artifact",
 ]

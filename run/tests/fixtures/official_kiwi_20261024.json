@@ -1,0 +1,368 @@
+{
+  "source": "https://game.gtimg.cn/images/lol/act/img/js/kiwi/kiwi_augments.json",
+  "etag": "\"6ad9c5d6-28f4a\"",
+  "last_modified": "Thu, 22 Oct 2026 08:14:14 GMT",
+  "regression_ids": [
+    3004,
+    3016,
+    3018,
+    3036,
+    3049,
+    3051,
+    3052,
+    3053,
+    3055,
+    3071,
+    3075,
+    3078,
+    3079,
+    3081,
+    3085,
+    3086,
+    3088,
+    3094,
+    3116,
+    3118,
+    3121,
+    3123,
+    3129,
+    3131,
+    3132,
+    3134,
+    3149,
+    3150,
+    3163
+  ],
+  "rows": [
+    {
+      "augmentID": 1001,
+      "name_en": "ARAM_ImTheJuggernaut",
+      "name_cn": "泰坦的坚决",
+      "mode": "KIWI, KIWI_JADE",
+      "level": "kPrismatic",
+      "isPBE": 0,
+      "isNew": 0,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/iamthejuggernaut_small.png"
+    },
+    {
+      "augmentID": 3004,
+      "name_en": "GetJinxed",
+      "name_cn": "罪恶快感！",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/overextender_small.png"
+    },
+    {
+      "augmentID": 3016,
+      "name_en": "ThirdTimesTheHarm",
+      "name_cn": "伤不过三",
+      "mode": "KIWI",
+      "level": "kPrismatic",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/silverbeats_small.png"
+    },
+    {
+      "augmentID": 3018,
+      "name_en": "BigShot",
+      "name_cn": "大腕",
+      "mode": "KIWI",
+      "level": "kPrismatic",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/bigshot_small.png"
+    },
+    {
+      "augmentID": 3036,
+      "name_en": "DoubleTime",
+      "name_cn": "翻倍时间",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/aram_phenomenalevil_small.png"
+    },
+    {
+      "augmentID": 3049,
+      "name_en": "ArmoredImpact",
+      "name_cn": "装甲冲击",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/armoredimpact_small.png"
+    },
+    {
+      "augmentID": 3051,
+      "name_en": "BlueBarrier",
+      "name_cn": "蓝色屏障",
+      "mode": "KIWI",
+      "level": "kSilver",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/bluenote_small.png"
+    },
+    {
+      "augmentID": 3052,
+      "name_en": "HandsOffTheTalent",
+      "name_cn": "远射天资",
+      "mode": "KIWI",
+      "level": "kSilver",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/bonk_small.png"
+    },
+    {
+      "augmentID": 3053,
+      "name_en": "MoshMonster",
+      "name_cn": "热舞怪兽",
+      "mode": "KIWI",
+      "level": "kPrismatic",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/genericabilityaugmenticon_prismatic.png"
+    },
+    {
+      "augmentID": 3055,
+      "name_en": "UltimateRecursion",
+      "name_cn": "终极循环往复",
+      "mode": "KIWI",
+      "level": "kSilver",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/zealot_small.png"
+    },
+    {
+      "augmentID": 3060,
+      "name_en": "OneHitWonder",
+      "name_cn": "单曲红人",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 1,
+      "isNew": 0,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/genericabilityaugmenticon_gold.png"
+    },
+    {
+      "augmentID": 3071,
+      "name_en": "BrassBlast",
+      "name_cn": "黄铜爆音",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/camo_small.png"
+    },
+    {
+      "augmentID": 3075,
+      "name_en": "Recoil",
+      "name_cn": "反冲",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/genericabilityaugmenticon_gold.png"
+    },
+    {
+      "augmentID": 3078,
+      "name_en": "TheBoomAndTheBass",
+      "name_cn": "鼓声暴起 低音轰鸣",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/theboomandthebass_small.png"
+    },
+    {
+      "augmentID": 3079,
+      "name_en": "Totentanz",
+      "name_cn": "死之舞",
+      "mode": "KIWI",
+      "level": "kPrismatic",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/totentanz_small.png"
+    },
+    {
+      "augmentID": 3081,
+      "name_en": "WeaponOfDestiny",
+      "name_cn": "命运之武器",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/protagonistssignatureweapon_small.png"
+    },
+    {
+      "augmentID": 3085,
+      "name_en": "FlowOfSpirit",
+      "name_cn": "灵魂乐流",
+      "mode": "KIWI",
+      "level": "kSilver",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/flowofspirit_small.png"
+    },
+    {
+      "augmentID": 3086,
+      "name_en": "BEES",
+      "name_cn": "小蜜蜂！！！",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/bees_small.png"
+    },
+    {
+      "augmentID": 3088,
+      "name_en": "CrimsonCobalt",
+      "name_cn": "深红钴蓝闪光",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/genericabilityaugmenticon_gold.png"
+    },
+    {
+      "augmentID": 3094,
+      "name_en": "LichBrain",
+      "name_cn": "巫妖大脑",
+      "mode": "KIWI",
+      "level": "kSilver",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/lichbrain_small.png"
+    },
+    {
+      "augmentID": 3116,
+      "name_en": "TakeemDownDownDown",
+      "name_cn": "将他们放倒倒倒",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/takeemdowndowndown_small.png"
+    },
+    {
+      "augmentID": 3118,
+      "name_en": "ArcaneAxiom",
+      "name_cn": "奥术公理",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/arcaneaxiom_small.png"
+    },
+    {
+      "augmentID": 3121,
+      "name_en": "Fruitify",
+      "name_cn": "水果化",
+      "mode": "KIWI",
+      "level": "kSilver",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/fruitseason_small.png"
+    },
+    {
+      "augmentID": 3123,
+      "name_en": "JeweledBracelet",
+      "name_cn": "珠光手镯",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/genericabilityaugmenticon_gold.png"
+    },
+    {
+      "augmentID": 3129,
+      "name_en": "SapMagic",
+      "name_cn": "吸元秘术",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/mercysstrike_small.png"
+    },
+    {
+      "augmentID": 3131,
+      "name_en": "StillHere",
+      "name_cn": "屹立不倒",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/stillhere_small.png"
+    },
+    {
+      "augmentID": 3132,
+      "name_en": "HeavyIsTheCrown",
+      "name_cn": "王冠之重",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/heavyisthecrown_small.png"
+    },
+    {
+      "augmentID": 3134,
+      "name_en": "LonelyWarrior",
+      "name_cn": "孤勇者",
+      "mode": "KIWI",
+      "level": "kSilver",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/adamant_small.png"
+    },
+    {
+      "augmentID": 3149,
+      "name_en": "GroupHug",
+      "name_cn": "一起抱抱",
+      "mode": "KIWI",
+      "level": "kPrismatic",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/empyreampromise_small.png"
+    },
+    {
+      "augmentID": 3150,
+      "name_en": "Upgrade_Stormsurge",
+      "name_cn": "升级：风暴狂涌",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/upgradehubris_small.png"
+    },
+    {
+      "augmentID": 3159,
+      "name_en": "RISE",
+      "name_cn": "登峰造极境",
+      "mode": "KIWI",
+      "level": "kPrismatic",
+      "isPBE": 1,
+      "isNew": 0,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/zerohour_small.png"
+    },
+    {
+      "augmentID": 3163,
+      "name_en": "EnchantingButterflies",
+      "name_cn": "迷人蝴蝶",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/enchantedbuttery_small.png"
+    },
+    {
+      "augmentID": 3176,
+      "name_en": "GoH_PentakillAug_Generic",
+      "name_cn": "赛季之星:五杀摇滚",
+      "mode": "KIWI",
+      "level": "kGold",
+      "isPBE": 0,
+      "isNew": 1,
+      "small_Icon": "https://game.gtimg.cn/images/lol/act/img/rune/pentakill_small.png"
+    }
+  ]
+}

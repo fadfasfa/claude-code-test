@@ -120,14 +120,11 @@ def _build_fixture(
         content_schema_version=1,
     )
     snapshot_manifest = DataSnapshotManifest(
-        generation_id="20260815T000000-aaaaaaaaaa",
-        created_at="now",
-        content_fingerprint="f" * 64,
-        source_files=(provenance,),
-        champion_count=len(descriptors),
-        augment_count=1,
-        stat_record_count=len(descriptors),
-        files=(),
+        generation_id="20260815T000000-aaaaaaaaaa", created_at="2026-08-15T00:00:01+00:00",
+        content_fingerprint="f" * 64, source_files=(provenance,),
+        components={"ranking": {"source_version": "data/test", "catalog_id": "catalog-test", "run_id": "ranking-fixture"},
+                    "champions": {hero: {"source_version": "data/test", "catalog_id": "catalog-test", "run_id": run_id, "complete": True}
+                                  for hero in champions}},
     )
     return DataSnapshotView(snapshot_manifest, {}), run_dir
 
@@ -161,7 +158,7 @@ def test_scoped_data_time_invalid_marker_uses_verified_run_completion(tmp_path, 
     assert result.view.data_at == "2026-08-15T00:00:01+00:00"
 
 
-def test_v3_old_hero_revision_keeps_values_but_never_borrows_fresh_ranking_status(tmp_path):
+def test_v4_old_hero_revision_keeps_values_but_never_borrows_fresh_ranking_status(tmp_path):
     from hextech.contracts import SourceStatusV2
     from hextech.interfaces.overlay.renderer import build_render_model_from_session
     from hextech.modules.recommendation.stage_projection import apply_scoped_stage_stats
@@ -173,7 +170,7 @@ def test_v3_old_hero_revision_keeps_values_but_never_borrows_fresh_ranking_statu
     expected_time = datetime.fromtimestamp(marker / 1000, tz=timezone.utc).isoformat()
     snapshot, run_dir = _build_fixture(tmp_path, metadata={"version": {"buildTimeUnixMs": marker}})
     hero_run = snapshot.manifest.source_files[0].run_id
-    manifest = replace(snapshot.manifest, schema_version=3, components={
+    manifest = replace(snapshot.manifest, schema_version=4, components={
         "ranking": {"run_id": "ranking-fresh", "source_version": "ranking-new", "catalog_id": "catalog-test"},
         "champions": {"1": {"run_id": hero_run, "source_version": "hero-old", "catalog_id": "catalog-test", "complete": True}},
     }, source_status={"aramkit": SourceStatusV2(
@@ -211,7 +208,7 @@ def test_scoped_view_reports_missing_champion_for_ashe_style_gap(tmp_path: Path)
     result = _cache(run_dir).load(snapshot, "22")
 
     assert result.available is False
-    assert result.reason == "aramkit_champion_missing"
+    assert result.reason == "aramkit_provenance_missing"
 
 
 def test_scoped_view_rejects_child_hash_mismatch(tmp_path: Path) -> None:

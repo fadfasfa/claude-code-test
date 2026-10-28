@@ -41,7 +41,6 @@ from hextech.modules.data.catalog.runtime_store import (
     build_raw_synergy_data_path,
     build_synergy_latest_pointer_path,
     get_latest_synergy_snapshot_path,
-    get_latest_csv,
     load_synergy_latest_pointer,
 )
 from hextech.modules.data.ports.paths import RUNTIME_DATA_DIR, STATIC_DATA_DIR

@@ -1,6 +1,6 @@
 """桌面进程 composition root。
 
-冻结单文件仍以参数区分受 supervisor 管理的子进程；源码态 CLI 则由
+冻结单文件仍以参数区分受 App 管理的子进程；源码态 CLI 则由
 ``pyproject.toml`` 的独立入口直接进入对应 bootstrap。
 
 调用方: 命令行入口; 关键依赖: support.python_runtime、support.log_utils、display.web.app。
@@ -17,40 +17,47 @@ if __name__ == "__main__":
     ensure_python_311_for_source()
 
 
-def _install_packaged_cohort_seed() -> None:
-    """冻结角色启动前显式安装同包 cohort；源码态绝不触碰该路径。"""
+def _initialize_packaged_release() -> dict | None:
+    """冻结App启动前显式初始化同包v4 release；源码态绝不触碰该路径。"""
 
     if not getattr(sys, "frozen", False):
         return
-    from hextech.infrastructure.persistence.runtime_bundle import seed_bundled_resources
-    from hextech.modules.data.ports.paths import BUNDLE_ROOT_DIR, get_var_dir
-
-    seed_bundled_resources(
-        bundle_root=BUNDLE_ROOT_DIR,
-        runtime_snapshot_dir=get_var_dir() / "snapshots",
-    )
+    from hextech.infrastructure.persistence.release_seed import install_v4_seed
+    from hextech.modules.data.ports.paths import resource_path, get_var_dir
+    return install_v4_seed(resource_path("seeds", "runtime.v4"), get_var_dir())
 
 
 def _frozen_role(argv: list[str] | None = None) -> str:
-    """在任何 cohort 或日志重活之前解析冻结 EXE 角色。"""
+    """在任何seed或日志重活之前解析冻结 EXE 角色。"""
 
     arguments = list(sys.argv[1:] if argv is None else argv)
     for role in (
         "--desktop-presentation-smoke",
-        "--web-server",
-        "--runtime-supervisor",
-        "--data-service",
         "--acquisition-worker",
         "--game-overlay",
         "--overlay-sidecar",
     ):
         if role in arguments:
             return role
+    if arguments:
+        raise SystemExit("unsupported runtime role or arguments")
     return "desktop"
 
 
 def main() -> None:
     role = _frozen_role()
+    try:
+        _run(role)
+    except Exception as exc:
+        if role == "desktop":
+            from hextech.interfaces.desktop.startup_failure import show_startup_failure
+
+            show_startup_failure(exc)
+            raise SystemExit(1) from exc
+        raise
+
+
+def _run(role: str) -> None:
     if role == "--desktop-presentation-smoke":
         from hextech.interfaces.desktop.presentation_smoke import run_desktop_presentation_smoke
         from hextech.modules.session.process_bootstrap import publish_process_bootstrap
@@ -72,21 +79,7 @@ def main() -> None:
     ensure_var_layout()
     install_runtime_logging()
     configure_lcu_scanner(scan_lcu_process)
-    if role == "--web-server":
-        from hextech.interfaces.web.backend.app import run_web_server
-
-        run_web_server()
-    elif role == "--runtime-supervisor":
-        from hextech.bootstrap.supervisor import main as run_runtime_supervisor
-
-        args = [arg for arg in sys.argv[1:] if arg != "--runtime-supervisor"]
-        raise SystemExit(run_runtime_supervisor(args))
-    elif role == "--data-service":
-        from hextech.bootstrap.data_service_runtime import main as run_data_service
-
-        args = [arg for arg in sys.argv[1:] if arg != "--data-service"]
-        raise SystemExit(run_data_service(args))
-    elif role == "--acquisition-worker":
+    if role == "--acquisition-worker":
         from hextech.bootstrap.acquisition_worker import main as run_acquisition_worker
 
         args = [arg for arg in sys.argv[1:] if arg != "--acquisition-worker"]
@@ -104,7 +97,10 @@ def main() -> None:
     else:
         from hextech.interfaces.desktop.app import run_desktop
 
-        run_desktop(cohort_seed_installer=_install_packaged_cohort_seed)
+        from hextech.bootstrap.data_service_runtime import create_embedded_data_service
+        from hextech.bootstrap.runtime_owner import AppRuntimeOwner
+        run_desktop(seed_initializer=_initialize_packaged_release,
+                    data_runtime_factory=create_embedded_data_service, runtime_owner_factory=AppRuntimeOwner)
 
 
 if __name__ == "__main__":

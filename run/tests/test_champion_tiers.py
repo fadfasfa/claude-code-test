@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
-import pandas as pd
 import pytest
 
 from hextech.modules.data.catalog.champion_tier import (
@@ -32,53 +30,17 @@ def test_invalid_tier_or_score_falls_back_to_neutral_t3(value: object) -> None:
     assert normalized_champion_tier(value, score=value) == "T3"
 
 
-def test_processed_champion_dto_derives_authoritative_tier_from_same_score(monkeypatch: pytest.MonkeyPatch) -> None:
-    from hextech.modules.data.catalog import view_adapter
-
-    monkeypatch.setattr(view_adapter, "_validate_runtime_schema", lambda *_args: True)
-    monkeypatch.setattr(view_adapter, "_get_champion_maps", lambda: ({}, {}))
-    dataframe = pd.DataFrame(
-        [
-            {"英雄名称": "英雄甲", "英雄胜率": 0.62, "英雄出场率": 0.20},
-            {"英雄名称": "英雄乙", "英雄胜率": 0.50, "英雄出场率": 0.10},
-            {"英雄名称": "英雄丙", "英雄胜率": 0.38, "英雄出场率": 0.02},
-        ]
-    )
-
-    rows = view_adapter.process_champions_data(
-        dataframe,
-        use_runtime_cache=False,
-        log_columns=False,
-    )
-
-    assert rows
-    assert {
-        row["英雄评级"] == champion_tier_from_score(row["综合分数"])
-        for row in rows
-    } == {True}
+def test_champion_ranking_dto_derives_tier_from_its_score():
+    from hextech.modules.recommendation.hero_rankings import build_hero_rankings
+    inputs = [{"id": str(i), "win_rate": win, "pick_rate": pick, "sample_count": 1000,
+               "source_rank": i, "source_tier": "S"}
+              for i, win, pick in [(1, .62, .2), (2, .5, .1), (3, .38, .02)]]
+    rows = build_hero_rankings(inputs, {str(i): {"name": f"英雄{i}"} for i in (1, 2, 3)})
+    assert len(rows) == 3
+    assert all(row["英雄评级"] == champion_tier_from_score(row["综合分数"]) for row in rows)
 
 
-def test_desktop_fallback_and_web_grouping_never_emit_t_question_mark() -> None:
+def test_desktop_never_emits_t_question_mark():
     from hextech.interfaces.desktop import app_view
-
     assert app_view.normalized_champion_tier("T?", score=1.5) == "T1"
     assert app_view.normalized_champion_tier("", score=-0.31) == "T5"
-
-    # ESM 重构后评级渲染在 js/index/ 子模块；断言聚合全部前端脚本，
-    # 同时保证任何模块都不会把未知评级渲染成 "T?"。
-    js_root = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "hextech"
-        / "interfaces"
-        / "web"
-        / "backend"
-        / "static"
-        / "js"
-    )
-    combined_scripts = "\n".join(
-        path.read_text(encoding="utf-8") for path in sorted(js_root.rglob("*.js"))
-    )
-    assert "champ['英雄评级']" in combined_scripts
-    assert "TIER_BY_ID.get('T3')" in combined_scripts
-    assert "T?" not in combined_scripts

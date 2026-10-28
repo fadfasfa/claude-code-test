@@ -12,7 +12,6 @@ RUN_DIR = Path(__file__).resolve().parents[1]
 TESTS_DIR = RUN_DIR / "tests"
 DOMAIN_TEST_FILES = {
     "structure": ("test_dev_gate_structure.py",),
-    "web": ("test_dev_gate_web.py",),
     # Overlay 已按行为主题拆分；这里保留显式清单，防止未来又退回单个巨型测试文件。
     "overlay": (
         "test_dev_gate_overlay_basics.py",

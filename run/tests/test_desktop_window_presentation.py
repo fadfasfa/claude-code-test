@@ -177,6 +177,76 @@ def test_close_with_partial_map_hides_even_without_logical_visible_flag():
     assert not ui.root.mapped
 
 
+@pytest.mark.parametrize("operation", ["hidden_tick", "close", "presentation_error"])
+def test_native_only_mapping_is_withdrawn_when_tk_inner_is_unmapped(monkeypatch, operation):
+    ui, c = controller()
+    ui.native_visible = True
+    ui._desktop_native_visible = lambda: ui.native_visible
+    hidden = []
+    def hide():
+        hidden.append(True)
+        ui.native_visible = False
+    ui._hide_overlay = hide
+    c.publish_window(observation(game_visible=True, observed_at=10.1))
+    if operation == "close":
+        c.close()
+    elif operation == "presentation_error":
+        monkeypatch.setattr(c, "apply_latest", lambda: (_ for _ in ()).throw(RuntimeError("probe failed")))
+        c._tick()
+    else:
+        assert c.apply_latest(now=10.1).reason == "game_in_progress"
+    assert hidden == [True]
+    assert not ui.native_visible
+    if operation != "close":
+        assert c.status()["native_visible"] is False
+        assert c.status()["hide_confirmed"] is True
+
+
+def test_native_hide_failure_is_reported_and_retried_each_tick(monkeypatch):
+    ui, c = controller()
+    ui._desktop_native_visible = lambda: True
+    attempts = []
+    def hide():
+        attempts.append(True)
+        raise RuntimeError("desktop_native_hide_unconfirmed")
+    ui._hide_overlay = hide
+    c.publish_window(observation(game_visible=True, observed_at=10.1))
+    for _ in range(2):
+        c._tick()
+        assert c.status()["visible"] is True
+        assert c.status()["hide_confirmed"] is False
+    assert len(attempts) == 4
+
+
+def test_close_does_not_probe_destroyed_native_wrapper():
+    ui, c = controller()
+    ui.root.winfo_exists = lambda: False
+    ui._desktop_native_visible = lambda: (_ for _ in ()).throw(AssertionError("stale HWND probe"))
+    c.close()
+    assert c.ui is None
+
+
+def test_probe_evidence_is_available_without_logging_every_observation(monkeypatch):
+    from hextech.interfaces.desktop import window_presentation
+    log = []
+    monkeypatch.setattr(window_presentation.logger, "info", lambda *args: log.append(args))
+    ui, c = controller()
+    c.publish_window(observation(game_visible=True, game_window_hwnd=1234, probe_elapsed_ms=15.5))
+    c.apply_latest(now=10.1)
+    c.publish_window(observation(game_visible=True, game_window_hwnd=1234,
+                                 probe_elapsed_ms=25.5, observed_at=10.2))
+    c.apply_latest(now=10.2)
+    state = c.status()
+    assert state["window_observed_at"] == 10.2
+    assert state["probe_elapsed_ms"] == 25.5
+    assert state["game_window_hwnd"] == 1234
+    assert state["gameflow_known"] is True
+    assert state["gameflow_in_progress"] is False
+    assert state["gameflow_observed_at"] == 10.0
+    assert state["gameflow_client_hwnd"] == 100
+    assert len(log) == 1
+
+
 @pytest.mark.parametrize("shutdown", ["close", "destroy", "closing"])
 def test_ui_callback_shutdown_does_not_continue_window_operations_or_reschedule(shutdown):
     ui, c = controller()
@@ -545,6 +615,10 @@ def test_phase_publication_precedes_slow_list_update_and_uses_one_request(monkey
     def slow_list(*_args, **_kwargs):
         entered.set()
         assert release.wait(2.0)
+        from hextech.interfaces.desktop.window_presentation import CandidateDisplay
+        return CandidateDisplay(_args[0], "", _args[1])
+    ui._prepare_candidate_display = slow_list
+    ui._apply_candidate_display = lambda display: None
     monkeypatch.setattr(
         runtime_window,
         "resolve_lol_client_window",
@@ -553,8 +627,6 @@ def test_phase_publication_precedes_slow_list_update_and_uses_one_request(monkey
         ),
     )
     monkeypatch.setattr(runtime_window, "_fallback_live_state", phase)
-    monkeypatch.setattr(runtime_window, "_sync_candidate_ids", slow_list)
-    monkeypatch.setattr(runtime_window, "_drain_preload_pending", lambda ui: None)
     worker = threading.Thread(target=runtime_window.lcu_polling_loop, args=(ui,))
     list_worker = threading.Thread(target=runtime_window.candidate_update_loop, args=(ui,))
     list_worker.start()
@@ -581,6 +653,7 @@ def test_minimized_game_still_blocks_desktop_but_is_not_a_capture_target(monkeyp
     from hextech.modules.vision import window
 
     monkeypatch.setattr(window.win32gui, "EnumWindows", lambda callback, data: callback(777, data))
+    monkeypatch.setattr(window.win32process, "GetWindowThreadProcessId", lambda hwnd: (1, 123456))
     monkeypatch.setattr(window.win32gui, "GetWindowText", lambda hwnd: "League of Legends (TM) Client")
     monkeypatch.setattr(window, "is_window_renderable", lambda hwnd: False)
     monkeypatch.setattr(window, "_window_client_rect", lambda hwnd: (-32000, -32000, -31840, -31973))

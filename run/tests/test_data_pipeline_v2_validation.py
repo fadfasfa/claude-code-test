@@ -1,24 +1,19 @@
 from __future__ import annotations
 
-import pandas as pd
 import pytest
 
 from hextech.contracts import (
     ArtifactDescriptor,
-    BaselineContributionV2,
     CatalogManifestV2,
     DataContractError,
     FailureKind,
     FetchAttempt,
     ItemOutcome,
-    SnapshotFileDescriptor,
     SourcePointerV2,
-    SourceProvenance,
     SourceRunManifestV2,
     SourceStatusV2,
 )
 from hextech.modules.acquisition.apex.validation import ApexValidationError, validate_apex_run
-from hextech.modules.acquisition.hextech.validation import HextechSchemaChanged, validate_hextech_frame
 from hextech.modules.acquisition.mayhem.validation import MayhemValidationError, validate_mayhem_run
 
 
@@ -79,40 +74,6 @@ def test_v1_source_pointer_and_catalog_manifest_are_rejected() -> None:
         CatalogManifestV2.from_mapping(catalog)
 
 
-def test_baseline_contribution_binds_origin_generation_without_fake_artifact_path() -> None:
-    provenance = SourceProvenance(
-        source="hextech",
-        run_id="run-hextech",
-        catalog_generation_id="catalog-test",
-        artifact_role="stats",
-        artifact_sha256="a" * 64,
-        record_count=10,
-        manifest_sha256="b" * 64,
-        content_schema_version=2,
-    )
-    files = tuple(
-        SnapshotFileDescriptor(
-            role=role,
-            relative_path=f"{role}.json",
-            size=10,
-            sha256=str(index) * 64,
-        )
-        for index, role in enumerate(("champions", "champion_hextech", "overlay_hints", "identities"), start=1)
-    )
-    baseline = BaselineContributionV2(
-        source="hextech",
-        origin_generation_id="20260718T000000-0123456789",
-        catalog_generation_id="catalog-test",
-        catalog_sha256="c" * 64,
-        created_at="2026-07-18T00:00:00+00:00",
-        provenance=provenance,
-        snapshot_files=files,
-    )
-
-    payload = baseline.to_dict()
-
-    assert "artifact" not in payload
-    assert BaselineContributionV2.from_mapping(payload) == baseline
 
 
 def test_source_status_accepts_old_partial_generation_fields_as_unknown() -> None:
@@ -188,75 +149,10 @@ def test_v2_contracts_reject_invalid_outcomes_and_duplicate_catalog_roles() -> N
         )
 
 
-def test_complete_provenance_accepts_optional_catalog_augment_assets_role() -> None:
-    from hextech.modules.data.generation.validation import validate_complete_provenance
-
-    catalog_id = "catalog-test"
-    entries = [
-        SourceProvenance(
-            source="catalog",
-            run_id=catalog_id,
-            catalog_generation_id=catalog_id,
-            artifact_role=role,
-            artifact_sha256=(str(index) * 64),
-            record_count=1,
-            manifest_sha256="f" * 64,
-            content_schema_version=2,
-        )
-        for index, role in enumerate(("champions", "augments", "versions", "augment_assets"), start=1)
-    ]
-    entries.extend(
-        SourceProvenance(
-            source=source,
-            run_id=f"{source}-run",
-            catalog_generation_id=catalog_id,
-            artifact_role=role,
-            artifact_sha256=digest * 64,
-            record_count=1,
-            manifest_sha256="e" * 64,
-            content_schema_version=2,
-        )
-        for source, role, digest in (
-            ("hextech", "stats", "a"),
-            ("apex", "synergy", "b"),
-            ("mayhem", "combos", "c"),
-        )
-    )
-
-    validate_complete_provenance(entries)
 
 
-def _hextech_frame() -> pd.DataFrame:
-    rows = []
-    for champion_id, champion_name in (("1", "英雄一"), ("2", "英雄二")):
-        rows.append(
-            {
-                "英雄ID": champion_id,
-                "英雄名称": champion_name,
-                "英雄评级": "A",
-                "英雄胜率": 0.51,
-                "英雄出场率": 0.12,
-                "海克斯ID": "10",
-                "海克斯阶级": "Gold",
-                "海克斯名称": "测试海克斯",
-                "海克斯胜率": 0.52,
-                "海克斯出场率": 0.2,
-                "胜率差": 0.01,
-                "综合得分": 1.0,
-            }
-        )
-    return pd.DataFrame(rows)
 
 
-def test_hextech_validator_rejects_shifted_identity_column_and_duplicate_pair() -> None:
-    frame = _hextech_frame()
-    shifted = frame.rename(columns={"英雄ID": "英雄 ID"})
-    with pytest.raises(HextechSchemaChanged, match="缺少字段"):
-        validate_hextech_frame(shifted, ("1", "2"), min_rows=2)
-
-    duplicated = pd.concat([frame, frame.iloc[[0]]], ignore_index=True)
-    with pytest.raises(HextechSchemaChanged, match="记录重复"):
-        validate_hextech_frame(duplicated, ("1", "2"), min_rows=2)
 
 
 def _apex_item(name: str) -> dict[str, object]:

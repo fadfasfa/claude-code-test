@@ -16,17 +16,13 @@ def clone(source: Path, target: Path) -> None:
     os.environ["HEXTECH_VAR_DIR"] = str(source)
     from tooling.build.cohort_seed import collect_cohort_seed
     seed = collect_cohort_seed(source / "snapshots")
-    generation = str(seed.metadata["generation_id"])
     target.mkdir(parents=True)
     for original in seed.files:
         relative = original.relative_to(source)
         destination = target / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(original, destination)
-    (target / "snapshots").mkdir(exist_ok=True)
-    shutil.copy2(source / "snapshots/current.v2.json", target / "snapshots/current.v2.json")
-    shutil.copytree(source / "snapshots/generations" / generation,
-                    target / "snapshots/generations" / generation)
+
 
 
 def verify(root: Path) -> dict:

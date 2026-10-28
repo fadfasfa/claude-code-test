@@ -4,7 +4,7 @@ import json
 import threading
 import time
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
@@ -12,7 +12,7 @@ from typing import Any, Mapping
 import pytest
 
 from hextech.infrastructure.sources.aramkit import service
-from hextech.bootstrap.data_service_runtime import _aramkit_payloads
+from hextech.infrastructure.sources.aramkit.projection import build_aramkit_payloads as _aramkit_payloads
 from hextech.infrastructure.sources.aramkit.schema import (
     SchemaValidationError,
     normalize_detail,
@@ -268,57 +268,30 @@ def test_generation_adapter_uses_catalog_display_fields_and_local_rank(isolated_
     assert card["icon"]
 
 
-def test_same_marker_reuses_verified_current_without_fetching_rankings(isolated_sources: Path) -> None:
-    first_fetcher = _happy_fetcher(["1"])
-    first = service.refresh_aramkit(fetcher=first_fetcher, catalog_binding=_binding(["1"]))
-    atomic_write_json(source_runs.source_current_path("aramkit"), first["pointer"])
-    marker_only = FixtureFetcher({service.VERSIONS_URL: _version()})
-
-    result = service.refresh_aramkit(fetcher=marker_only, catalog_binding=_binding(["1"]))
-
-    assert result["success"] is True
-    assert result["reason"] == "not_stale"
-    assert marker_only.calls == [service.VERSIONS_URL]
+def test_same_marker_reuses_verified_current_without_fetching_rankings(isolated_sources):
+    first, binding = _v4_current(isolated_sources)
+    fetcher = FixtureFetcher({service.VERSIONS_URL: _version()})
+    result = service.refresh_aramkit(fetcher=fetcher, catalog_binding=binding)
+    assert result["success"] and result["reason"] == "not_stale"
+    assert result["pointer"]["run_id"] == first["run_id"]
+    assert fetcher.calls == [service.VERSIONS_URL]
 
 
-def test_versions_304_reuses_verified_response_without_redownloading_dataset(
-    isolated_sources: Path,
-) -> None:
-    happy = _happy_fetcher(["1"])
-    responses = dict(happy.responses)
-    responses[service.VERSIONS_URL] = [
-        {
-            "status_code": 200,
-            "text": json.dumps(_version()),
-            "response_headers": {"ETag": '"versions-v1"'},
-        },
+
+def test_versions_304_reuses_verified_response_without_redownloading_dataset(isolated_sources):
+    _, binding = _v4_current(isolated_sources)
+    fetcher = ConditionalFixtureFetcher({service.VERSIONS_URL: [
+        {"status_code": 200, "text": json.dumps(_version()), "response_headers": {"ETag": '"versions-v1"'}},
         {"status_code": 304, "text": "", "response_headers": {}},
-        {"status_code": 304, "text": "", "response_headers": {}},
-    ]
-    fetcher = ConditionalFixtureFetcher(responses)
-    raw_root = isolated_sources / "raw-responses"
-    first = service.refresh_aramkit(
-        fetcher=fetcher,
-        catalog_binding=_binding(["1"]),
-        raw_cache_root=raw_root,
-    )
-    atomic_write_json(source_runs.source_current_path("aramkit"), first["pointer"])
+        {"status_code": 304, "text": "", "response_headers": {}}]})
+    for _ in range(3):
+        result = service.refresh_aramkit(fetcher=fetcher, catalog_binding=binding,
+            raw_cache_root=isolated_sources / "raw-responses")
+        assert result["reason"] == "not_stale"
+    assert fetcher.calls == [service.VERSIONS_URL] * 3
+    assert fetcher.kwargs[1]["headers"]["If-None-Match"] == '"versions-v1"'
+    assert fetcher.kwargs[2]["headers"]["If-None-Match"] == '"versions-v1"'
 
-    second = service.refresh_aramkit(
-        fetcher=fetcher,
-        catalog_binding=_binding(["1"]),
-        raw_cache_root=raw_root,
-    )
-
-    assert second["reason"] == "not_stale"
-    assert fetcher.counts[service.VERSIONS_URL] == 3
-    assert fetcher.counts[_urls(["1"])[1]] == 1
-    version_calls = [
-        kwargs for url, kwargs in zip(fetcher.calls, fetcher.kwargs, strict=True)
-        if url == service.VERSIONS_URL
-    ]
-    assert version_calls[1]["headers"]["If-None-Match"] == '"versions-v1"'
-    assert version_calls[2]["headers"]["If-None-Match"] == '"versions-v1"'
 
 
 def test_damaged_current_is_rebuilt_from_verified_raw_cache(
@@ -353,101 +326,51 @@ def test_damaged_current_is_rebuilt_from_verified_raw_cache(
 
 
 @pytest.mark.parametrize("age", [timedelta(hours=5), timedelta(days=7)])
-def test_same_marker_reuse_is_version_driven_not_age_driven(
-    isolated_sources: Path,
-    age: timedelta,
-) -> None:
-    first = service.refresh_aramkit(
-        fetcher=_happy_fetcher(["1"]),
-        catalog_binding=_binding(["1"]),
-    )
-    current = dict(first["pointer"])
-    atomic_write_json(source_runs.source_current_path("aramkit"), current)
-    completed = datetime.fromisoformat(str(current["last_success_at"]).replace("Z", "+00:00"))
+def test_same_marker_reuse_is_version_driven_not_age_driven(isolated_sources, age):
+    pointer, binding = _v4_current(isolated_sources)
+    completed = datetime.fromisoformat(pointer["completed_at"].replace("Z", "+00:00"))
     fetcher = FixtureFetcher({service.VERSIONS_URL: _version()})
-
     checks = 42 if age == timedelta(days=7) else 1
     for step in range(1, checks + 1):
-        result = service.refresh_aramkit(
-            fetcher=fetcher,
-            catalog_binding=_binding(["1"]),
-            now=completed + age * step / checks,
-        )
-        assert result["success"] is True
-        assert result["reason"] == "not_stale"
-        assert result["pointer"]["run_id"] == first["run_id"]
+        result = service.refresh_aramkit(fetcher=fetcher, catalog_binding=binding, now=completed + age * step/checks)
+        assert result["success"] and result["reason"] == "not_stale"
+        assert result["pointer"]["run_id"] == pointer["run_id"]
     assert fetcher.calls == [service.VERSIONS_URL] * checks
 
 
-def test_missing_pointer_success_time_falls_back_to_manifest_completion(isolated_sources: Path) -> None:
-    first = service.refresh_aramkit(
-        fetcher=_happy_fetcher(["1"]),
-        catalog_binding=_binding(["1"]),
-    )
-    current = {**first["pointer"], "last_success_at": ""}
-    atomic_write_json(source_runs.source_current_path("aramkit"), current)
-    manifest = source_runs.load_source_run_manifest("aramkit", first["run_id"])
-    assert manifest is not None
-    completed = datetime.fromisoformat(manifest.completed_at.replace("Z", "+00:00"))
-    marker_only = FixtureFetcher({service.VERSIONS_URL: _version()})
 
-    result = service.refresh_aramkit(
-        fetcher=marker_only,
-        catalog_binding=_binding(["1"]),
-        now=completed + timedelta(hours=5),
-    )
-
-    assert result["reason"] == "not_stale"
-    assert marker_only.calls == [service.VERSIONS_URL]
-
-
-def test_invalid_pointer_success_time_does_not_override_verified_marker(isolated_sources: Path) -> None:
-    first = service.refresh_aramkit(
-        fetcher=_happy_fetcher(["1"]),
-        catalog_binding=_binding(["1"]),
-    )
-    current = {**first["pointer"], "last_success_at": "not-a-time"}
-    atomic_write_json(source_runs.source_current_path("aramkit"), current)
+def test_missing_pointer_success_time_falls_back_to_manifest_completion(isolated_sources):
+    pointer, binding = _v4_current(isolated_sources)
+    assert pointer["last_success_at"] == source_runs.load_source_run_manifest("aramkit",pointer["run_id"]).completed_at
     fetcher = FixtureFetcher({service.VERSIONS_URL: _version()})
+    result = service.refresh_aramkit(fetcher=fetcher, catalog_binding=binding)
+    assert result["reason"] == "not_stale" and fetcher.calls == [service.VERSIONS_URL]
+    assert not source_runs.source_current_path("aramkit").exists()
 
-    result = service.refresh_aramkit(
-        fetcher=fetcher,
-        catalog_binding=_binding(["1"]),
-        now=datetime.fromisoformat(str(first["pointer"]["last_success_at"]).replace("Z", "+00:00")),
-    )
 
-    assert result["success"] is True
-    assert result["reason"] == "not_stale"
+
+def test_invalid_pointer_success_time_does_not_override_verified_marker(isolated_sources):
+    pointer, binding = _v4_current(isolated_sources)
+    atomic_write_json(isolated_sources / "state/data-service/refresh_schedule.v1.json",
+        {"schema_version": 1,"sources": {"aramkit": {"state":"ready","last_success_at":"not-a-time"}}})
+    fetcher = FixtureFetcher({service.VERSIONS_URL: _version()})
+    result = service.refresh_aramkit(fetcher=fetcher, catalog_binding=binding)
+    assert result["reason"] == "not_stale" and result["pointer"]["run_id"] == pointer["run_id"]
     assert fetcher.calls == [service.VERSIONS_URL]
 
 
-def test_old_same_marker_skips_invalid_full_payload_and_preserves_current(isolated_sources: Path) -> None:
-    first = service.refresh_aramkit(
-        fetcher=_happy_fetcher(["1"]),
-        catalog_binding=_binding(["1"]),
-    )
-    current_path = source_runs.source_current_path("aramkit")
-    atomic_write_json(current_path, first["pointer"])
-    before = current_path.read_bytes()
-    completed = datetime.fromisoformat(str(first["pointer"]["last_success_at"]).replace("Z", "+00:00"))
-    _versions_url, rankings_url, _detail_urls = _urls(["1"])
-    invalid_rankings = FixtureFetcher(
-        {
-            service.VERSIONS_URL: _version(),
-            rankings_url: {"rows": []},
-        }
-    )
 
-    result = service.refresh_aramkit(
-        fetcher=invalid_rankings,
-        catalog_binding=_binding(["1"]),
-        now=completed + timedelta(hours=5, seconds=1),
-    )
+def test_old_same_marker_skips_invalid_full_payload_and_preserves_current(isolated_sources):
+    _, binding = _v4_current(isolated_sources)
+    head = isolated_sources / "snapshots/current.v4.json"
+    before = head.read_bytes()
+    fetcher = FixtureFetcher({service.VERSIONS_URL: _version(), _urls(["1"])[1]: {"rows": []}})
+    result = service.refresh_aramkit(fetcher=fetcher, catalog_binding=binding,
+        now=datetime.now(timezone.utc)+timedelta(days=7))
+    assert result["success"] and result["reason"] == "not_stale"
+    assert fetcher.calls == [service.VERSIONS_URL]
+    assert head.read_bytes() == before
 
-    assert result["success"] is True
-    assert result["reason"] == "not_stale"
-    assert invalid_rankings.calls == [service.VERSIONS_URL]
-    assert current_path.read_bytes() == before
 
 
 def test_same_validation_input_is_suppressed_before_dataset_download(
@@ -732,3 +655,14 @@ def test_default_detail_executor_uses_four_workers(isolated_sources: Path) -> No
 
     assert result["success"] is True
     assert max_active == service.DEFAULT_CONCURRENCY
+
+
+def _v4_current(root):
+    from support.v4_release import make_release
+    from hextech.modules.data.generation.release_store import closure
+    from hextech.modules.data.generation import DataSnapshotClient
+    with pytest.MonkeyPatch.context() as patch:
+        make_release(root, patch)
+    view = DataSnapshotClient(root / "snapshots").open_view()
+    catalog, pointer, _, _ = closure(root, view.manifest)
+    return pointer, service.CatalogBinding(catalog.generation_id,catalog.content_sha256,frozenset({"1"}),frozenset({1001}))

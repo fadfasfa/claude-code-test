@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import queue
+import time
 import tkinter as tk
 from tkinter.font import Font
 
 from .responsive_layout import DesktopLayout
 from .window_activation import suppress_desktop_activation
 from .client_layer import unowned_tk_operation
+from .update_timing import GUI_WORK_BUDGET_SECONDS
 
 
 def wrap_text(text: str, font: Font, width: int, lines: int = 2) -> str:
@@ -52,13 +54,24 @@ class DesktopResponsiveMixin:
         callbacks = getattr(self, "_ui_callbacks", None)
         if callbacks is None:
             return
-        for _ in range(32):
+        started = time.perf_counter()
+        deadline = getattr(self, "_gui_work_deadline", started + GUI_WORK_BUDGET_SECONDS)
+        maximum = 0.0
+        for _ in range(8):
+            if time.perf_counter() >= deadline:
+                break
             try:
                 callback = callbacks.get_nowait()
             except queue.Empty:
                 break
             if not self._closing:
-                callback()
+                callback_started = time.perf_counter()
+                try:
+                    callback()
+                finally:
+                    maximum = max(maximum, (time.perf_counter()-callback_started)*1000)
+        self._gui_callbacks_elapsed_ms = (time.perf_counter()-started)*1000
+        self._gui_callback_max_ms = maximum
 
     def _layout_candidate_row(self, row: dict) -> None:
         if "content" not in row:
@@ -208,7 +221,7 @@ class DesktopResponsiveMixin:
                 widget.configure(font=self._ui_font(11, True), padx=layout.px(8), pady=layout.px(3))
                 widget.grid(row=1 if narrow else 0, column=column-1 if narrow else column,
                             sticky="w", padx=layout.px(4), pady=layout.px(4))
-            columns = {"normal": 3, "narrow": 2, "minimum": 1}[layout.mode]
+            columns = min(len(self._feature_toggle_widgets), {"normal": 2, "narrow": 2, "minimum": 1}[layout.mode]) or 1
             for column in range(3):
                 self.feature_frame.grid_columnconfigure(column, weight=1 if column < columns else 0)
             for index, toggle in enumerate(self._feature_toggle_widgets):
@@ -252,7 +265,7 @@ class DesktopResponsiveMixin:
         header = max(self.title_bar.winfo_reqheight(), self.exit_button.winfo_reqheight())
         if layout.mode != "normal":
             header += max(self.refresh_button.winfo_reqheight(), self.diagnostics_button.winfo_reqheight()) + layout.px(8)
-        columns = {"normal": 3, "narrow": 2, "minimum": 1}[layout.mode]
+        columns = min(len(self._feature_toggle_widgets), {"normal": 2, "narrow": 2, "minimum": 1}[layout.mode]) or 1
         feature = 12
         toggles = self._feature_toggle_widgets
         for start in range(0, len(toggles), columns):

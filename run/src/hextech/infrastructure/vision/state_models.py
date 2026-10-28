@@ -21,6 +21,12 @@ class CandidateEvidence:
     frame_id: int = 0
     fingerprint: str = ""
     rgb_sha256: str = ""
+    captured_at: float = 0.0
+    revocation_eligible: bool = False
+    lexical_name_key: str = ""
+    lexical_candidate_ids: tuple[str, ...] = ()
+    inference_reused: bool = False
+    inference_key: str = ""
 
 
 @dataclass
@@ -38,6 +44,8 @@ class SlotTrack:
     last_frame_id: int = 0
     last_transition_frame_id: int = 0
     baseline_fingerprints: list[str] = field(default_factory=list)
+    baseline_input_hashes: list[str] = field(default_factory=list)
+    identity_diagnostics: dict[str, Any] = field(default_factory=dict)
     pending_replacement_fingerprint: str = ""
     pending_replacement_started_at: float = 0.0
     pending_replacement_observations: list[CandidateEvidence] = field(default_factory=list)
@@ -59,6 +67,8 @@ class SlotTrack:
         self.last_frame_id = 0
         self.last_transition_frame_id = 0
         self.baseline_fingerprints.clear()
+        self.baseline_input_hashes.clear()
+        self.identity_diagnostics.clear()
         self.pending_replacement_fingerprint = ""
         self.pending_replacement_started_at = 0.0
         self.pending_replacement_observations.clear()

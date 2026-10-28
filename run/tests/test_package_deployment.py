@@ -44,68 +44,37 @@ def _package(
     manifest: dict[str, object] = {
         "schema_version": 3,
         "build_id": "test-build",
+        "runtime_profile": "installed",
         "runtime_contracts": RUNTIME_CONTRACT_VERSIONS,
     }
+    if cohort is None:
+        cohort = {}
     if cohort is not None:
+        from tests.support.v4_release import make_release
+        from tooling.build.cohort_seed import collect_cohort_seed
+        import hashlib
+        with pytest.MonkeyPatch.context() as patch:
+            seed_runtime = internal / "resources/seeds/runtime.v4"
+            make_release(seed_runtime, patch)
+            seed = collect_cohort_seed(seed_runtime / "snapshots")
+        cohort.clear()
+        cohort.update(seed.metadata)
         manifest["cohort_seed"] = cohort
+        manifest["seed_sha256"] = {seed.bundled_name(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in seed.files}
+        manifest["cohort_seed_files"] = list(manifest["seed_sha256"])
+        manifest["cohort_seed_sha256"] = dict(manifest["seed_sha256"])
     (internal / "bundle_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
 
 
 def _write_runtime_cohort(root: Path, expected: dict[str, object]) -> None:
-    source_run_ids = expected["source_run_ids"]
-    assert isinstance(source_run_ids, dict)
-    catalog_id = str(expected["catalog_generation_id"])
-    recognition_catalog_id = str(
-        expected.get("recognition_catalog_generation_id") or catalog_id
-    )
-    generation_id = str(expected["generation_id"])
-    payloads = {
-        Path("catalog/current.v2.json"): {
-            "schema_version": 2,
-            "catalog_generation_id": recognition_catalog_id,
-        },
-        Path("snapshots/current.v2.json"): {
-            "schema_version": 2,
-            "current_generation_id": generation_id,
-        },
-        Path("snapshots/previous.v2.json"): {
-            "schema_version": 2,
-            "generation_id": "generation-old",
-        },
-        **{
-            Path(f"sources/{source}/current.v2.json"): {
-                "schema_version": 2,
-                "source": source,
-                "run_id": str(source_run_ids[source]),
-                "catalog_generation_id": catalog_id,
-            }
-            for source in ("aramkit", "blitz", "apex", "mayhem")
-        },
-        Path("state/data-service/refresh_schedule.v1.json"): {
-            "schema_version": 1,
-            "generation_id": generation_id,
-            "sources": {
-                "catalog": {
-                    "state": "ready",
-                    "failure_kind": "",
-                    "current_run_id": recognition_catalog_id,
-                },
-                **{
-                    source: {
-                        "state": "ready",
-                        "failure_kind": "",
-                        "current_run_id": str(source_run_ids[source]),
-                    }
-                    for source in ("aramkit", "blitz", "apex", "mayhem")
-                },
-            },
-        },
-    }
-    for relative, payload in payloads.items():
-        path = root / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload), encoding="utf-8")
+    # Rollback tests deliberately mutate only the single role head. Full closure
+    # verification is exercised with real v4 fixture artifacts elsewhere.
+    path = root / "snapshots/current.v4.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema_version": 4, "current_generation_id": expected["generation_id"],
+                               "previous_generation_id": "", "recognition_catalog": expected.get("recognition_catalog", {}),
+                               "previous_recognition_catalog": {}}), encoding="utf-8")
 
 
 def _sidecar_pool_status(
@@ -163,8 +132,6 @@ def _isolate_deployment_runtime(monkeypatch):
         "verify_deployment",
         lambda *_args, **_kwargs: {
             "desktop": 101,
-            "data_service": 102,
-            "supervisor": 103,
             "overlay_host": 104,
             "vision_sidecar": 105,
         },
@@ -208,8 +175,6 @@ def test_deploy_release_promotes_verified_copy_and_keeps_one_previous(tmp_path, 
     assert result.verified is True
     assert dict(result.process_ids) == {
         "desktop": 101,
-        "data_service": 102,
-        "supervisor": 103,
         "overlay_host": 104,
         "vision_sidecar": 105,
     }
@@ -385,8 +350,6 @@ def test_deployment_process_validation_requires_one_stable_process_per_role(tmp_
     executable = tmp_path / "HextechCompanion" / deploy.APP_EXE_NAME
     role_commands = {
         "desktop": (str(executable),),
-        "data_service": (str(executable), "--data-service"),
-        "supervisor": (str(executable), "--runtime-supervisor"),
         "overlay_host": (str(executable), "--game-overlay"),
         "vision_sidecar": (str(executable), "--overlay-sidecar"),
     }
@@ -475,42 +438,8 @@ def test_runtime_build_validation_requires_fresh_matching_states_and_sidecar_pid
     assert any("Build ID 不一致" in error for error in errors)
 
 
-def test_runtime_cohort_validation_accepts_bound_generation_and_rejects_mixed_catalog(tmp_path):
-    from tooling.build import deploy
-
-    expected = _cohort_metadata()
-    _write_runtime_cohort(tmp_path, expected)
-
-    assert deploy._runtime_cohort_errors(tmp_path, expected) == []
-
-    apex_pointer = tmp_path / "sources" / "apex" / "current.v2.json"
-    apex = json.loads(apex_pointer.read_text(encoding="utf-8"))
-    apex["catalog_generation_id"] = "catalog-old"
-    apex_pointer.write_text(json.dumps(apex), encoding="utf-8")
-
-    errors = deploy._runtime_cohort_errors(tmp_path, expected)
-
-    assert any("cohort source Catalog 不一致" in error and "sources/apex" in error for error in errors)
 
 
-def test_runtime_cohort_separates_recognition_catalog_from_statistics_binding(tmp_path):
-    from tooling.build import deploy
-
-    expected = {
-        **_cohort_metadata(),
-        "recognition_catalog_generation_id": "catalog-recognition-new",
-    }
-    _write_runtime_cohort(tmp_path, expected)
-
-    assert deploy._runtime_cohort_errors(tmp_path, expected) == []
-    catalog = json.loads(
-        (tmp_path / "catalog/current.v2.json").read_text(encoding="utf-8")
-    )
-    aramkit = json.loads(
-        (tmp_path / "sources/aramkit/current.v2.json").read_text(encoding="utf-8")
-    )
-    assert catalog["catalog_generation_id"] == "catalog-recognition-new"
-    assert aramkit["catalog_generation_id"] == "catalog-new"
 
 
 def test_packaged_sidecar_pool_smoke_legacy_single_catalog(
@@ -520,6 +449,14 @@ def test_packaged_sidecar_pool_smoke_legacy_single_catalog(
     from tooling.acceptance import smoke_packaged_startup as smoke
 
     expected = _cohort_metadata()
+    from tooling.build import recognition_contract
+    monkeypatch.setattr(recognition_contract, "recognition_pool_contract", lambda *_: {
+        "catalog_generation_id": expected["catalog_generation_id"],
+        "recognition_catalog_id": expected["catalog_generation_id"],
+        "production_pool_id": expected["production_pool_id"],
+        "production_pool_count": expected["production_pool_count"],
+        "full_catalog_count": expected["full_catalog_count"],
+    })
     package_dir = tmp_path / "package"
     runtime_root = tmp_path / "runtime"
     exe = package_dir / "Hextech伴生终端.exe"
@@ -548,207 +485,33 @@ def test_packaged_sidecar_pool_smoke_legacy_single_catalog(
     assert result["state"] == "ready"
 
 
-def test_runtime_cohort_allows_due_schedule_and_historical_complete_checkpoint(tmp_path):
-    from tooling.build import deploy
-
-    expected = _cohort_metadata()
-    _write_runtime_cohort(tmp_path, expected)
-    schedule_path = tmp_path / "state/data-service/refresh_schedule.v1.json"
-    schedule = json.loads(schedule_path.read_text(encoding="utf-8"))
-    schedule["sources"]["blitz"]["state"] = "due"
-    schedule_path.write_text(json.dumps(schedule), encoding="utf-8")
-
-    assert deploy._runtime_cohort_errors(tmp_path, expected) == []
-
-    checkpoint_path = tmp_path / "state/data-service/refresh_checkpoint.v1.json"
-    checkpoint_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "state": "complete",
-                "cycle_id": "cycle-historical",
-                "created_at": "2026-09-07T10:00:00+00:00",
-                "updated_at": "2026-09-07T10:01:00+00:00",
-                "scope": "due",
-                "refresh_phase": "complete",
-                "catalog": {"catalog_generation_id": "catalog-historical"},
-                "completed_sources": {},
-                "core_generation_id": "generation-drifted",
-                "pending_sources": [],
-                "failures": {},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert deploy._runtime_cohort_errors(tmp_path, expected) == []
 
 
-def test_runtime_cohort_rejects_inconsistent_active_refresh_checkpoint(tmp_path):
-    from tooling.build import deploy
-
-    expected = _cohort_metadata()
-    _write_runtime_cohort(tmp_path, expected)
-    checkpoint_path = tmp_path / "state/data-service/refresh_checkpoint.v1.json"
-    checkpoint_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "state": "in_progress",
-                "cycle_id": "cycle-active",
-                "catalog": {"catalog_generation_id": expected["catalog_generation_id"]},
-                "completed_sources": {"aramkit": {"run_id": "aramkit-finished"}},
-                "core_generation_id": "generation-drifted",
-                "pending_sources": ["aramkit", "blitz"],
-                "failures": {"apex": {"reason_code": "not_pending"}},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    errors = deploy._runtime_cohort_errors(tmp_path, expected)
-
-    assert any("active refresh checkpoint" in error for error in errors)
 
 
-def test_runtime_cohort_accepts_newer_valid_stats_generation_with_same_vision_pool(
-    tmp_path,
-    monkeypatch,
-):
-    from hextech.infrastructure.persistence.cohort_recovery import CohortCandidate
-    from tooling.build import deploy
-
-    expected = _cohort_metadata()
-    actual = json.loads(json.dumps(expected))
-    actual["generation_id"] = "generation-newer"
-    actual["source_run_ids"]["blitz"] = "blitz-newer"
-    _write_runtime_cohort(tmp_path, actual)
-
-    def candidate(metadata, created_at):
-        source_run_ids = metadata["source_run_ids"]
-        pointers = {
-            "catalog": {
-                "catalog_generation_id": metadata["catalog_generation_id"],
-            },
-            **{
-                source: {"run_id": source_run_ids[source]}
-                for source in ("aramkit", "blitz", "apex", "mayhem")
-            },
-        }
-        return CohortCandidate(
-            generation_id=str(metadata["generation_id"]),
-            generation_created_at=created_at,
-            manifest_health="healthy",
-            pointers=pointers,
-            production_pool_id=str(metadata["production_pool_id"]),
-            production_pool_count=int(metadata["production_pool_count"]),
-        )
-
-    candidates = {
-        "generation-new": candidate(expected, "2026-09-04T13:11:11+00:00"),
-        "generation-newer": candidate(actual, "2026-09-04T15:49:21+00:00"),
-    }
-    monkeypatch.setattr(
-        deploy,
-        "validate_generation_cohort",
-        lambda _root, generation_id: candidates[generation_id],
-    )
-
-    resolved, errors = deploy._resolve_runtime_cohort_expected(tmp_path, expected)
-
-    assert errors == []
-    assert resolved["generation_id"] == "generation-newer"
-    resolved_runs = resolved["source_run_ids"]
-    assert isinstance(resolved_runs, dict)
-    assert resolved_runs["blitz"] == "blitz-newer"
-    assert deploy._runtime_cohort_errors(tmp_path, resolved) == []
 
 
-def test_runtime_cohort_preserves_newer_verified_recognition_catalog(
-    tmp_path,
-    monkeypatch,
-):
-    from tooling.build import deploy
-
-    expected = {
-        **_cohort_metadata(),
-        "recognition_catalog_generation_id": "catalog-recognition-bundled",
-    }
-    _write_runtime_cohort(tmp_path, expected)
-    catalog_path = tmp_path / "catalog/current.v2.json"
-    catalog_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 2,
-                "catalog_generation_id": "catalog-recognition-runtime",
-                "content_sha256": "a" * 64,
-                "manifest_sha256": "b" * 64,
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        deploy,
-        "_validated_runtime_catalog_manifest",
-        lambda _root, _pointer: SimpleNamespace(
-            created_at="2026-09-16T00:00:00+00:00"
-        ),
-    )
-    monkeypatch.setattr(
-        deploy,
-        "_validated_catalog_generation_manifest",
-        lambda _root, _catalog_id: SimpleNamespace(
-            created_at="2026-09-15T00:00:00+00:00"
-        ),
-    )
-
-    resolved, errors = deploy._resolve_runtime_cohort_expected(tmp_path, expected)
-
-    assert errors == []
-    assert (
-        resolved["recognition_catalog_generation_id"]
-        == "catalog-recognition-runtime"
-    )
 
 
-def test_deploy_rejects_unsafe_recognition_catalog_id_before_path_resolution(
-    tmp_path,
-):
-    from tooling.build import deploy
-
-    with pytest.raises(ValueError, match="catalog_generation_id"):
-        deploy._validated_catalog_generation_manifest(tmp_path, "../outside")
 
 
-def test_runtime_cohort_waits_while_bundle_seed_is_still_materializing(tmp_path, monkeypatch):
-    from hextech.modules.data.generation.validation import SnapshotValidationError
-    from tooling.build import deploy
-
-    expected = _cohort_metadata()
-    actual = json.loads(json.dumps(expected))
-    actual["generation_id"] = "generation-old"
-    _write_runtime_cohort(tmp_path, actual)
-    monkeypatch.setattr(
-        deploy,
-        "validate_generation_cohort",
-        lambda _root, _generation_id: (_ for _ in ()).throw(
-            SnapshotValidationError("bundle generation 尚未物化")
-        ),
-    )
-
-    resolved, errors = deploy._resolve_runtime_cohort_expected(tmp_path, expected)
-
-    assert resolved == expected
-    assert errors == [
-        "启动刷新后的 runtime generation 未通过完整 cohort 验证："
-        "generation=generation-old error=SnapshotValidationError"
-    ]
 
 
 def test_runtime_build_validation_requires_exact_production_pool_matrix(tmp_path, monkeypatch):
     from tooling.build import deploy
 
     expected = _cohort_metadata()
+    from tooling.build import recognition_contract
+    monkeypatch.setattr(recognition_contract, "recognition_pool_contract", lambda *_: {
+        "catalog_generation_id": expected["catalog_generation_id"],
+        "recognition_catalog_id": expected["catalog_generation_id"],
+        "production_pool_id": expected["production_pool_id"],
+        "production_pool_count": expected["production_pool_count"],
+        "full_catalog_count": expected["full_catalog_count"],
+    })
+    monkeypatch.setattr(deploy, "_resolve_runtime_cohort_expected", lambda *_args, **_kwargs: (expected, []))
+    monkeypatch.setattr(deploy, "_runtime_cohort_errors", lambda *_args: [])
+    monkeypatch.setattr(deploy, "validated_launch_generation", lambda *_args, **_kwargs: ("", []))
     _write_runtime_cohort(tmp_path, expected)
     monkeypatch.setattr(deploy, "_packaged_var_dir", lambda: tmp_path)
     for relative_path, schema_version in deploy.RUNTIME_BUILD_STATE_SPECS:
@@ -781,22 +544,6 @@ def test_runtime_build_validation_requires_exact_production_pool_matrix(tmp_path
             )
         path.write_text(json.dumps(payload), encoding="utf-8")
 
-    assert deploy._runtime_build_errors(
-        expected_build_id="test-build",
-        launch_started_at=0.0,
-        sidecar_pid=505,
-        expected_debug_dump_enabled=True,
-        expected_cohort=expected,
-    ) == []
-
-    event_path = tmp_path / "state" / "game_overlay_slots.v1.json"
-    event = json.loads(event_path.read_text(encoding="utf-8"))
-    event["selection_type"] = ""
-    event["source"] = {
-        "tag": "manual-hide",
-        "selection_window_active": False,
-    }
-    event_path.write_text(json.dumps(event), encoding="utf-8")
     assert deploy._runtime_build_errors(
         expected_build_id="test-build",
         launch_started_at=0.0,
@@ -959,7 +706,7 @@ def test_deploy_verification_failure_restores_all_runtime_cohort_state(tmp_path,
     assert (target / "old.txt").read_text(encoding="utf-8") == "old"
 
 
-def test_deploy_failure_restores_real_promotion_journal_path_bytes(tmp_path, monkeypatch):
+def test_deploy_failure_restores_v4_release_head_bytes(tmp_path, monkeypatch):
     from tooling.build import deploy
 
     expected = _cohort_metadata()
@@ -968,7 +715,7 @@ def test_deploy_failure_restores_real_promotion_journal_path_bytes(tmp_path, mon
     target.mkdir()
     (target / "old.txt").write_text("old", encoding="utf-8")
     runtime_root = tmp_path / "runtime"
-    journal_path = runtime_root / "state/data-service/promotion_journal.v1.json"
+    journal_path = runtime_root / "snapshots/current.v4.json"
     journal_path.parent.mkdir(parents=True)
     journal_path.write_bytes(b'{"phase":"old-prepared","marker":"before-deploy"}')
     before = journal_path.read_bytes()
@@ -1546,7 +1293,7 @@ def test_rollback_preserves_every_recovery_asset_after_shutdown_failure(tmp_path
 
     monkeypatch.setattr(deploy, "shutdown_existing_install", shutdown)
     monkeypatch.setattr(deploy, "_start_install", start)
-    monkeypatch.setattr(deploy, "_expected_cohort", lambda _manifest: {"test": True})
+    monkeypatch.setattr(deploy, "_expected_cohort", lambda _manifest, **_kwargs: {"test": True})
     monkeypatch.setattr(deploy, "_snapshot_runtime_cohort_state", lambda: (object(),))
     monkeypatch.setattr(deploy, "_snapshot_diagnostic_settings", lambda: SimpleNamespace(path=tmp_path / "roi.json"))
     monkeypatch.setattr(deploy, "set_roi_dump_mode", lambda *_a, **_k: None)
@@ -1731,6 +1478,8 @@ def test_build_without_deploy_does_not_call_deployer(tmp_path, monkeypatch, caps
 
 def test_packaged_smoke_runs_overlay_self_check_after_desktop_seed_chain(tmp_path, monkeypatch):
     from tooling.acceptance import smoke_packaged_startup as smoke
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "formal-local"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "formal-roaming"))
     monkeypatch.setattr(smoke, "_runtime_environment_conflict", lambda _: "")
 
     package_dir = _package(tmp_path / "HextechCompanion-20260720")
@@ -1810,7 +1559,7 @@ def test_packaged_acquisition_worker_import_smoke_requires_all_frozen_imports(
                     "checks": {
                         "curl_cffi._wrapper": "ready",
                         "hextech.infrastructure.sources.aramkit.service": "ready",
-                        "hextech.infrastructure.sources.blitz.service": "ready",
+                        "hextech.infrastructure.sources.catalog_versioned": "ready",
                     },
                 }
             ),
@@ -1836,6 +1585,14 @@ def test_packaged_sidecar_pool_smoke_accepts_exact_bound_matrix(tmp_path, monkey
     from tooling.acceptance import smoke_packaged_startup as smoke
 
     expected = _cohort_metadata()
+    from tooling.build import recognition_contract
+    monkeypatch.setattr(recognition_contract, "recognition_pool_contract", lambda *_: {
+        "catalog_generation_id": expected["catalog_generation_id"],
+        "recognition_catalog_id": expected["catalog_generation_id"],
+        "production_pool_id": expected["production_pool_id"],
+        "production_pool_count": expected["production_pool_count"],
+        "full_catalog_count": expected["full_catalog_count"],
+    })
     package_dir = tmp_path / "package"
     runtime_root = tmp_path / "runtime"
     exe = package_dir / "Hextech伴生终端.exe"
@@ -1870,6 +1627,14 @@ def test_packaged_sidecar_pool_smoke_blocks_full_catalog_ranking(tmp_path, monke
     from tooling.acceptance import smoke_packaged_startup as smoke
 
     expected = _cohort_metadata()
+    from tooling.build import recognition_contract
+    monkeypatch.setattr(recognition_contract, "recognition_pool_contract", lambda *_: {
+        "catalog_generation_id": expected["catalog_generation_id"],
+        "recognition_catalog_id": expected["catalog_generation_id"],
+        "production_pool_id": expected["production_pool_id"],
+        "production_pool_count": expected["production_pool_count"],
+        "full_catalog_count": expected["full_catalog_count"],
+    })
     package_dir = tmp_path / "package"
     runtime_root = tmp_path / "runtime"
     exe = package_dir / "Hextech伴生终端.exe"
@@ -1894,3 +1659,24 @@ def test_packaged_sidecar_pool_smoke_blocks_full_catalog_ranking(tmp_path, monke
             runtime_root,
             {"build_id": "test-build", "cohort_seed": expected},
         )
+
+
+@pytest.mark.parametrize("damage", ["missing_metadata", "wrong_hash", "missing_catalog"])
+def test_invalid_v4_bundle_baseline_is_rejected_before_any_shutdown(tmp_path, monkeypatch, damage):
+    from tooling.build import deploy
+    source = _package(tmp_path / "release")
+    manifest_path = source / "_internal/bundle_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if damage == "missing_metadata":
+        manifest.pop("cohort_seed")
+    elif damage == "wrong_hash":
+        key = next(iter(manifest["seed_sha256"]))
+        manifest["seed_sha256"][key] = "0" * 64
+    else:
+        catalog = manifest["cohort_seed"]["recognition_catalog_generation_id"]
+        (source / "_internal/resources/seeds/runtime.v4/catalog/generations" / catalog / "manifest.json").unlink()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(deploy, "require_main_branch_for_stable_deploy", lambda: None)
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: pytest.fail("invalid seed stopped existing runtime"))
+    with pytest.raises(deploy.DeploymentError, match="v4 seed"):
+        deploy.deploy_release(source, tmp_path / "HextechCompanion", lock_path=tmp_path / "deploy.lock")

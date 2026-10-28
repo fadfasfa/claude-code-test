@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import sys
+from collections import OrderedDict
 from dataclasses import dataclass
-from hextech.infrastructure.vision.epoch_diagnostics import build_epoch_recognition_summary, log_epoch_summary
+from hextech.infrastructure.vision.epoch_diagnostics import EpochRecognitionAccumulator, log_epoch_summary
 from hextech.infrastructure.vision.timeline_identity import selection_timeline_path as _selection_timeline_path
 
 from hextech.infrastructure.vision.sidecar_common import (
@@ -21,13 +22,11 @@ from hextech.infrastructure.vision.sidecar_common import (
     LayoutTransform,
     Mapping,
     OVERLAY_VISION_TRACE_FILE,
-    OVERLAY_VISION_TRACE_HISTORY_FILE,
     Path,
     SCENE_SLOT_MIN_CONFIDENCE,
     SLOT_COUNT,
     Sequence,
     V2_BUTTON_SEARCH_REGION,
-    VISION_TRACE_HISTORY_LIMIT,
     VISION_TRACE_REFRESH_SECONDS,
     VISION_TRACE_SCHEMA_VERSION,
     VISION_TIMELINE_SCHEMA_VERSION,
@@ -38,13 +37,14 @@ from hextech.infrastructure.vision.sidecar_common import (
     json,
     time,
 )
-from hextech.infrastructure.vision.sidecar_event_loop import _event_ready_slots, _slot_signature
+from hextech.infrastructure.vision.sidecar_event_loop import _slot_signature
 from hextech.infrastructure.vision.sidecar_scene_geometry import resolve_roi_preset
 
 
 _TIMELINE_SEQUENCES: dict[str, int] = {}
 _TIMELINE_TERMINATED: set[str] = set()
 _TIMELINE_TRUNCATED: set[str] = set()
+_EPOCH_SUMMARIES: OrderedDict[str, EpochRecognitionAccumulator] = OrderedDict()
 DIAGNOSTIC_EPOCH_OBSERVATION_LIMIT = 5
 VISION_TIMELINE_MAX_BYTES = 1 * 1024 * 1024
 VISION_TIMELINE_MAX_ENTRIES = 512
@@ -286,104 +286,8 @@ def _vision_trace_path_for_event(event_path: str | Path | None = None) -> Path:
     return Path(event_path).with_name(OVERLAY_VISION_TRACE_FILE.name)
 
 
-def _vision_trace_history_path(trace_path: str | Path | None = None) -> Path:
-    target = Path(trace_path) if trace_path is not None else OVERLAY_VISION_TRACE_FILE
-    return target.with_name(OVERLAY_VISION_TRACE_HISTORY_FILE.name)
 
 
-def _vision_trace_history_entry(event_payload: Mapping[str, Any]) -> dict[str, Any]:
-    source = event_payload.get("source") if isinstance(event_payload.get("source"), Mapping) else {}
-    raw_box = source.get("button_box")
-    button_box = list(raw_box) if isinstance(raw_box, list) else []
-    capture_size = source.get("capture_size")
-    center_y_ratio = None
-    if (
-        len(button_box) == 4
-        and isinstance(capture_size, Sequence)
-        and not isinstance(capture_size, (str, bytes))
-        and len(capture_size) == 2
-    ):
-        try:
-            capture_height = float(capture_size[1])
-            if capture_height > 0:
-                center_y_ratio = round((float(button_box[1]) + float(button_box[3])) / 2.0 / capture_height, 6)
-        except (TypeError, ValueError):
-            center_y_ratio = None
-    ready_slots = _event_ready_slots(event_payload)
-    blocking_modal = bool(source.get("blocking_modal"))
-    visible = bool(
-        event_payload.get("active")
-        and str(event_payload.get("selection_type") or "") == "hextech"
-        and ready_slots >= 1
-        and not blocking_modal
-        and not bool(source.get("scoreboard_key_down"))
-    )
-    rendered_slots = event_payload.get("slots") if isinstance(event_payload.get("slots"), list) else []
-    raw_slots = event_payload.get("_raw_slots") if isinstance(event_payload.get("_raw_slots"), list) else []
-    slot_summaries: list[dict[str, Any]] = []
-    for index in range(SLOT_COUNT):
-        rendered = rendered_slots[index] if index < len(rendered_slots) and isinstance(rendered_slots[index], Mapping) else {}
-        raw = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {}
-        candidates = rendered.get("top_candidates")
-        if not isinstance(candidates, list):
-            candidates = raw.get("top_candidates") if isinstance(raw.get("top_candidates"), list) else []
-        slot_summaries.append(
-            {
-                "slot": index,
-                "state": str(rendered.get("state") or "detecting"),
-                "augment_id": str(rendered.get("augment_id") or ""),
-                "name": str(rendered.get("name") or ""),
-                "confidence": rendered.get("confidence"),
-                "rejection_reason": str(
-                    rendered.get("rejection_reason")
-                    or rendered.get("diagnostic")
-                    or raw.get("diagnostic")
-                    or raw.get("reason")
-                    or ""
-                ),
-                "top_candidates": [dict(item) for item in candidates[:3] if isinstance(item, Mapping)],
-            }
-        )
-    return {
-        "generated_at": time.time(),
-        "session_id": str(source.get("session_id") or ""),
-        "window_hwnd": int(source.get("window_hwnd") or 0),
-        "client_rect": list(source.get("client_rect")) if isinstance(source.get("client_rect"), list) else [],
-        "capture_size": list(capture_size) if isinstance(capture_size, list) else [],
-        "dpi_scale": float(source.get("dpi_scale") or 0.0),
-        "active": bool(event_payload.get("active")),
-        "visible": visible,
-        "selection_type": str(event_payload.get("selection_type") or ""),
-        "reason": str(source.get("reason") or ""),
-        "gate_state": str(source.get("gate_state") or ""),
-        "calibration": str(source.get("calibration") or ""),
-        "scene_state": str(source.get("scene_state") or ""),
-        "scene_kind": str(source.get("scene_kind") or ""),
-        "scene_score": float(source.get("scene_score") or 0.0),
-        "layout_id": str(source.get("layout_id") or ""),
-        "selection_epoch": int(source.get("selection_epoch") or 0),
-        "scoreboard_key_down": bool(source.get("scoreboard_key_down")),
-        "body_shard_scores": list(source.get("body_shard_scores"))
-        if isinstance(source.get("body_shard_scores"), list)
-        else [],
-        "body_shard_latched": bool(source.get("body_shard_latched")),
-        "cursor_over_cards": bool(source.get("cursor_over_cards")),
-        "cursor_over_slots": list(source.get("cursor_over_slots"))
-        if isinstance(source.get("cursor_over_slots"), list)
-        else [],
-        "card_residue": bool(source.get("card_residue")),
-        "hover_occluded": bool(source.get("hover_occluded")),
-        "ready_slots": ready_slots,
-        "slot_states": list(source.get("slot_states")) if isinstance(source.get("slot_states"), list) else [],
-        "stable_frames": int(source.get("stable_frames") or 0),
-        "selection_button_present": bool(source.get("selection_button_present")),
-        "selection_window_active": bool(source.get("selection_window_active")),
-        "button_blue_ratio": float(source.get("button_blue_ratio") or 0.0),
-        "button_center_y_ratio": center_y_ratio,
-        "button_box": button_box,
-        "slot_signature": list(_slot_signature(event_payload)),
-        "slots": slot_summaries,
-    }
 
 
 def _timeline_channel_summary(raw_slot: Mapping[str, Any], channel_name: str) -> dict[str, Any]:
@@ -523,6 +427,7 @@ def _selection_timeline_entry(event_payload: Mapping[str, Any], observation_seq:
                 "replacement_reason": str(rendered.get("replacement_reason") or ""),
                 "rejection_reason": str(rendered.get("rejection_reason") or ""),
                 "transition_observation": str(raw.get("transition_observation") or ""),
+                "identity_transition": dict(raw.get("identity_transition") or {}),
                 "revision": int(source.get("selection_revision") or 0),
                 "diagnostic": str(raw.get("diagnostic") or rendered.get("diagnostic") or ""),
                 "ocr_shadow": {str(key): value for key, value in raw_ocr_shadow.items()}
@@ -713,11 +618,24 @@ def write_selection_timeline_observation(
         _next_timeline_sequence(target)
         _TIMELINE_SEQUENCES[key] -= 1
         current_entries = _TIMELINE_SEQUENCES[key]
+    entry = _selection_timeline_entry(event_payload, 0)
+    if key not in _EPOCH_SUMMARIES:
+        accumulator = EpochRecognitionAccumulator()
+        for previous in _timeline_epoch_entries(target, {}):
+            accumulator.observe(previous)
+        accumulator.history_complete = not accumulator.truncated
+        _EPOCH_SUMMARIES[key] = accumulator
+        while len(_EPOCH_SUMMARIES) > 32:
+            _EPOCH_SUMMARIES.popitem(last=False)
+    accumulator = _EPOCH_SUMMARIES[key]
+    _EPOCH_SUMMARIES.move_to_end(key)
+    accumulator.observe(entry)
     if not terminal and (
         current_entries >= VISION_TIMELINE_DATA_ENTRY_LIMIT
         or current_size >= VISION_TIMELINE_MAX_BYTES - VISION_TIMELINE_TERMINAL_RESERVE_BYTES
     ):
         already_truncated = key in _TIMELINE_TRUNCATED
+        accumulator.truncated = True
         if not _write_timeline_truncated(target, event_payload):
             raise OSError("timeline_truncation_marker_failed")
         if isinstance(event_payload, dict):
@@ -725,11 +643,11 @@ def write_selection_timeline_observation(
                 "already_truncated" if already_truncated else "truncated"
             )
         return target
-    entry = _selection_timeline_entry(event_payload, _next_timeline_sequence(target))
+    entry["observation_seq"] = _next_timeline_sequence(target)
     if terminal:
         epoch_entries = _timeline_epoch_entries(target, entry)
         entry["epoch_latency_ms"] = _timeline_epoch_latency_summary(epoch_entries)
-        entry["epoch_recognition"] = build_epoch_recognition_summary(epoch_entries)
+        entry["epoch_recognition"] = accumulator.summary()
     if not _append_timeline_line(target, entry):
         if not terminal:
             _TIMELINE_SEQUENCES[key] = max(0, _TIMELINE_SEQUENCES[key] - 1)
@@ -745,32 +663,13 @@ def write_selection_timeline_observation(
     return target
 
 
-def _append_vision_trace_history(event_payload: Mapping[str, Any], path: str | Path) -> Path:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        existing = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        existing = {}
-    entries = existing.get("entries") if isinstance(existing, Mapping) else None
-    history = [dict(item) for item in entries if isinstance(item, Mapping)] if isinstance(entries, list) else []
-    history.append(_vision_trace_history_entry(event_payload))
-    payload = {
-        "schema_version": VISION_TRACE_SCHEMA_VERSION,
-        "updated_at": time.time(),
-        "entries": history[-VISION_TRACE_HISTORY_LIMIT:],
-    }
-    atomic_write_json(target, payload, ensure_ascii=False, indent=2)
-    return target
 
 
 def write_vision_trace_if_changed(
     event_payload: Mapping[str, Any],
     path: str | Path | None = None,
-    *,
-    history_path: str | Path | None = None,
 ) -> Path | None:
-    """状态变化写历史；分数抖动仅按 1Hz 刷新最新 trace。"""
+    """Only keep a throttled latest trace; epoch summaries own historical evidence."""
 
     signature = _vision_trace_signature(event_payload)
     target = Path(path) if path is not None else OVERLAY_VISION_TRACE_FILE
@@ -785,11 +684,6 @@ def write_vision_trace_if_changed(
     ):
         return None
     atomic_write_json(target, build_vision_trace_payload(event_payload), ensure_ascii=False, indent=2)
-    if state_changed:
-        _append_vision_trace_history(
-            event_payload,
-            Path(history_path) if history_path is not None else _vision_trace_history_path(target),
-        )
     _LAST_VISION_TRACE_SIGNATURES[signature_key] = signature
     _LAST_VISION_TRACE_WRITES[signature_key] = now
     return target

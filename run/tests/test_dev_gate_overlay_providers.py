@@ -50,6 +50,7 @@ def test_lol_window_contract() -> None:
 
     with (
         patch.object(lol_window, "win32gui", FakeWin32Gui),
+        patch.object(lol_window.win32process, "GetWindowThreadProcessId", return_value=(1, 987654)),
         patch.object(lol_window, "_window_process_name", side_effect=lambda hwnd: "league of legends.exe" if hwnd == 101 else ""),
         patch.object(lol_window, "is_window_cloaked", return_value=False),
     ):

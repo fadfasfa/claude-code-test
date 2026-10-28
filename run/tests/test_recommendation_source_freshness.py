@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -20,15 +21,52 @@ from hextech.contracts import (
     VisionSlotState,
 )
 from hextech.interfaces.overlay.renderer import _stats_stale_text, _synergy_stale_text, build_render_model
-from hextech.modules.data.generation import DataSnapshotManifest, DataSnapshotView
+from hextech.modules.data.generation import DataSnapshotView
+from types import SimpleNamespace
+from copy import deepcopy
+from collections import OrderedDict
+from hextech.modules.data.generation.query import ReleaseQuery
 from hextech.modules.recommendation import RecommendationService
 
 
-@pytest.mark.parametrize("source", ("catalog", "hextech", "aramkit", "blitz", "apex", "mayhem"))
+class _ManifestFixture(SimpleNamespace):
+    def to_dict(self):
+        return deepcopy(vars(self))
+
+
+def _manifest(**values):
+    defaults=dict(schema_version=4, generation_id="fixture", created_at="2026-10-24T00:00:00+00:00",
+        content_fingerprint="f"*64,source_files=(),champion_count=1,augment_count=1,stat_record_count=1,
+        files=(),health="healthy",source_status={},refreshed_sources=(),degraded_sources=(),components={})
+    return _ManifestFixture(**{**defaults,**values})
+
+
+def _query(manifest, *, augments=None):
+    # Pure consumer contract: use the actual bounded v4 projection over preloaded caches.
+    # On-disk release closure validation is independently covered by support.v4_release.
+    query=object.__new__(ReleaseQuery)
+    query._lock=threading.RLock()
+    query.manifest=manifest
+    query.allowed={"100"}
+    query.optional={}
+    query.pool={"identities":[{"canonical_id":"100","name":"虚幻武器","tier":"黄金",
+                               "augment_name_id":"illusory_weapons"}]}
+    query._hints_cache=None
+    query._synergy_cache={}
+    query._ranking_cache=[{"id":"63","name":"复仇焰魂"}]
+    query._hero_cache=OrderedDict({"63":{"hero_id":"63","augments":list(augments or [])}})
+    return query
+
+
+def _fixture_view(manifest, *, runtime_root=None):
+    return DataSnapshotView(manifest,_query(manifest),_runtime_root=runtime_root)
+
+
+@pytest.mark.parametrize("source", ("catalog", "aramkit", "apex", "mayhem"))
 def test_frozen_snapshot_age_never_invents_upstream_change(source: str) -> None:
     data_at = datetime(2026, 8, 19, 0, 0, tzinfo=timezone.utc)
-    manifest = DataSnapshotManifest(
-        schema_version=2,
+    manifest = _manifest(
+        schema_version=4,
         generation_id=f"g-{source}",
         created_at=data_at.isoformat(),
         content_fingerprint="f" * 64,
@@ -46,7 +84,7 @@ def test_frozen_snapshot_age_never_invents_upstream_change(source: str) -> None:
             )
         },
     )
-    view = DataSnapshotView(manifest, {})
+    view = _fixture_view(manifest)
     before = manifest.to_dict()
 
     before_age = view.status(now=data_at + timedelta(hours=1))
@@ -73,8 +111,8 @@ def test_bound_successful_check_keeps_old_data_current(tmp_path) -> None:
         catalog_generation_id="catalog-1", artifact_sha256="a" * 64,
         manifest_sha256="b" * 64, record_count=1, content_schema_version=1,
     )
-    manifest = DataSnapshotManifest(
-        schema_version=3, generation_id="g-bound-check", created_at=data_at.isoformat(),
+    manifest = _manifest(
+        schema_version=4, generation_id="g-bound-check", created_at=data_at.isoformat(),
         content_fingerprint="f" * 64, source_files=(provenance,), champion_count=1,
         augment_count=1, stat_record_count=1, files=(),
         components={
@@ -93,7 +131,7 @@ def test_bound_successful_check_keeps_old_data_current(tmp_path) -> None:
         "last_checked_at": "2026-09-15T00:00:00+00:00", "check_interval_seconds": 14400,
     }}}), encoding="utf-8")
 
-    projected = DataSnapshotView(manifest, {}, _runtime_root=tmp_path).status(
+    projected = _fixture_view(manifest, runtime_root=tmp_path).status(
         now=data_at + timedelta(days=30))["source_status"]["aramkit"]
 
     assert projected["check_status"] == "up_to_date"
@@ -103,7 +141,7 @@ def test_bound_successful_check_keeps_old_data_current(tmp_path) -> None:
     assert projected["data_at"] == data_at.isoformat()
 
     schedule.write_text(schedule.read_text(encoding="utf-8").replace(run_id, "other-run"), encoding="utf-8")
-    mismatched = DataSnapshotView(manifest, {}, _runtime_root=tmp_path).status()["source_status"]["aramkit"]
+    mismatched = _fixture_view(manifest, runtime_root=tmp_path).status()["source_status"]["aramkit"]
     assert mismatched["check_status"] == "unknown"
     assert mismatched["check_evidence_bound"] is False
     assert mismatched["freshness"] == "unknown"
@@ -111,8 +149,8 @@ def test_bound_successful_check_keeps_old_data_current(tmp_path) -> None:
 
 def test_snapshot_freshness_uses_created_at_only_when_data_at_is_missing() -> None:
     created_at = datetime(2026, 8, 19, 0, 0, tzinfo=timezone.utc)
-    manifest = DataSnapshotManifest(
-        schema_version=2,
+    manifest = _manifest(
+        schema_version=4,
         generation_id="g-created-at-fallback",
         created_at=created_at.isoformat(),
         content_fingerprint="f" * 64,
@@ -124,7 +162,7 @@ def test_snapshot_freshness_uses_created_at_only_when_data_at_is_missing() -> No
         source_status={"aramkit": SourceStatusV2(freshness="fresh", data_status="fresh")},
     )
 
-    projected = DataSnapshotView(manifest, {}).status(now=created_at + timedelta(hours=6))["source_status"][
+    projected = _fixture_view(manifest).status(now=created_at + timedelta(hours=6))["source_status"][
         "aramkit"
     ]
 
@@ -136,15 +174,15 @@ def test_snapshot_freshness_uses_created_at_only_when_data_at_is_missing() -> No
 
 
 def test_legacy_age_only_stale_reason_becomes_unknown_without_check_evidence() -> None:
-    manifest = DataSnapshotManifest(
-        schema_version=2, generation_id="g-legacy-age", created_at="2026-08-19T00:00:00+00:00",
+    manifest = _manifest(
+        schema_version=4, generation_id="g-legacy-age", created_at="2026-08-19T00:00:00+00:00",
         content_fingerprint="f" * 64, source_files=(), champion_count=1, augment_count=1,
         stat_record_count=1, files=(), source_status={"aramkit": SourceStatusV2(
             freshness="last_good", data_status="data_stale", data_reason="source_data_expired",
             stale_age_seconds=3600, data_at="2026-08-18T00:00:00+00:00")},
     )
 
-    projected = DataSnapshotView(manifest, {}).status()["source_status"]["aramkit"]
+    projected = _fixture_view(manifest).status()["source_status"]["aramkit"]
 
     assert projected["check_status"] == "unknown"
     assert projected["freshness"] == "unknown"
@@ -155,8 +193,8 @@ def test_legacy_age_only_stale_reason_becomes_unknown_without_check_evidence() -
 
 def test_snapshot_freshness_preserves_specific_reason_and_invalid_time() -> None:
     observed_at = datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc)
-    manifest = DataSnapshotManifest(
-        schema_version=2,
+    manifest = _manifest(
+        schema_version=4,
         generation_id="g-reason-preserved",
         created_at=observed_at.isoformat(),
         content_fingerprint="f" * 64,
@@ -174,7 +212,7 @@ def test_snapshot_freshness_preserves_specific_reason_and_invalid_time() -> None
                 data_reason="candidate_rejected_last_good_preserved",
                 data_at="2026-08-18T00:00:00+00:00",
             ),
-            "blitz": SourceStatusV2(
+            "mayhem": SourceStatusV2(
                 freshness="fresh",
                 data_status="fresh",
                 data_at="not-a-time",
@@ -182,65 +220,22 @@ def test_snapshot_freshness_preserves_specific_reason_and_invalid_time() -> None
         },
     )
 
-    status = DataSnapshotView(manifest, {}).status(now=observed_at)
+    status = _fixture_view(manifest).status(now=observed_at)
 
     assert status["source_status"]["aramkit"]["data_reason"] == "candidate_rejected_last_good_preserved"
     assert status["source_status"]["aramkit"]["stale_age_seconds"] == 0
-    assert status["source_status"]["blitz"]["data_status"] == "fresh"
-    assert status["source_status"]["blitz"]["check_status"] == "unknown"
+    assert status["source_status"]["mayhem"]["data_status"] == "fresh"
+    assert status["source_status"]["mayhem"]["check_status"] == "unknown"
     assert status["health"] == "degraded"
     assert status["degraded_sources"] == ["aramkit"]
-    assert status["effective_degraded_sources"] == ["aramkit", "blitz"]
+    assert status["effective_degraded_sources"] == ["aramkit", "mayhem"]
 
 
-def _view(
-    *,
-    source_status: dict[str, SourceStatusV2] | None,
-    degraded: bool = True,
-    ranking_only: bool = False,
-) -> DataSnapshotView:
-    manifest = DataSnapshotManifest(
-        schema_version=2,
-        generation_id="g-freshness",
-        created_at="now",
-        content_fingerprint="f" * 64,
-        source_files=(),
-        champion_count=1,
-        augment_count=1,
-        stat_record_count=1,
-        files=(),
-        health="degraded" if degraded else "healthy",
-        source_status=source_status or {},
-    )
-    return DataSnapshotView(
-        manifest,
-        {
-            "champions": [{"id": "63", "name": "复仇焰魂"}],
-            "champion_hextech": {
-                "复仇焰魂": {
-                    "hero_id": "63",
-                    "augments": [
-                        {"id": "100", "source_tier": 3, "champion_tier": 1, "stats_scope": "top_champion_tier"}
-                        if ranking_only
-                        else {"id": "100", "winrate": 0.55, "pickrate": 0.12}
-                    ],
-                }
-            },
-            "overlay_hints": {},
-            "identities": {
-                "augments": {"100": "虚幻武器"},
-                "augment_aliases": {"illusory_weapons": "100"},
-                "catalog_augments": {
-                    "illusory_weapons": {
-                        "vision_id": "illusory_weapons",
-                        "name": "虚幻武器",
-                        "canonical_id": "100",
-                    }
-                },
-            },
-        },
-        degraded=degraded,
-    )
+def _view(*,source_status, degraded=True, ranking_only=False):
+    manifest=_manifest(generation_id="g-freshness",created_at="2026-10-24T00:00:00+00:00",
+        health="degraded" if degraded else "healthy",source_status=source_status or {})
+    rows=[] if ranking_only else [{"id":"100","winrate":.55,"pickrate":.12,"stats_source":"aramkit"}]
+    return DataSnapshotView(manifest,_query(manifest,augments=rows),degraded=degraded)
 
 
 def _recommend(view: DataSnapshotView, *, bind_checks: bool = True) -> dict[str, object]:
@@ -280,11 +275,11 @@ def _recommend(view: DataSnapshotView, *, bind_checks: bool = True) -> dict[str,
     return dict(RecommendationService().build(context, snapshot, vision=vision).augment_slots[0])
 
 
-def test_generation_degraded_does_not_taint_fresh_hextech_rows() -> None:
+def test_generation_degraded_does_not_taint_fresh_aramkit_rows() -> None:
     row = _recommend(
         _view(
             source_status={
-                "hextech": SourceStatusV2(freshness="fresh", data_status="fresh", run_id="hex-new"),
+                "aramkit": SourceStatusV2(freshness="fresh", data_status="fresh", run_id="aram-new"),
                 "apex": SourceStatusV2(freshness="last_good", run_id="apex-old"),
                 "mayhem": SourceStatusV2(freshness="fresh", run_id="mayhem-new"),
             }
@@ -293,30 +288,22 @@ def test_generation_degraded_does_not_taint_fresh_hextech_rows() -> None:
 
     assert row["status_code"] == "READY"
     assert row["source_freshness"] == "fresh"
-    assert row["source_run_id"] == "hex-new"
+    assert row["source_run_id"] == "aram-new"
     assert row["synergy_data_status"] == "degraded"
 
 
-def test_retired_blitz_is_not_used_when_aramkit_has_no_numeric_stats() -> None:
-    row = _recommend(
-        _view(
-            source_status={
-                "blitz": SourceStatusV2(freshness="fresh", data_status="fresh", run_id="blitz-new"),
-                "aramkit": SourceStatusV2(freshness="last_good", data_status="data_stale", run_id="aram-old"),
-            },
-            ranking_only=True,
-        )
-    )
-
-    assert row["status_code"] == "SOURCE_STAT_MISSING"
+def test_aramkit_without_numeric_combination_does_not_invent_statistics():
+    row=_recommend(_view(source_status={"aramkit":SourceStatusV2(freshness="fresh",data_status="fresh")},
+                         ranking_only=True))
+    assert row["status_code"]=="SOURCE_STAT_MISSING"
     assert not row["stats"]
 
 
-def test_hextech_last_good_marks_only_numeric_stats_degraded() -> None:
+def test_aramkit_last_good_marks_only_numeric_stats_degraded() -> None:
     row = _recommend(
         _view(
             source_status={
-                "hextech": SourceStatusV2(
+                "aramkit": SourceStatusV2(
                     freshness="last_good",
                     data_status="data_stale",
                     data_reason="candidate_rejected_last_good_preserved",
@@ -327,32 +314,32 @@ def test_hextech_last_good_marks_only_numeric_stats_degraded() -> None:
         )
     )
 
-    assert row["status_code"] == "STATS_STALE"
+    assert row["status_code"] == "GENERATION_DEGRADED"
     assert row["data_reason"] == "candidate_rejected_last_good_preserved"
     assert row["synergy_data_status"] == "ready"
 
 
-def test_old_manifest_without_source_status_falls_back_to_aggregate_health() -> None:
+def test_missing_source_status_preserves_aggregate_degraded_health() -> None:
     row = _recommend(_view(source_status=None, degraded=True))
 
     assert row["status_code"] == "STATS_STALE"
     assert row["source_freshness"] == "unknown"
 
 
-def test_present_but_unknown_hextech_status_never_claims_fresh_data() -> None:
+def test_present_but_unknown_aramkit_status_never_claims_fresh_data() -> None:
     row = _recommend(
-        _view(source_status={"hextech": SourceStatusV2()}, degraded=False),
+        _view(source_status={"aramkit": SourceStatusV2()}, degraded=False),
         bind_checks=False,
     )
 
-    assert row["status_code"] == "STATS_STALE"
+    assert row["status_code"] == "GENERATION_DEGRADED"
 
 
 def test_present_but_unknown_synergy_status_never_claims_ready() -> None:
     row = _recommend(
         _view(
             source_status={
-                "hextech": SourceStatusV2(freshness="fresh", data_status="fresh"),
+                "aramkit": SourceStatusV2(freshness="fresh", data_status="fresh"),
                 "apex": SourceStatusV2(),
                 "mayhem": SourceStatusV2(freshness="fresh", data_status="fresh"),
             },
@@ -377,7 +364,7 @@ def test_renderer_keeps_expired_numeric_stats_without_age_notice() -> None:
                 "state": "degraded",
                 "generation_id": "g-stale",
                 "source_status": {
-                    "hextech": {
+                    "aramkit": {
                         "freshness": "last_good",
                         "data_status": "data_stale",
                         "data_reason": "source_data_expired",
@@ -413,7 +400,7 @@ def test_stats_stale_text_never_invents_age_for_invalid_or_future_time() -> None
     assert _stats_stale_text("candidate_rejected_last_good_preserved", "2026-08-20T00:00:00+00:00", now=now) == "统计数据暂非最新"
 
 
-def test_renderer_shows_stale_synergy_without_tainting_fresh_hextech_stats() -> None:
+def test_renderer_shows_stale_synergy_without_tainting_fresh_aramkit_stats() -> None:
     model = build_render_model(
         {
             "active": True,
@@ -425,7 +412,7 @@ def test_renderer_shows_stale_synergy_without_tainting_fresh_hextech_stats() -> 
                 "state": "degraded",
                 "generation_id": "g-freshness",
                 "source_status": {
-                    "hextech": {"freshness": "fresh", "data_status": "fresh"},
+                    "aramkit": {"freshness": "fresh", "data_status": "fresh"},
                     "apex": {"freshness": "last_good"},
                     "mayhem": {"freshness": "fresh"},
                 },
@@ -459,7 +446,7 @@ def test_renderer_displays_ranking_without_inventing_percentages() -> None:
             "snapshot": {
                 "state": "ready",
                 "generation_id": "g-freshness",
-                "source_status": {"blitz": {"freshness": "fresh", "data_status": "fresh"}},
+                "source_status": {"aramkit": {"freshness": "fresh", "data_status": "fresh"}},
             },
             "source": {"private_policy_stats_enabled": True},
             "hints": {
@@ -484,7 +471,7 @@ def test_expired_synergy_source_marks_degraded_and_exposes_data_age() -> None:
     row = _recommend(
         _view(
             source_status={
-                "hextech": SourceStatusV2(freshness="fresh", data_status="fresh", run_id="hex-new"),
+                "aramkit": SourceStatusV2(freshness="fresh", data_status="fresh", run_id="aram-new"),
                 "apex": SourceStatusV2(
                     freshness="fresh",
                     data_status="data_stale",
@@ -539,7 +526,7 @@ def test_renderer_shows_expired_synergy_age_text() -> None:
                 "state": "ready",
                 "generation_id": "g-freshness",
                 "source_status": {
-                    "hextech": {"freshness": "fresh", "data_status": "fresh"},
+                    "aramkit": {"freshness": "fresh", "data_status": "fresh"},
                     "apex": {
                         "freshness": "fresh",
                         "data_status": "data_stale",

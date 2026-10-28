@@ -63,6 +63,7 @@ def preparation_key(
         context.get("_stage_wait_revision"),
         (int(viewport_size[0]), int(viewport_size[1])),
         "expanded" if str(display_mode) == "expanded" else "compact",
+        str(source.get("sidecar_instance_id") or ""),
     )
 
 
@@ -108,6 +109,7 @@ class OverlayDataPreparation:
         self._generation = SelectionGenerationPin()
         self._hints = HostGenerationHintCache(initial_hints)
         self._scope = SelectionStatsPin()
+        self._input_scope = SelectionStatsPin()
         self._display_gate = DisplaySelectionGate()
         self._scope_identity: tuple[str, str] | None = None
         self._game_identity: tuple[Any, ...] | None = None
@@ -146,7 +148,7 @@ class OverlayDataPreparation:
             self._observed_game_identity = identity
             if identity[0]:
                 self._observed_selection_started |= first_selection_started(event)
-                stage_key = (identity, source.get("selection_epoch"))
+                stage_key = (identity, source.get("selection_epoch"), source.get("sidecar_instance_id"))
                 if first_selection_started(event) and stage_key != self._observed_stage_key:
                     self._observed_stage_key, self._observed_stage_at = stage_key, time.time()
 
@@ -184,15 +186,23 @@ class OverlayDataPreparation:
         if fragment_selection(event) or not str(source.get("session_id") or ""):
             self.invalidate()
             return None
-        stage_identity = (requested_game, source.get("selection_epoch"), context.get("champion_id"))
+        stage_identity = (requested_game, source.get("selection_epoch"), source.get("sidecar_instance_id"),
+                          context.get("champion_id"))
         with self._condition:
             if stage_identity != self._stage_identity:
                 self._stage_identity = stage_identity
-                self._stage_started_at = (self._observed_stage_at if stage_identity[:2] == self._observed_stage_key
+                self._stage_started_at = (self._observed_stage_at if stage_identity[:3] == self._observed_stage_key
                                           else time.time())
                 self._frozen_stage_identity = None
+                self._input_scope.reset()
+            confirmation = self._input_scope.observe(
+                event, context, completed_selection_count=completed,
+                confirmation_started_at=self._stage_started_at,
+            ) if ordinary_selection(event) else None
             context = {**context, "_stage_confirmation_started_at": self._stage_started_at,
-                       "_stage_wait_revision": None if self._frozen_stage_identity == stage_identity else
+                       "_stage_input_confirmation": confirmation,
+                       "_stage_wait_revision": None if confirmation is not None or
+                       self._frozen_stage_identity == stage_identity else
                        (context.get("publisher_instance_id"), context.get("publication_seq"))}
         key = preparation_key(
             event,
@@ -244,6 +254,7 @@ class OverlayDataPreparation:
             self._result = None
             self._stage_identity = None
             self._frozen_stage_identity = None
+            self._input_scope.reset()
 
     def poll(self, key: tuple[Any, ...] | None) -> PreparedOverlayData | None:
         with self._condition:
@@ -461,7 +472,8 @@ class OverlayDataPreparation:
         if scope_identity != self._scope_identity:
             local_scope.reset()
         scope = local_scope.resolve(event, context, view, completed_selection_count=completed,
-                                    confirmation_started_at=context.get("_stage_confirmation_started_at"))
+                                    confirmation_started_at=context.get("_stage_confirmation_started_at"),
+                                    input_confirmation=context.get("_stage_input_confirmation"))
         with self._condition:
             if not self._valid(version, key):
                 return

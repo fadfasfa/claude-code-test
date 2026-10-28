@@ -49,20 +49,22 @@ def source_failure_kind(result: Mapping[str, Any], exc: BaseException) -> str:
     if reported == "timeout":
         return "timeout"
     if reported in {
-        "tls_error", "network_error", "http_403", "http_429", "http_5xx", "transient_network",
+        "tls_error", "network_error", "network", "connection_error", "http_403", "http_429", "http_5xx", "transient_network",
     }:
         return "transient_network"
     if reported in {"invalid_payload", "schema_changed", "validation"}:
         return "validation"
-    if str(result.get("failure_stage") or "").casefold() == "validation" or result.get(
-        "failure_fingerprint"
-    ):
+    if reported in {"io", "cancelled", "source_runtime"}:
+        return reported
+    if str(result.get("failure_stage") or "").casefold() == "validation":
         return "validation"
     reason = str(exc).casefold()
     if "shutdown" in reason or "cancel" in reason:
         return "cancelled"
     if "timeout" in reason or "timed out" in reason:
         return "timeout"
+    if str(result.get("failure_stage") or "").casefold() == "fetch":
+        return "transient_network"
     if any(token in reason for token in ("http_", "connection", "network", "dns", "discovery unavailable")):
         return "transient_network"
     if isinstance(exc, ValueError) or any(

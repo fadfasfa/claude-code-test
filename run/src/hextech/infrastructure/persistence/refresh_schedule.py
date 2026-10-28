@@ -10,7 +10,7 @@ from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import get_var_dir
 
 
-SCHEDULE_SOURCES = ("catalog", "aramkit", "blitz", "apex", "mayhem")
+SCHEDULE_SOURCES = ("catalog", "aramkit", "apex", "mayhem")
 
 
 class RefreshScheduleStore:

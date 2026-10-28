@@ -1,10 +1,9 @@
 ﻿[CmdletBinding()]
 param(
-    [switch]$RequireRunningWeb,
     [switch]$RequireConsistentGeneration
 )
 
-# 功能：只读核查本机运行态、generation 与可选 Web 一致性，不修改正式数据。
+# 功能：只读核查本机运行态、generation 一致性，不修改正式数据。
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "_common.ps1")
@@ -12,10 +11,7 @@ $ErrorActionPreference = "Stop"
 $varRoot = Get-HextechVarRoot
 $requiredCommands = @(
     "hextech-desktop",
-    "hextech-web",
-    "hextech-overlay",
-    "hextech-data-service",
-    "hextech-supervisor"
+    "hextech-overlay"
 )
 $missingCommands = @()
 foreach ($name in $requiredCommands) {
@@ -55,26 +51,6 @@ if (Test-Path -LiteralPath $startupStatusPath -PathType Leaf) {
     }
 }
 
-$portFile = Join-Path $varRoot "state\web_server_port.txt"
-$webPort = 0
-$webListening = $false
-if (Test-Path -LiteralPath $portFile -PathType Leaf) {
-    $rawPort = (Get-Content -LiteralPath $portFile -Raw -Encoding UTF8).Trim()
-    if ([int]::TryParse($rawPort, [ref]$webPort) -and $webPort -ge 1024 -and $webPort -le 65535) {
-        $client = [System.Net.Sockets.TcpClient]::new()
-        try {
-            $connect = $client.ConnectAsync("127.0.0.1", $webPort)
-            $webListening = $connect.Wait(1000) -and $client.Connected
-        }
-        catch {
-            $webListening = $false
-        }
-        finally {
-            $client.Dispose()
-        }
-    }
-}
-
 Show-HextechDevContext
 [pscustomobject]@{
     CliReady = ($missingCommands.Count -eq 0)
@@ -83,8 +59,6 @@ Show-HextechDevContext
     StartupGenerationId = $startupGenerationId
     StartupState = $startupState
     GenerationConsistent = (-not [string]::IsNullOrWhiteSpace($generationId) -and $generationId -eq $startupGenerationId)
-    WebPort = $(if ($webPort -gt 0) { $webPort } else { "" })
-    WebListening = $webListening
     StartupStatusPath = $startupStatusPath
     LogDirectory = (Join-Path $varRoot "logs")
 } | Format-List
@@ -98,7 +72,4 @@ if ([string]::IsNullOrWhiteSpace($generationId)) {
 if ($RequireConsistentGeneration -and
     ([string]::IsNullOrWhiteSpace($startupGenerationId) -or $generationId -ne $startupGenerationId)) {
     throw "startup status 与 snapshot current 的 generation 不一致"
-}
-if ($RequireRunningWeb -and -not $webListening) {
-    throw "Web 未在端口文件记录的端口上监听"
 }

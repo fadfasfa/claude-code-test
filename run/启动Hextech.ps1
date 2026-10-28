@@ -1,33 +1,20 @@
-﻿[CmdletBinding()]
-param(
-    [switch]$NoBrowser
-)
+[CmdletBinding()]
+param()
 
-# 功能：从源码环境启动完整 Hextech Desktop，并沿新 CLI 进入统一生命周期管理。
+# 从源码环境启动三进程 Hextech App。
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "tooling\dev\_common.ps1")
-
 $runRoot = Get-HextechRunRoot
 $command = Resolve-HextechCli -Name "hextech-desktop"
 Show-HextechDevContext
-
-$previousOpenBrowser = $env:HEXTECH_OPEN_BROWSER
+Push-Location $runRoot
 try {
-    if ($NoBrowser) {
-        $env:HEXTECH_OPEN_BROWSER = "0"
-    }
-    Push-Location $runRoot
-    try {
-        & $command
-        if ($LASTEXITCODE -ne 0) {
-            throw "hextech-desktop 退出码: $LASTEXITCODE"
-        }
-    }
-    finally {
-        Pop-Location
+    & $command
+    if ($LASTEXITCODE -ne 0) {
+        throw "hextech-desktop 退出码: $LASTEXITCODE"
     }
 }
 finally {
-    $env:HEXTECH_OPEN_BROWSER = $previousOpenBrowser
+    Pop-Location
 }

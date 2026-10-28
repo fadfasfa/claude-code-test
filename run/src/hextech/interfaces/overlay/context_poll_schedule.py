@@ -18,7 +18,8 @@ def fresh_selection_key(event: Mapping[str, Any], context: Mapping[str, Any], wa
             or not source.get("selection_window_active")
             or str(event.get("selection_type") or source.get("scene_kind")) != "hextech"):
         return None
-    return (source["game_instance_id"], source["session_id"], epoch)
+    # 缺省值保留旧事件读取兼容；生产事件用 Sidecar 实例隔离重启后的 epoch 回退。
+    return (source["game_instance_id"], source["session_id"], epoch, str(source.get("sidecar_instance_id") or ""))
 
 
 class SelectionContextCadence:
@@ -31,7 +32,7 @@ class SelectionContextCadence:
 
     def due(self, now: float, key: tuple | None) -> bool:
         if key is not None:
-            identity, epoch = key[:2], key[2]
+            identity, epoch = (*key[:2], key[3] if len(key) > 3 else ""), key[2]
             if identity != self.identity:
                 self.identity, self.max_epoch = identity, 0
             if epoch > self.max_epoch:

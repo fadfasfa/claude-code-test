@@ -137,7 +137,7 @@ def test_production_evidence_keeps_negative_binding_out_of_positive_pool() -> No
     assert evidence["state"] == "rejected"
     assert evidence["canonical_id"] == ""
     assert evidence["acceptance_rule"] == ""
-    assert evidence["reason"] == "ocr_exact_gate_rejected"
+    assert evidence["reason"] == "exact_name_missing"
     assert evidence["scene_negative"] == {
         "schema_version": 1,
         "state": "admitted",

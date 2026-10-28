@@ -42,21 +42,5 @@ def validated_source_artifact(source: str, pointer_payload: Mapping[str, Any], *
     return artifact_path
 
 
-def open_baseline_view(pointer_payload: Mapping[str, Any]):
-    """按 contribution 固定 origin generation；绝不隐式打开 current。"""
 
-    from hextech.contracts import BaselineContributionV2
-    from hextech.modules.data.generation import DataSnapshotClient, default_snapshot_root
-
-    baseline = BaselineContributionV2.from_mapping(pointer_payload)
-    view = DataSnapshotClient(default_snapshot_root()).open_generation(baseline.origin_generation_id)
-    expected_files = {item.role: item for item in baseline.snapshot_files}
-    actual_files = {item.role: item for item in view.manifest.files}
-    if actual_files != expected_files:
-        raise ValueError(f"baseline generation 文件身份不匹配：{baseline.origin_generation_id}")
-    if baseline.provenance not in view.manifest.source_files:
-        raise ValueError(f"baseline generation 缺少 {baseline.source} provenance")
-    return baseline, view
-
-
-__all__ = ["open_baseline_view", "validated_source_artifact"]
+__all__ = ["validated_source_artifact"]

@@ -1,4 +1,4 @@
-"""运行时数据定位与 DataFrame 缓存。
+"""运行时私有路径与来源暂态定位。
 
 文件职责：
 - 统一管理运行时文件定位、CSV 读取优先级和 DataFrame 缓存
@@ -27,41 +27,20 @@ import json
 import logging
 import os
 import re
-import threading
 import tempfile
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Optional
 
-import pandas as pd
 
 from hextech.modules.data.ports.paths import RUNTIME_DATA_DIR
 from hextech.modules.data.source_runs import resolve_current_artifact, source_root
 
-CSV_ENCODING = "utf-8-sig"
-CSV_FILENAME_PATTERN = "Hextech_Data_*.csv"
-CSV_MIN_VALID_ROWS = 300
 APEX_CURRENT_POINTER_FILENAME = "current.v2.json"
 SOURCE_POINTER_VERSION = 2
 SYNERGY_REFRESH_STATUS_FILENAME = "synergy_refresh_status.json"
-CSV_REQUIRED_COLUMNS = (
-    "英雄ID",
-    "英雄名称",
-    "英雄评级",
-    "英雄胜率",
-    "英雄出场率",
-    "海克斯阶级",
-    "海克斯名称",
-    "海克斯胜率",
-    "海克斯出场率",
-    "胜率差",
-    "综合得分",
-)
 
 logger = logging.getLogger(__name__)
 _PRIVATE_PERMISSION_WARNING_PATHS: set[str] = set()
-_VALID_CSV_CACHE: dict[tuple[str, int], tuple[int, int, bool]] = {}
-_VALID_CSV_CACHE_LOCK = threading.Lock()
 
 
 def get_runtime_root_dir() -> Path:
@@ -240,11 +219,6 @@ def resolve_runtime_data_file(runtime_path: str) -> Optional[str]:
     return runtime_path if os.path.exists(runtime_path) else None
 
 
-def get_runtime_hextech_data_dir() -> Path:
-    """返回 Hextech 来源 run 目录。"""
-    return source_root("hextech") / "runs"
-
-
 def get_runtime_synergy_data_dir() -> Path:
     """返回 Apex 来源 run 目录。"""
     return source_root("apex") / "runs"
@@ -319,247 +293,3 @@ def build_next_synergy_snapshot_path(timestamp_label: str) -> str:
         if not candidate.exists():
             return str(candidate)
     raise FileExistsError(f"协同快照文件名连续冲突：{base_path.name}")
-
-
-def iter_runtime_csv_files() -> list[str]:
-    """只返回 Hextech current artifact。"""
-    artifact = resolve_current_artifact("hextech")
-    return [str(artifact)] if artifact else []
-
-
-def _runtime_csv_sort_key(path: str) -> tuple[str, float]:
-    """优先按文件名日期排序，同日快照再按 mtime 排序。"""
-
-    match = re.search(r"Hextech_Data_(\d{4})-?(\d{2})-?(\d{2})", os.path.basename(path))
-    date_key = "".join(match.groups()) if match else ""
-    try:
-        mtime = os.path.getmtime(path)
-    except OSError:
-        mtime = 0.0
-    return date_key, mtime
-
-
-def _runtime_csv_is_valid(path: str, min_rows: int = CSV_MIN_VALID_ROWS) -> bool:
-    """校验 schema 与最小数据量，并按文件 stat 缓存结果。"""
-
-    try:
-        stat = os.stat(path)
-    except OSError:
-        return False
-    cache_key = (stat.st_mtime_ns, stat.st_size)
-    validation_key = (path, min_rows)
-    with _VALID_CSV_CACHE_LOCK:
-        cached = _VALID_CSV_CACHE.get(validation_key)
-        if cached and cached[:2] == cache_key:
-            return cached[2]
-
-    try:
-        valid = len(load_runtime_csv(path)) >= min_rows
-    except (OSError, ValueError, TypeError, pd.errors.ParserError, UnicodeError):
-        valid = False
-
-    with _VALID_CSV_CACHE_LOCK:
-        _VALID_CSV_CACHE[validation_key] = (cache_key[0], cache_key[1], valid)
-    return valid
-
-
-def get_latest_valid_csv(min_rows: int = CSV_MIN_VALID_ROWS) -> Optional[str]:
-    """返回最新有效战报；新文件损坏时自动检查更早版本。"""
-
-    files = sorted(iter_runtime_csv_files(), key=_runtime_csv_sort_key, reverse=True)
-    for path in files:
-        if _runtime_csv_is_valid(path, min_rows=min_rows):
-            return path
-        logger.info("忽略无效运行 CSV：%s", os.path.basename(path))
-    return None
-
-
-def get_latest_csv() -> Optional[str]:
-    """返回已发布的完整 Hextech CSV。"""
-
-    files = sorted(iter_runtime_csv_files(), key=_runtime_csv_sort_key, reverse=True)
-    return files[0] if files else None
-
-
-def validate_runtime_csv_schema(
-    df: pd.DataFrame,
-    source: str = "",
-    required_columns: Sequence[str] = CSV_REQUIRED_COLUMNS,
-) -> None:
-    """校验运行 CSV 的核心列，避免下游计算阶段才暴露 KeyError。"""
-    if df.empty:
-        return
-    missing = [col for col in required_columns if col not in df.columns]
-    if missing:
-        detail = f"，source={source}" if source else ""
-        raise ValueError(f"运行 CSV 缺少核心列：{missing}{detail}，当前列：{df.columns.tolist()}")
-
-
-def load_runtime_csv(path: str) -> pd.DataFrame:
-    """按统一编码读取并标准化运行 CSV。"""
-    df = pd.read_csv(path, encoding=CSV_ENCODING)
-    normalized = normalize_runtime_df(df)
-    validate_runtime_csv_schema(normalized, source=os.path.basename(path))
-    return normalized
-
-
-def load_latest_runtime_df() -> pd.DataFrame:
-    """读取最新运行 CSV；没有 CSV 时返回空 DataFrame。"""
-    latest = get_latest_csv()
-    if not latest:
-        return pd.DataFrame()
-    return load_runtime_csv(latest)
-
-
-def detect_hero_id_column(df: pd.DataFrame) -> Optional[str]:
-    for col in df.columns:
-        name = str(col)
-        if "英雄ID" in name or name == "ID":
-            return name
-    return None
-
-
-def normalize_runtime_df(df: pd.DataFrame) -> pd.DataFrame:
-    """统一列名和英雄 ID 字段格式，降低上层视图适配分支。"""
-    if df.empty:
-        return df
-
-    normalized = df.copy()
-    normalized.columns = normalized.columns.astype(str).str.replace(" ", "", regex=False)
-    id_col = detect_hero_id_column(normalized)
-    if id_col:
-        normalized[id_col] = (
-            normalized[id_col]
-            .astype(str)
-            .str.strip()
-            .str.replace(".0", "", regex=False)
-        )
-    if "胜率差" not in normalized.columns and {"海克斯胜率", "英雄胜率"}.issubset(normalized.columns):
-        hex_winrate = pd.to_numeric(normalized["海克斯胜率"], errors="coerce")
-        hero_winrate = pd.to_numeric(normalized["英雄胜率"], errors="coerce")
-        normalized["胜率差"] = (hex_winrate - hero_winrate).fillna(0.0)
-    if "综合得分" not in normalized.columns:
-        normalized["综合得分"] = 0.0
-    return normalized
-
-
-@dataclass
-class DataFrameCache:
-    path: str = ""
-    mtime: float = 0.0
-    df: pd.DataFrame = field(default_factory=pd.DataFrame)
-
-
-class CachedDataFrameLoader:
-    def __init__(self, latest_path_getter: Callable[[], Optional[str]] = get_latest_csv):
-        self._latest_path_getter = latest_path_getter
-        self._cache = DataFrameCache()
-        self._lock = threading.Lock()
-
-    @property
-    def cache_key(self) -> Tuple[str, float]:
-        return self._cache.path, self._cache.mtime
-
-    @property
-    def cached_path(self) -> str:
-        return self._cache.path
-
-    @property
-    def cached_mtime(self) -> float:
-        return self._cache.mtime
-
-    def get_df(self, force_refresh: bool = False) -> pd.DataFrame:
-        """按文件路径与 mtime 做缓存，必要时重新解析最新 CSV。"""
-        latest = self._latest_path_getter()
-        if not latest:
-            return pd.DataFrame()
-
-        try:
-            current_mtime = os.path.getmtime(latest)
-        except OSError:
-            return self._cache.df.copy()
-
-        with self._lock:
-            if (
-                force_refresh
-                or latest != self._cache.path
-                or current_mtime != self._cache.mtime
-            ):
-                self._cache = DataFrameCache(
-                    path=latest,
-                    mtime=current_mtime,
-                    df=load_runtime_csv(latest),
-                )
-            return self._cache.df.copy()
-
-
-def load_precomputed_champion_list():
-    from hextech.modules.data.catalog.precomputed_cache import load_precomputed_champion_list as _load
-
-    return _load()
-
-
-def load_precomputed_hextech_for_hero(hero_name: str):
-    from hextech.modules.data.catalog.precomputed_cache import load_precomputed_hextech_for_hero as _load
-
-    return _load(hero_name)
-
-
-def has_precomputed_hextech_cache() -> bool:
-    from hextech.modules.data.catalog.precomputed_cache import has_precomputed_hextech_cache as _has
-
-    return _has()
-
-
-__all__ = [
-    "CSV_ENCODING",
-    "CSV_FILENAME_PATTERN",
-    "CSV_MIN_VALID_ROWS",
-    "CSV_REQUIRED_COLUMNS",
-    "CachedDataFrameLoader",
-    "DataFrameCache",
-    "build_runtime_cache_path",
-    "build_runtime_debug_path",
-    "build_runtime_lock_path",
-    "build_runtime_user_preference_path",
-    "build_runtime_profile_path",
-    "build_runtime_state_path",
-    "build_next_synergy_snapshot_path",
-    "build_raw_synergy_data_path",
-    "build_synergy_cleaned_data_path",
-    "build_synergy_data_path",
-    "build_synergy_latest_pointer_path",
-    "build_synergy_refresh_status_path",
-    "build_synergy_snapshot_path",
-    "detect_hero_id_column",
-    "ensure_private_runtime_dir",
-    "ensure_runtime_profile_dir",
-    "ensure_runtime_state_dir",
-    "get_latest_csv",
-    "get_latest_valid_csv",
-    "get_latest_synergy_snapshot_path",
-    "get_runtime_cache_dir",
-    "get_runtime_debug_dir",
-    "get_runtime_hextech_data_dir",
-    "get_runtime_synergy_data_dir",
-    "get_runtime_lock_dir",
-    "get_runtime_user_preferences_dir",
-    "get_runtime_profile_dir",
-    "get_runtime_root_dir",
-    "get_runtime_state_dir",
-    "has_precomputed_hextech_cache",
-    "iter_runtime_csv_files",
-    "load_latest_runtime_df",
-    "load_precomputed_champion_list",
-    "load_precomputed_hextech_for_hero",
-    "load_synergy_latest_pointer",
-    "load_synergy_refresh_status",
-    "load_runtime_csv",
-    "normalize_runtime_df",
-    "resolve_runtime_data_file",
-    "APEX_CURRENT_POINTER_FILENAME",
-    "SOURCE_POINTER_VERSION",
-    "SYNERGY_REFRESH_STATUS_FILENAME",
-    "validate_runtime_csv_schema",
-    "write_private_runtime_state_file",
-]

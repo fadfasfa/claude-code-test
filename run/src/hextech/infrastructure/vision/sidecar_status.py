@@ -18,6 +18,7 @@ import psutil
 from hextech.modules.data.catalog.runtime_store import build_runtime_state_path
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.session.build_identity import current_build_id
+from hextech.modules.data.ports.paths import get_var_dir
 
 
 STATUS_FILE = Path(build_runtime_state_path("game_overlay_sidecar_status.json"))
@@ -72,6 +73,7 @@ def write_status(status: str, **fields: Any) -> None:
     payload.update({
         "schema_version": 2,
         "build_id": current_build_id(),
+        "runtime_root": str(get_var_dir().resolve()),
         "status": status,
         "pid": os.getpid(),
         "pid_started_at": PID_STARTED_AT,

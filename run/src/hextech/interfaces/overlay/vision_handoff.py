@@ -89,7 +89,7 @@ class VisionHandoffMixin:
         )
 
     def _sidecar_pid(self) -> int | None:
-        return getattr(self.sidecar_process, "pid", None)
+        return getattr(self.sidecar_process, "_hextech_overlay_runtime_pid", None) or getattr(self.sidecar_process, "pid", None)
 
     def _read_sidecar_liveness(self) -> dict[str, Any]:
         return read_sidecar_liveness(
@@ -193,26 +193,27 @@ class VisionHandoffMixin:
 
             try:
                 pointer = json.loads(
-                    (default_snapshot_root() / "current.v2.json").read_text(encoding="utf-8")
+                    (default_snapshot_root() / "current.v4.json").read_text(encoding="utf-8")
                 )
             except (OSError, ValueError):
                 pointer = {}
             pointer_generation_id = str(
                 pointer.get("current_generation_id") or ""
             ) if isinstance(pointer, Mapping) else ""
-            from hextech.modules.data.catalog.versioned import catalog_current_path
-
-            try:
-                catalog_pointer = catalog_current_path().read_text(encoding="utf-8")
-            except OSError:
-                catalog_pointer = ""
+            recognition = pointer.get("recognition_catalog") if isinstance(pointer, Mapping) else None
+            catalog_pointer = json.dumps({field: recognition.get(field, "") for field in
+                ("catalog_generation_id", "content_sha256", "manifest_sha256")}, sort_keys=True) if isinstance(recognition, Mapping) and recognition else ""
             with self._lock:
                 if (
                     (pointer_generation_id or catalog_pointer)
-                    and pointer_generation_id == self.observed_data_generation_id
                     and self._last_generation_observation[1]
                     and catalog_pointer == self._observed_catalog_pointer
                 ):
+                    if pointer_generation_id != self.observed_data_generation_id:
+                        self.observed_data_generation_id = pointer_generation_id
+                        self._last_generation_observation = (pointer_generation_id, self._last_generation_observation[1])
+                        if self.vision_handoff_state in {"stats_only", "idle", "completed"}:
+                            self.vision_handoff_state = "stats_only"
                     if (
                         self.vision_handoff_state in {"deferred_selection_active", "deferred_game_active"}
                         and not self._vision_switch_blocked()

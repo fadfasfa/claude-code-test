@@ -5,6 +5,63 @@ from functools import partial
 import pytest
 
 
+@pytest.mark.parametrize("withdraw_raises", [False, True])
+def test_native_residual_wrapper_mapping_is_hidden_without_activation(request, withdraw_raises):
+    from native_tk_runner import run_native_tk_case
+    if run_native_tk_case(request.node.nodeid):
+        return
+    import tkinter as tk
+    from types import SimpleNamespace
+    import win32gui
+    from hextech.interfaces.desktop.app_view import DesktopViewMixin
+    from hextech.interfaces.desktop.client_layer import desktop_wrapper_hwnd, checked_set_window_long
+    from hextech.interfaces.desktop.window_activation import suppress_desktop_activation
+    from hextech.interfaces.desktop.window_presentation import DesktopWindowPresentation, DesktopWindowObservation
+
+    class ProbeUI(DesktopViewMixin):
+        pass
+
+    foreground = win32gui.GetForegroundWindow()
+    with suppress_desktop_activation():
+        root = tk.Tk()
+        root.withdraw()
+        root.overrideredirect(True)
+        root.attributes("-alpha", 0.0)
+        root.geometry("320x600+10000+10000")
+        root.update_idletasks()
+    hwnd = desktop_wrapper_hwnd(root)
+    checked_set_window_long(hwnd, -20, win32gui.GetWindowLong(hwnd, -20) | 0x08000000 | 0x80)
+    ui = ProbeUI()
+    ui.root = root
+    ui._closing = False
+    ui._window_visible = ui._window_topmost = False
+    ui._auto_follow_enabled = True
+    ui._desktop_hwnd = hwnd
+    ui.startup_timing = SimpleNamespace(mark=lambda *a, **kw: None)
+    controller = DesktopWindowPresentation(ui)
+    try:
+        win32gui.ShowWindow(hwnd, 4)  # SW_SHOWNOACTIVATE，自有透明离屏 wrapper。
+        assert win32gui.IsWindowVisible(hwnd)
+        # 本机 Tk 会同步识别 ShowWindow 的映射，不能冒充 native-only 自然复现。
+        # 注入 Tk withdraw 未生效，核验实际 native SW_HIDE 兜底。
+        def failed_withdraw():
+            if withdraw_raises:
+                raise tk.TclError("injected live Tk withdraw failure")
+        root.withdraw = failed_withdraw
+        assert win32gui.GetForegroundWindow() == foreground
+        controller.publish_window(DesktopWindowObservation(game_visible=True))
+        assert controller.apply_latest().reason == "game_in_progress"
+        assert not win32gui.IsWindowVisible(desktop_wrapper_hwnd(root))
+        assert not root.winfo_ismapped()
+        assert controller.status()["hide_confirmed"] is True
+        assert controller.status()["native_visible"] is False
+        assert win32gui.GetWindow(desktop_wrapper_hwnd(root), 4) == 0
+        assert win32gui.GetForegroundWindow() == foreground
+    finally:
+        controller.close()
+        root.destroy()
+
+
 def test_native_independent_layer_keeps_mouse_activation(request):
     from native_tk_runner import run_native_tk_case
     if run_native_tk_case(request.node.nodeid):

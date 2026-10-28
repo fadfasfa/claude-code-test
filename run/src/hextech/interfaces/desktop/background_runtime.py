@@ -15,7 +15,6 @@ from typing import Any
 
 import psutil
 
-from hextech.interfaces.desktop import runtime as ui_runtime
 from hextech.interfaces.desktop.background_runtime_diagnostics import record_background_runtime_transition
 from hextech.modules.session.build_identity import current_build_id
 
@@ -326,20 +325,11 @@ class DesktopBackgroundRuntimeMixin:
         text = self._tray_status_text().removeprefix("状态：")
         self._run_on_ui_thread(lambda: self._set_overlay_status_summary(f"游戏内显示: {text}", "#F5C26B"))
 
-    def _stop_supervisor_for_standby(self) -> None:
-        self._supervisor_lease_stop.set()
-        handle = self.runtime_supervisor
-        try:
-            if handle is not None:
-                ui_runtime.stop_runtime_supervisor_process(handle)
-        finally:
-            lease_thread = self._supervisor_lease_thread
-            if lease_thread is not None and lease_thread.is_alive() and lease_thread is not threading.current_thread():
-                lease_thread.join(timeout=1.0)
-            self._supervisor_lease_thread = None
-        # 只有停止已返回才能丢弃 handle。若 terminate/kill 仍失败，下一轮恢复必须
-        # 先继续回收它，绝不能把残留 Supervisor 当作不存在后再启动一套。
-        self.runtime_supervisor = None
+    def _stop_runtime_owner_for_standby(self):
+        handle = self.runtime_owner
+        if handle is not None:
+            handle.stop()
+        self.runtime_owner = None
 
     def _suspend_background_runtime(self) -> None:
         with self._background_runtime_lock:
@@ -361,11 +351,9 @@ class DesktopBackgroundRuntimeMixin:
             try:
                 manager = self.service_manager
                 if manager is not None:
-                    manager.stop_web()
                     manager.stop_data_service()
                 with self._overlay_operation_lock:
-                    self._stop_supervisor_for_standby()
-                self.web_process = None
+                    self._stop_runtime_owner_for_standby()
                 self.data_service = None
                 self._set_background_runtime_state("suspended", "idle_timeout", process_state=process_state)
             except Exception as exc:
@@ -439,22 +427,8 @@ class DesktopBackgroundRuntimeMixin:
             if (callable(data_is_running) and bool(data_is_running())) or (data_service is None and self.data_service is not None)
             else "starting"
         )
-        supervisor = self.runtime_supervisor
-        health["supervisor"] = "ready" if self._handle_is_running(supervisor) else "failed"
-        if self.feature_flags.get("web_frontend_enabled"):
-            web = getattr(manager, "web", None) if manager is not None else None
-            web_is_running = getattr(web, "is_running", None)
-            if callable(web_is_running):
-                # ManagedService 的 process 句柄可能仍在，但其子进程已经退出；
-                # 真实恢复判定只能相信 is_running()，不能回退到“句柄非空”。
-                health["web"] = "ready" if self._handle_is_running(web) else "starting"
-            elif web is not None:
-                # 轻量测试替身未实现存活协议时不伪造 ready，保留兼容但让诊断可见。
-                health["web"] = "unverified"
-            else:
-                health["web"] = "starting"
-        else:
-            health["web"] = "disabled"
+        supervisor = self.runtime_owner
+        health["runtime_owner"] = "ready" if self._handle_is_running(supervisor) else "failed"
 
         if not self.feature_flags.get("game_overlay_enabled", True):
             health["overlay"] = "disabled"
@@ -463,7 +437,7 @@ class DesktopBackgroundRuntimeMixin:
 
         status_reader = getattr(supervisor, "get_status", None)
         if not callable(status_reader):
-            # RuntimeSupervisorHandle 总会提供 get_status；此降级仅保留测试替身的
+            # RuntimeApp ownerHandle 总会提供 get_status；此降级仅保留测试替身的
             # 兼容性，真实部署仍由下面的 Build ID 与心跳校验收口。
             health["overlay"] = "unverified"
             health["sidecar"] = "unverified"
@@ -513,7 +487,7 @@ class DesktopBackgroundRuntimeMixin:
         else:
             health["overlay"] = "starting"
             # 预热与异步 enable 尚未创建 sidecar 时，旧状态文件可能仍报告
-            # failed/stale；在 Supervisor 自己的启动预算内只能视为 starting。
+            # failed/stale；在 App owner 自己的启动预算内只能视为 starting。
             health["sidecar"] = "starting"
         return health
 
@@ -547,20 +521,20 @@ class DesktopBackgroundRuntimeMixin:
         return max(0.1, remaining)
 
     def _restore_game_overlay_after_background_resume(self, *, deadline: float | None = None) -> None:
-        """在后台线程直接恢复 Supervisor 侧的 Overlay 期望状态。
+        """在后台线程直接恢复 App owner 侧的 Overlay 期望状态。
 
         ``_restore_persisted_game_overlay()`` 会读取 Tk 的 ``BooleanVar``，只能由 UI
         线程调用。轻量待机的恢复和托盘“重启识别”运行在后台线程，因此这里以已经
-        持久化的 Desktop feature flag 为唯一输入，直接调用 Supervisor 控制面，避免
+        持久化的 Desktop feature flag 为唯一输入，直接调用 App owner 控制面，避免
         跨线程访问 Tk 后把整次恢复误判成失败。
         """
 
         if not bool(self.feature_flags.get("game_overlay_enabled", True)):
             return
-        supervisor = self.runtime_supervisor
+        supervisor = self.runtime_owner
         setter = getattr(supervisor, "set_game_overlay_enabled", None)
         if not callable(setter):
-            raise RuntimeError("Runtime Supervisor 缺少游戏内显示控制面")
+            raise RuntimeError("App runtime owner 缺少游戏内显示控制面")
         action_timeout = self._remaining_control_plane_timeout(deadline)
         if deadline is not None and action_timeout is None:
             raise TimeoutError("后台恢复预算耗尽，未恢复游戏内显示")
@@ -575,9 +549,9 @@ class DesktopBackgroundRuntimeMixin:
     def _cleanup_partial_background_resume(self, *, stop_services: bool) -> bool:
         """回收失败恢复已拉起的组件，避免下一轮探针复制整套进程。
 
-        恢复本身是顺序启动：DataService → Supervisor/Overlay → Web。任一步或健康
+        恢复本身是顺序启动：DataService → App owner/Overlay 。任一步或健康
         校验失败时，下一次 5 秒探针必须从干净的 ``resume_failed`` 状态重试；保留
-        半套 Supervisor 会让 Host、Sidecar 和 lease 产生重复所有者。
+        半套 App owner 会让 Host、Sidecar 和 lease 产生重复所有者。
         """
 
         cleanup_ok = True
@@ -585,24 +559,18 @@ class DesktopBackgroundRuntimeMixin:
             manager = self.service_manager
             if manager is not None:
                 try:
-                    manager.stop_web()
-                except Exception:
-                    cleanup_ok = False
-                    logger.debug("恢复失败后停止 Web 失败。", exc_info=True)
-                try:
                     manager.stop_data_service()
                 except Exception:
                     cleanup_ok = False
                     logger.debug("恢复失败后停止 DataService 失败。", exc_info=True)
             if cleanup_ok:
-                self.web_process = None
                 self.data_service = None
         try:
             with self._overlay_operation_lock:
-                self._stop_supervisor_for_standby()
+                self._stop_runtime_owner_for_standby()
         except Exception:
             cleanup_ok = False
-            logger.debug("恢复失败后停止 Runtime Supervisor 失败。", exc_info=True)
+            logger.debug("恢复失败后停止 App runtime owner 失败。", exc_info=True)
         return cleanup_ok
 
     def _raise_if_background_runtime_exit_requested(self) -> None:
@@ -619,7 +587,7 @@ class DesktopBackgroundRuntimeMixin:
                 "resume_cleanup_pending",
             }:
                 return
-            # 预算从恢复线程真正接手时开始，包含 DataService/Supervisor 启动和
+            # 预算从恢复线程真正接手时开始，包含 DataService/App owner 启动和
             # Sidecar 心跳校验，不能只给最后的 health polling 单独再开 13 秒。
             resume_deadline = time.monotonic() + BACKGROUND_RESUME_HEALTH_TIMEOUT_SECONDS
             process_state = probe_league_process_state()
@@ -640,27 +608,18 @@ class DesktopBackgroundRuntimeMixin:
                     timeout=self._remaining_background_resume_timeout(resume_deadline, component="DataService")
                 )
                 self._raise_if_background_runtime_exit_requested()
-                self._supervisor_lease_stop.clear()
-                self._start_runtime_supervisor(
+                self._start_runtime_owner(
                     restore_persisted_game_overlay=False,
                     startup_timeout=self._remaining_background_resume_timeout(
                         resume_deadline,
-                        component="Runtime Supervisor",
+                        component="App runtime owner",
                     ),
                 )
                 self._raise_if_background_runtime_exit_requested()
-                if self.runtime_supervisor is None:
-                    raise RuntimeError("Runtime Supervisor 恢复失败")
+                if self.runtime_owner is None:
+                    raise RuntimeError("App runtime owner 恢复失败")
                 self._restore_game_overlay_after_background_resume(deadline=resume_deadline)
                 self._raise_if_background_runtime_exit_requested()
-                if self.feature_flags.get("web_frontend_enabled"):
-                    manager.start_web(
-                        timeout=self._remaining_background_resume_timeout(
-                            resume_deadline,
-                            component="Web",
-                        )
-                    )
-                    self.web_process = manager.web.process
                 self._raise_if_background_runtime_exit_requested()
                 components = self._wait_for_background_runtime_health(deadline=resume_deadline)
                 self._raise_if_background_runtime_exit_requested()
@@ -694,13 +653,12 @@ class DesktopBackgroundRuntimeMixin:
                 self._set_background_runtime_state("restart_in_progress", "tray_restart_recognition")
                 try:
                     with self._overlay_operation_lock:
-                        self._stop_supervisor_for_standby()
+                        self._stop_runtime_owner_for_standby()
                         self._raise_if_background_runtime_exit_requested()
-                        self._supervisor_lease_stop.clear()
-                        self._start_runtime_supervisor(restore_persisted_game_overlay=False)
+                        self._start_runtime_owner(restore_persisted_game_overlay=False)
                     self._raise_if_background_runtime_exit_requested()
-                    if self.runtime_supervisor is None:
-                        raise RuntimeError("Runtime Supervisor 重启失败")
+                    if self.runtime_owner is None:
+                        raise RuntimeError("App runtime owner 重启失败")
                     self._restore_game_overlay_after_background_resume()
                     self._raise_if_background_runtime_exit_requested()
                     components = self._wait_for_background_runtime_health()

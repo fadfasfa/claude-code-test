@@ -41,10 +41,7 @@ class CatalogVisionDataSource(SharedOverlayDataSource):
         else:
             catalog = load_runtime_catalog()
         if catalog is None:
-            if self._catalog_id:
-                raise ValueError("requested_recognition_catalog_unavailable")
-            # 旧 seed 尚无独立 Catalog 发布时仅允许原已验证快照路径。
-            return super().read_hint_cache()
+            raise ValueError("requested_recognition_catalog_unavailable")
         pool = _catalog_production_pool(catalog)
         validate_production_pool_assets(pool, catalog.root)
         hints: dict[str, Any] = {}
@@ -60,9 +57,10 @@ class CatalogVisionDataSource(SharedOverlayDataSource):
         generation_id = self._generation_id
         if not generation_id:
             from hextech.modules.data.generation import default_snapshot_root
+            from hextech.modules.data.generation.release_store import read_head
 
             try:
-                pointer = json.loads((default_snapshot_root() / "current.v2.json").read_text(encoding="utf-8"))
+                pointer = read_head(default_snapshot_root())
                 generation_id = str(pointer.get("current_generation_id") or "")
             except (OSError, ValueError, AttributeError):
                 generation_id = ""

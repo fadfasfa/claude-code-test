@@ -61,7 +61,6 @@ def test_session_end_true_runs_real_exit_application_once(monkeypatch) -> None:
     ui.stop_background_runtime = lambda: None
     ui.stop_event = threading.Event()
     ui._overlay_status_after_id = None
-    ui._supervisor_lease_stop = threading.Event()
     ui._hide_overlay = lambda: None
     ui._close_pending_process_jobs = lambda: None
     ui._threads_lock = threading.Lock()
@@ -70,15 +69,12 @@ def test_session_end_true_runs_real_exit_application_once(monkeypatch) -> None:
     ui._service_manager_shutdown_in_progress = None
     ui._service_manager_shutdown_completed = None
     ui._take_service_manager_for_shutdown = lambda: None
-    ui._supervisor_lease_thread = None
-    ui.runtime_supervisor = None
+    ui.runtime_owner = None
     ui.data_service = None
     ui._shutdown_done_event = threading.Event()
 
     monkeypatch.setattr("hextech.interfaces.desktop.avatar_loading.close_avatar_loader", lambda _ui: None)
     monkeypatch.setattr("hextech.interfaces.desktop.app_view.threading.Thread", FakeThread)
-    monkeypatch.setattr("hextech.interfaces.desktop.app_view.ui_runtime.close_companion_browser", lambda: None)
-    monkeypatch.setattr("hextech.interfaces.desktop.app_view.ui_runtime.shutdown_desktop_executors", lambda **_kwargs: None)
 
     ui._on_windows_query_end_session()
     ui._on_windows_end_session(True)

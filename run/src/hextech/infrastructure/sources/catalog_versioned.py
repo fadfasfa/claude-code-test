@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping
 from urllib.parse import quote
 
@@ -32,6 +33,10 @@ from hextech.modules.data.catalog.versioned import (
 from hextech.modules.data.catalog.version_catalog import load_apexlol_slug_map
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.infrastructure.transport.scrapling_client import fetch_text
+from hextech.infrastructure.transport.conditional_response import ConditionalResponseCache, fetch_conditional
+from hextech.infrastructure.sources.official_augments import (
+    OFFICIAL_AUGMENTS_URL, OFFICIAL_POLICY_REVISION, bind_official_entries, normalize_official_augments,
+)
 from hextech.modules.acquisition.common.contracts import utc_now_iso
 from hextech.modules.acquisition.common.icons import normalize_safe_augment_icon_filename
 from hextech.modules.vision.image_validation import is_valid_png_bytes
@@ -46,7 +51,7 @@ SOURCE_FILTER_SAMPLE_LIMIT = 10
 CDRAGON_AUGMENTS_URL = (
     "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/zh_cn/v1/cherry-augments.json"
 )
-HEXTECH_METADATA_URL = "https://aramgg.com/data/aram-mayhem-augments.zh_cn.json"
+HEXTECH_METADATA_URL = OFFICIAL_AUGMENTS_URL
 # CDragon 的 manifest 路径以 ``lol-game-data/assets/`` 为前缀，但静态文件实际
 # 位于 ``game/assets/``；两者混用会让 Kiwi/Cherry 图标全部得到 404。
 CDRAGON_ASSET_BASE_URL = "https://raw.communitydragon.org/latest/game/assets/"
@@ -60,19 +65,26 @@ RARITY_TO_TIER = {
 
 
 class CatalogRefreshError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, response=None, reason: str = "") -> None:
+        super().__init__(message)
+        self.response = response if response is not None else (
+            SimpleNamespace(failure_kind=reason, response_headers={}) if reason else None)
+        self.reason = reason
 
 
 def _load_json_result(url: str, *, timeout_ms: int) -> Any:
-    result = fetch_text(url, timeout_ms=timeout_ms)
-    if result.error or result.status_code != 200 or not result.text:
+    cache = ConditionalResponseCache(catalog_root().parent / "state" / "http-validators", source="catalog")
+    result = fetch_conditional(fetch_text, url, cache=cache,
+                               fetch_kwargs={"timeout_ms": timeout_ms, "max_response_bytes": 32 * 1024**2})
+    if result.error or result.error_kind or result.status_code not in (200, 304) or not result.body:
         raise CatalogRefreshError(
-            f"Catalog 请求失败：url={url} status={result.status_code} error={result.error or result.error_kind}"
+            f"Catalog 请求失败：url={url} status={result.status_code} error={result.error or result.error_kind}",
+            response=result, reason=result.error_kind or f"http_{result.status_code}",
         )
     try:
         return json.loads(result.text)
-    except json.JSONDecodeError as exc:
-        raise CatalogRefreshError(f"Catalog JSON 无效：{url}") from exc
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise CatalogRefreshError(f"Catalog JSON 无效：{url}", response=result, reason="schema_changed") from exc
 
 
 def _existing_aliases(root: Path) -> dict[str, list[str]]:
@@ -454,10 +466,7 @@ def _write_candidate(
                 indent=2,
             )
             (staging / "hero_version.txt").write_text(version, encoding="utf-8")
-            catalog_payload = _build_cdragon_catalog(
-                cdragon,
-                active.root,
-            )
+            catalog_payload = bind_official_entries(_build_cdragon_catalog(cdragon, active.root), metadata)
             enabled_ids = _enabled_metadata_ids(metadata)
             asset_payload = _freeze_enabled_assets(
                 staging,
@@ -476,6 +485,8 @@ def _write_candidate(
             validate_production_augment_pool(pool)
             pool["source_marker_sha256"] = source_marker
             pool["mode"] = "aram-mayhem"
+            pool["identity_authority"] = {"provider": "tencent_official", "url": OFFICIAL_AUGMENTS_URL,
+                                           "policy_revision": OFFICIAL_POLICY_REVISION}
             atomic_write_json(staging / "augment_identities.v2.json", pool, ensure_ascii=False, indent=2)
             source_filter["augments"] = {
                 "schema_version": 1,
@@ -497,14 +508,27 @@ def _probe_sources() -> tuple[str, list[Mapping[str, Any]], Mapping[str, Any], s
     versions = _load_json_result(DDRAGON_VERSIONS_URL, timeout_ms=10_000)
     if not isinstance(versions, list) or not versions or not str(versions[0]).strip():
         raise CatalogRefreshError("Data Dragon versions 为空")
-    cdragon = _load_json_result(CDRAGON_AUGMENTS_URL, timeout_ms=20_000)
-    metadata = _load_json_result(HEXTECH_METADATA_URL, timeout_ms=10_000)
-    if not isinstance(cdragon, list) or not cdragon or any(not isinstance(item, Mapping) for item in cdragon) or not isinstance(metadata, Mapping):
-        raise CatalogRefreshError("CDragon/Hextech metadata schema 无效")
+    try:
+        metadata = normalize_official_augments(_load_json_result(HEXTECH_METADATA_URL, timeout_ms=15_000))
+    except ValueError as exc:
+        raise CatalogRefreshError(str(exc), reason="schema_changed") from exc
+    try:
+        cdragon = _load_json_result(CDRAGON_AUGMENTS_URL, timeout_ms=20_000)
+        if not isinstance(cdragon, list) or any(not isinstance(item, Mapping) for item in cdragon):
+            raise CatalogRefreshError("CDragon schema 无效")
+    except (CatalogRefreshError, OSError):
+        # Optional resource outage cannot veto official identity changes.
+        # Keep known IDs for historical statistics, without claiming a fresh check.
+        active = load_active_catalog()
+        previous = json.loads((active.root / "海克斯资源目录.v1.json").read_text(encoding="utf-8"))
+        cdragon = [{"id": item["cdragon_id"], "nameTRA": item["name"],
+                    "augmentNameId": item.get("augment_name_id", ""),
+                    "rarity": item.get("tier", ""), "augmentSmallIconPath": ""}
+                   for item in previous["entries"]]
     _enabled_metadata_ids(metadata)
     version = str(versions[0]).strip()
     marker = hashlib.sha256(json.dumps(
-        {"version": version, "cdragon": cdragon, "metadata": metadata},
+        {"version": version, "cdragon": cdragon, "metadata": metadata, "policy": OFFICIAL_POLICY_REVISION},
         ensure_ascii=False, sort_keys=True, separators=(",", ":"),
     ).encode("utf-8")).hexdigest()
     return version, cdragon, metadata, marker

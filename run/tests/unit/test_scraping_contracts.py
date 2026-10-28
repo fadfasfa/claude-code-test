@@ -8,7 +8,6 @@ from hextech.contracts import FailureKind
 from hextech.modules.acquisition.common.policy import HostCircuitBreaker, HostCircuitOpen, RetryPolicy
 from hextech.modules.acquisition.apex.parser import ApexPageState, classify_apex_page
 from hextech.infrastructure.sources.apex.source import ApexSlugMapError, build_champion_slug_map
-from hextech.infrastructure.sources.hextech.source import ChampionCatalogMismatch, build_expected_champions
 
 
 def test_retry_policy_uses_bounded_exponential_delay_with_seeded_jitter() -> None:
@@ -78,18 +77,3 @@ def test_apex_slug_map_rejects_missing_or_duplicate_slug() -> None:
         build_champion_slug_map({"1": {"en_name": "Vi"}, "2": {"en_name": "vi"}})
     with pytest.raises(ApexSlugMapError):
         build_champion_slug_map({"1": {"name": "缺少英文 slug"}})
-
-
-def test_hextech_expected_set_is_catalog_driven() -> None:
-    catalog = {"1": {"name": "A"}, "2": {"name": "B"}}
-    assert [item["championId"] for item in build_expected_champions(catalog, [{"championId": "2"}, {"championId": "1"}])] == ["1", "2"]
-    with pytest.raises(ChampionCatalogMismatch) as captured:
-        build_expected_champions(catalog, [{"championId": "1"}])
-    assert captured.value.diagnostics() == {
-        "missing_count": 1,
-        "unknown_count": 0,
-        "duplicate_count": 0,
-        "missing_ids": ["2"],
-        "unknown_ids": [],
-        "duplicate_ids": [],
-    }

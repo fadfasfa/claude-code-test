@@ -272,6 +272,9 @@ def _count_current_context_synergy_hints(hints: Any, context: Mapping[str, Any] 
 def _signal_overlay_ready() -> bool:
     """首个健康 Host tick 后写 readiness；失败时允许下一 tick 重试。"""
 
+    from hextech.modules.session.runtime_channel import signal_ready
+    if signal_ready():
+        return True
     ready_path = str(os.environ.get(OVERLAY_READY_FILE_ENV) or "").strip()
     if not ready_path:
         return True
@@ -292,6 +295,15 @@ def _signal_overlay_ready() -> bool:
 def _schedule_exit_file_watch(root: tk.Tk, exit_path: str | Path | None = None) -> None:
     """监听 lifecycle 写入的退出信号，让 host 优先走 Tk 主循环正常收尾。"""
 
+    from hextech.modules.session.runtime_channel import child_channel, shutdown_requested
+    if child_channel() is not None:
+        def check_pipe_exit():
+            if shutdown_requested():
+                root.destroy()
+            else:
+                root.after(50, check_pipe_exit)
+        root.after(50, check_pipe_exit)
+        return
     raw_path = str(exit_path or os.environ.get(OVERLAY_EXIT_FILE_ENV) or "").strip()
     if not raw_path:
         return
@@ -580,10 +592,12 @@ def _build_visibility_status_payload(
     else:
         functional_status, failure_reason = "ready", ""
     from hextech.modules.session.build_identity import current_build_id
+    from hextech.modules.data.ports.paths import get_var_dir
 
     return {
         "schema_version": 2,
         "build_id": current_build_id(),
+        "runtime_root": str(get_var_dir().resolve()),
         "pid": os.getpid(),
         "pid_started_at": HOST_PID_STARTED_AT,
         "executable": HOST_PROCESS_EXECUTABLE,

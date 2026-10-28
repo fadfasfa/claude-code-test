@@ -4,6 +4,7 @@ from functools import wraps
 import ctypes
 from ctypes import wintypes
 import os
+import tkinter as tk
 from collections.abc import Callable
 import win32gui
 import win32process
@@ -26,6 +27,31 @@ def desktop_wrapper_hwnd(root) -> int:
     hwnd = int(root.wm_frame(), 0)
     require_desktop_wrapper(hwnd)
     return hwnd
+
+
+def desktop_wrapper_is_visible(root) -> bool:
+    """Tk inner 的映射位不能代表独立 native wrapper 的可见性。"""
+    try:
+        exists = root.winfo_exists()
+    except tk.TclError:
+        # 正常 destroy 后没有当前 wrapper，也不能退回缓存的旧 HWND。
+        return False
+    if not exists:
+        return False
+    hwnd = desktop_wrapper_hwnd(root)
+    return bool(win32gui.IsWindowVisible(hwnd))
+
+
+def hide_desktop_wrapper(root) -> None:
+    """只撤销当前自有 wrapper 的残余映射，并检查 native 结果。"""
+    if not desktop_wrapper_is_visible(root):
+        return
+    hwnd = desktop_wrapper_hwnd(root)
+    if win32gui.GetWindowLong(hwnd, -20) & 0x8:
+        win32gui.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0010 | 0x0001 | 0x0002 | 0x0200)
+    win32gui.ShowWindow(hwnd, 0)  # SW_HIDE，不激活其他窗口。
+    if desktop_wrapper_is_visible(root):
+        raise RuntimeError("desktop_native_hide_unconfirmed")
 
 
 def _native_long(hwnd: int, index: int) -> int:
@@ -131,7 +157,11 @@ def unowned_tk_operation(method):
             result = method(self, *args, **kwargs)
         finally:
             self._desktop_window_operation_depth = 0
-            if self.root.winfo_exists():
+            try:
+                exists = self.root.winfo_exists()
+            except tk.TclError:
+                exists = False
+            if exists:
                 current = desktop_wrapper_hwnd(self.root)
                 if current != hwnd:
                     _regions.pop(hwnd, None)

@@ -454,7 +454,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(ready["slots"][0]["replacement_reason"], "content_transition_confirmed")
         self.assertEqual(ready["source"]["selection_revision"], 2)
 
-    def test_transition_timeout_restores_identity_without_generation_rollback(self):
+    def test_transition_timeout_remains_unconfirmed_without_generation_rollback(self):
         from hextech.infrastructure.vision.state import SelectionTracker
 
         tracker = SelectionTracker(scene_enter_frames=1)
@@ -480,9 +480,10 @@ class OverlayVisionStateTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(restored["slots"][0]["augment_id"], "augment_a")
+        self.assertEqual(restored["slots"][0]["state"], "detecting")
         self.assertEqual(restored["slots"][0]["slot_generation"], 2)
-        self.assertEqual(restored["slots"][0]["replacement_reason"], "transition_timeout_restored")
+        self.assertIsNone(tracker.slots[0].stable_slot)
+        self.assertIsNone(tracker.slots[0].replacement_previous_slot)
         self.assertEqual(restored["source"]["selection_revision"], 1)
 
     def test_same_identity_ocr_does_not_change_generation_or_revision(self):

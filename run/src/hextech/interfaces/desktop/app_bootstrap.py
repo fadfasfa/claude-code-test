@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from hextech.interfaces.desktop.app_shared import UI_COLORS, _empty_champions, logger, os, threading, ui_runtime
+from hextech.interfaces.desktop.app_shared import UI_COLORS, _empty_champions, logger, os, ui_runtime
 
 if TYPE_CHECKING:
     from .service_manager import ServiceManager
@@ -64,48 +64,22 @@ class DesktopBootstrapMixin:
             if self._closing:
                 return
             self._assert_no_foreign_runtime_roles()
-            self.startup_timing.mark("cohort_seed_start", owner="desktop")
-            cohort_state = self._cohort_seed_installer()
-            validation_mode = "strict"
-            try:
-                import json
-
-                from hextech.modules.data.ports.paths import get_var_dir
-
-                selection = json.loads(
-                    (
-                        get_var_dir()
-                        / "state/data-service/cohort_selection.v1.json"
-                    ).read_text(encoding="utf-8")
-                )
-                if isinstance(selection, dict) and selection.get("selected_source") == "current_receipt":
-                    validation_mode = "receipt"
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                pass
-            self.startup_timing.mark(
-                "cohort_seed_done",
-                owner="desktop",
-                install_state=str(cohort_state or ""),
-                validation_mode=validation_mode,
-                receipt_hit=validation_mode == "receipt",
-            )
+            self.startup_timing.mark("release_seed_start", owner="app")
+            seed_result = self._seed_initializer()
+            if isinstance(seed_result, dict) and seed_result.get("state") not in {"ready", "degraded"}:
+                reason = str(seed_result.get("reason_code") or seed_result.get("reason") or "release_seed_validation_failed")
+                raise RuntimeError(reason)
+            self.startup_timing.mark("release_seed_done", owner="app", result=str(seed_result or ""))
             from hextech.modules.data.generation import DataSnapshotClient
             from hextech.modules.data.catalog.version_catalog import load_champion_core_data
             from .service_manager import ServiceManager
 
             if self._closing:
                 return
-            service_manager = ServiceManager(
-                start_web_func=self._spawn_web_process,
-                start_data_service_func=lambda *, timeout=15.0: ui_runtime.start_data_service_process(
-                    parent_pid=os.getpid(),
-                    timeout=float(timeout),
-                    pending_job_callback=self._register_pending_process_job,
-                ),
-                stop_data_service_func=ui_runtime.stop_data_service_process,
-                manage_overlay_runtime=False,
-                listener_interval_seconds=3.0,
-            )
+            if self._data_runtime_factory is None:
+                raise RuntimeError("data runtime factory was not composed by App bootstrap")
+            service_manager = ServiceManager(start_data_service_func=self._data_runtime_factory,
+                listener_snapshot_func=self._desktop_window_presentation.status)
             if self._windows_session_end_pending:
                 service_manager.set_shutdown_requested(True)
             if self._closing:
@@ -117,17 +91,17 @@ class DesktopBootstrapMixin:
                     self.data_service = None
                     logger.exception("DataService 启动失败，继续探测上一代本地快照。")
 
-            # DataService 与 Supervisor 并行启动；控制面 ready 后再开始本地数据读取，
+            # DataService 与 App owner 并行启动；控制面 ready 后再开始本地数据读取，
             # 保持“先可控制 Overlay、后加载列表”的既有故障隔离合同。
             from concurrent.futures import ThreadPoolExecutor
 
             with ThreadPoolExecutor(max_workers=3, thread_name_prefix="hextech-bootstrap") as executor:
                 data_future = executor.submit(start_data_service)
-                supervisor_future = executor.submit(
-                    self._start_runtime_supervisor,
+                owner_future = executor.submit(
+                    self._start_runtime_owner,
                     restore_persisted_game_overlay=False,
                 )
-                supervisor_future.result()
+                owner_future.result()
                 if self._windows_session_end_pending:
                     service_manager.shutdown(timeout_seconds=0.5, final_timeout_seconds=4.5)
                     return
@@ -142,22 +116,20 @@ class DesktopBootstrapMixin:
                 data_future.result()
                 loaded_champions = snapshot_future.result()
             if self._closing:
-                ui_runtime.stop_runtime_supervisor_process(self.runtime_supervisor)
-                self.runtime_supervisor = None
+                self.runtime_owner.stop()
+                self.runtime_owner = None
                 service_manager.shutdown()
                 self.data_service = None
                 return
             service_manager.set_low_frequency_listener_enabled(
                 self.feature_flags.get("low_frequency_listener_enabled", True)
             )
-            service_manager.start_low_frequency_listener()
             if not self._publish_service_manager(service_manager):
                 return
             self.start_background_runtime_monitor()
             self.startup_timing.mark("services_ready")
             self._run_on_ui_thread(self._apply_persisted_feature_flags)
             self.startup_timing.mark("data_ready", rows=len(loaded_champions))
-            self._start_persisted_web_frontend_async()
         except Exception as exc:
             error = exc
             if self.service_manager is None:
@@ -170,7 +142,15 @@ class DesktopBootstrapMixin:
             if error is not None:
                 self.startup_timing.mark("background_bootstrap_error", error=str(error))
                 self._post_visible_bootstrap_done = True
-                self._set_status(f"本地数据初始化失败，展示面继续运行: {error}", UI_COLORS["warn"])
+                self._set_status(f"启动失败，数据与识别尚不可用: {error}", UI_COLORS["error"])
+                from .startup_failure import show_startup_failure
+                from hextech.modules.data.ports.paths import get_var_dir
+
+                try:
+                    diagnostic_path = str(get_var_dir() / "logs" / "hextech_error.log")
+                except Exception:
+                    diagnostic_path = ""
+                show_startup_failure(error, diagnostic_path)
                 return
             with self._champions_lock:
                 self.champions = loaded_champions
@@ -227,21 +207,6 @@ class DesktopBootstrapMixin:
             if not identity_matches:
                 continue
             conflicts.append(f"{role}:pid={pid}:build={build_id or 'unknown'}:exe={executable}")
-        from hextech.modules.session.runtime_role_owner import role_owner_is_alive
-
-        for role in ("data-service", "runtime-supervisor"):
-            role_path = root / "state" / "runtime-roles" / f"{role}.owner.v1.json"
-            try:
-                payload = json.loads(role_path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                continue
-            if not isinstance(payload, dict) or not role_owner_is_alive(payload):
-                continue
-            role_build = str(payload.get("build_id") or "")
-            conflicts.append(
-                f"{role}:pid={payload.get('pid')}:build={role_build or 'unknown'}:"
-                f"exe={payload.get('executable') or 'unknown'}"
-            )
         if conflicts:
             raise RuntimeError("检测到未由当前 Desktop 持有的运行角色：" + "; ".join(conflicts))
 
@@ -293,128 +258,20 @@ class DesktopBootstrapMixin:
             except Exception:
                 logger.debug("后台初始化失败后清理 ServiceManager 失败。", exc_info=True)
 
-    def _start_runtime_supervisor(
-        self,
-        *,
-        restore_persisted_game_overlay: bool = True,
-        startup_timeout: float | None = None,
-    ) -> None:
-        """启动独立执行面，并用非 UI 线程续租，避免 Tk 主循环卡顿误杀运行态。"""
-
-        try:
-            if getattr(self, "_closing", False) or getattr(self, "_windows_session_end_pending", False):
-                return
-            kwargs: dict[str, object] = {
-                "parent_pid": os.getpid(),
-                "prewarm_templates": True,
-                "pending_job_callback": self._register_pending_process_job,
-            }
-            if startup_timeout is not None:
-                kwargs["timeout"] = float(startup_timeout)
-            self.runtime_supervisor = ui_runtime.start_runtime_supervisor_process(
-                **kwargs,
-            )
-            if getattr(self, "_closing", False) or getattr(self, "_windows_session_end_pending", False):
-                ui_runtime.stop_runtime_supervisor_process(self.runtime_supervisor)
-                self.runtime_supervisor = None
-                return
-            self._start_supervisor_lease_thread()
-            if restore_persisted_game_overlay:
-                self._restore_persisted_game_overlay()
-        except Exception:
-            logger.exception("Runtime Supervisor 启动失败，游戏内显示控制面暂不可用。")
-            self.runtime_supervisor = None
-
-    def _start_supervisor_lease_thread(self) -> None:
-        if self.runtime_supervisor is None:
+    def _start_runtime_owner(self, *, restore_persisted_game_overlay=True, startup_timeout=None):
+        if self._closing or self._windows_session_end_pending:
             return
-        if self._supervisor_lease_thread is not None and self._supervisor_lease_thread.is_alive():
+        if self._runtime_owner_factory is None:
+            raise RuntimeError("runtime owner factory was not composed by App bootstrap")
+        owner = self._runtime_owner_factory()
+        self.runtime_owner = owner
+        if self._closing or self._windows_session_end_pending:
+            owner.stop()
+            self.runtime_owner = None
             return
-        self._supervisor_lease_stop.clear()
-
-        def lease_loop() -> None:
-            while not self._supervisor_lease_stop.wait(2.0):
-                handle = self.runtime_supervisor
-                if handle is None:
-                    return
-                try:
-                    handle.renew_lease(control_instance_id=self._control_instance_id)
-                except Exception:
-                    logger.warning("Runtime Supervisor lease 续租失败。", exc_info=True)
-
-        self._supervisor_lease_thread = threading.Thread(
-            target=lease_loop,
-            name="hextech-supervisor-lease",
-            daemon=True,
-        )
-        self._supervisor_lease_thread.start()
-
-    def _spawn_web_process(self, *, timeout: float | None = None):
-        """启动 Web 子进程；待机恢复时沿用其唯一总预算。"""
-
-        kwargs: dict[str, object] = {
-            "auto_open_browser": self.feature_flags.get("auto_open_browser", True),
-        }
-        if timeout is not None:
-            kwargs["timeout"] = float(timeout)
-        return ui_runtime.start_web_server_process(self.web_port_file, **kwargs)
-
-    def _start_web_server(self):
-        """后台启动网页服务，避免阻塞界面线程。"""
-
-        try:
-            if self.service_manager is None:
-                raise RuntimeError("后台服务尚未就绪")
-            self.service_manager.start_web()
-            self.web_process = self.service_manager.web.process
-            if self.feature_flags.get("auto_open_browser", True):
-                ui_runtime.open_companion_browser(self.web_port_file)
-        except Exception as exc:
-            logger.error("启动网页服务失败: %s", exc)
-
-    def _restore_persisted_web_frontend(self) -> bool:
-        """在 bootstrap 线程恢复 Web，避免首启依赖跨线程 Tk 回调。"""
-
-        if not bool(self.feature_flags.get("web_frontend_enabled")):
-            return False
-        manager = self.service_manager
-        if manager is None:
-            logger.error("恢复持久化 Web 前端失败：后台 ServiceManager 尚未发布。")
-            return False
-        try:
-            manager.start_web()
-            self.web_process = manager.web.process
-            if self.feature_flags.get("auto_open_browser", True):
-                if not ui_runtime.open_companion_browser(self.web_port_file):
-                    logger.warning("Web 前端已恢复，但浏览器未自动打开。")
-            return True
-        except Exception:
-            self.web_process = None
-            try:
-                manager.stop_web()
-            except Exception:
-                logger.debug("Web 首启失败后清理子进程失败。", exc_info=True)
-            logger.exception("恢复持久化 Web 前端失败；保留用户偏好供下次重试。")
-            return False
-
-    def _start_persisted_web_frontend_async(self) -> None:
-        """Web readiness 独立于 core readiness；失败不得延迟后台就绪。"""
-
-        if not bool(self.feature_flags.get("web_frontend_enabled")) or self._closing:
-            self.startup_timing.mark("web_disabled")
-            return
-
-        def restore() -> None:
-            self.startup_timing.mark("web_start")
-            if self._restore_persisted_web_frontend():
-                self.startup_timing.mark("web_ready")
-            else:
-                self.startup_timing.mark("web_failed", reason="readiness_failed")
-
-        self._start_tracked_thread(restore, name="hextech-web-restore")
+        owner.start_overlay_template_prewarm()
+        if restore_persisted_game_overlay:
+            self._restore_persisted_game_overlay()
 
     def _init_core_engine(self):
-        ui_runtime.initialize_core_threads(self)
-
-    def _run_terminal(self):
-        ui_runtime.run_terminal_loop(self)
+        ui_runtime.initialize_window_threads(self)

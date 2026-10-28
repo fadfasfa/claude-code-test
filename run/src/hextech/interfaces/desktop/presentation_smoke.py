@@ -164,7 +164,7 @@ def run_desktop_presentation_smoke() -> dict:
         with ExitStack() as isolation:
             # No config reads, background workers, services or genuine client polling.
             isolation.enter_context(patch.object(app, "load_ui_feature_flags", return_value={
-                "web_frontend_enabled": False, "game_overlay_enabled": False,
+                "game_overlay_enabled": False,
                 "private_policy_stats_enabled": False, "low_frequency_listener_enabled": False,
             }))
             isolation.enter_context(patch.object(runtime_services, "initialize_window_threads", lambda _ui: None))

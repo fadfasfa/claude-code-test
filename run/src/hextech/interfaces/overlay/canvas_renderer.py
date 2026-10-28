@@ -367,6 +367,7 @@ def _draw_stat_panel(
             "IDENTITY_UNRESOLVED": OVERLAY_THEME["text_muted"],
             "SNAPSHOT_UNAVAILABLE": OVERLAY_THEME["text_secondary"],
             "STATS_PREPARING": OVERLAY_THEME["text_secondary"],
+            "STAGE_UNCONFIRMED": OVERLAY_THEME["text_secondary"],
             "STATS_STALE": OVERLAY_THEME["text_secondary"],
             "GENERATION_DEGRADED": OVERLAY_THEME["stat_value"],
             "CONTEXT_MISSING": OVERLAY_THEME["highlight_cyan"],

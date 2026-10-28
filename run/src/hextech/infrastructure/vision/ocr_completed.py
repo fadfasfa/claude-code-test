@@ -10,10 +10,35 @@ from typing import Any, Mapping, Sequence
 from PIL import Image
 
 from hextech.infrastructure.vision.scene_negative import classify_scene_negative
+from hextech.infrastructure.vision.matcher import (
+    EXPLICIT_ICON_CONFLICT_CONFIDENCE,
+    EXPLICIT_ICON_CONFLICT_MARGIN,
+)
 
 
 COMPLETED_OCR_CAPACITY = 32
 COMPLETED_OCR_MAX_AGE_SECONDS = 6.0
+
+
+def reliable_icon_candidate_id(slot: Mapping[str, Any]) -> str:
+    """可靠图标仅提供冲突诊断；不消歧、不新增生产准入或拒绝条件。"""
+    channels = slot.get("channels")
+    icon = channels.get("icon") if isinstance(channels, Mapping) else None
+    if not isinstance(icon, Mapping):
+        return ""
+    candidates = icon.get("top_candidates")
+    if not isinstance(candidates, (list, tuple)) or not candidates or not isinstance(candidates[0], Mapping):
+        return ""
+    top = candidates[0]
+    try:
+        confidence = float(top.get("confidence") or 0.0)
+        margin = float(icon.get("margin") or 0.0)
+    except (TypeError, ValueError):
+        return ""
+    if (math.isfinite(confidence) and math.isfinite(margin)
+        and confidence >= EXPLICIT_ICON_CONFLICT_CONFIDENCE and margin >= EXPLICIT_ICON_CONFLICT_MARGIN):
+        return str(top.get("augment_id") or "").strip()
+    return ""
 
 
 def production_needed(slot: Mapping[str, Any]) -> bool:
@@ -49,6 +74,7 @@ class OcrEvidenceContext:
     captured_at: float
     template_candidate_id: str = ""
     template_evidence_grade: str = ""
+    reliable_icon_candidate_id: str = ""
 
     @property
     def work_key(self) -> tuple[str, int, int, int]:
@@ -80,7 +106,8 @@ class OcrBatch:
 def build_inference_result(input_sha256: str, raw_text: str, confidence: float, match: Mapping[str, Any],
                            *, elapsed_ms: float, task: OcrBatch, started_at: float) -> dict[str, Any]:
     return {"state": "ready", "input_sha256": input_sha256, "raw_text": str(raw_text),
-            "confidence": round(float(confidence), 6), "elapsed_ms": elapsed_ms,
+            # Do not round a sub-threshold score up across the admission floor.
+            "confidence": float(confidence), "elapsed_ms": elapsed_ms,
             "scene_negative": classify_scene_negative(raw_text, confidence), **match,
             "inference_timing": {"batch_first_queued_at": task.submitted_wall_at,
                                  "inference_started_at": started_at,
@@ -94,10 +121,23 @@ def build_production_evidence(
     minimum_confidence: float,
     cache_hit: bool = False,
 ) -> dict[str, Any]:
+    confidence = float(result.get("confidence") or 0.0)
+    matched_id = str(result.get("matched_id") or "")
+    reason = str(result.get("match_reason") or "exact_name_missing")
+    if not math.isfinite(confidence) or confidence < minimum_confidence:
+        reason = "low_confidence"
+    elif str(result.get("match_rule") or "") != "exact" or not matched_id:
+        if reason != "ambiguous_identity":
+            reason = "exact_name_missing"
+    else:
+        reason = ""
+    diagnostic_reason = "icon_conflict" if (
+        matched_id and context.reliable_icon_candidate_id and context.reliable_icon_candidate_id != matched_id
+    ) else ""
     admitted = bool(
         str(result.get("match_rule") or "") == "exact"
-        and result.get("matched_id")
-        and float(result.get("confidence") or 0.0) >= minimum_confidence
+        and matched_id
+        and not reason
     )
     scene_negative = classify_scene_negative(
         result.get("raw_text"),
@@ -106,7 +146,8 @@ def build_production_evidence(
     return {
         "schema_version": 1,
         "state": "admitted" if admitted else "rejected",
-        "reason": "" if admitted else "ocr_exact_gate_rejected",
+        "reason": reason,
+        "diagnostic_reason": diagnostic_reason,
         "session_id": context.session_id,
         "selection_epoch": context.selection_epoch,
         "slot_index": context.slot_index,
@@ -115,10 +156,17 @@ def build_production_evidence(
         "perceptual_fingerprint": context.perceptual_fingerprint,
         "captured_frame_id": context.captured_frame_id,
         "captured_at": context.captured_at,
-        "canonical_id": str(result.get("matched_id") or "") if admitted else "",
+        "canonical_id": matched_id if admitted else "",
         "name": str(result.get("matched_name") or "") if admitted else "",
-        "confidence": float(result.get("confidence") or 0.0),
+        "confidence": confidence,
         "match_rule": str(result.get("match_rule") or ""),
+        "match_reason": str(result.get("match_reason") or ""),
+        "candidate_ids": list(result.get("candidate_ids") or []),
+        # Lexical evidence is independent of confidence/admission and never fuzzy.
+        "exact_candidate_ids": list(result.get("exact_candidate_ids") or []),
+        "exact_name_key": str(result.get("exact_name_key") or ""),
+        "punctuation_collision_ids": list(result.get("punctuation_collision_ids") or []),
+        "reliable_icon_candidate_id": context.reliable_icon_candidate_id,
         "acceptance_rule": "ocr_exact_fallback" if admitted else "",
         "scene_negative": scene_negative,
         # Cached inference retains its original clock, never pretends to be a
@@ -240,7 +288,11 @@ class CompletedOcrMailbox:
             "outcome_ocr_template_conflict",
             "outcome_cross_slot_identity_conflict",
             "outcome_ocr_result_stale",
+            "outcome_frozen_slot",
             "outcome_ocr_exact_gate_rejected",
+            "outcome_ambiguous_identity",
+            "outcome_exact_name_missing",
+            "outcome_low_confidence",
         ):
             fields[f"completed_{key}"] = int(self._counts[key])
         return fields

@@ -7,7 +7,6 @@ name = "hextech-nexus"
 version = "0.1.0"
 requires-python = ">=3.11,<3.12"
 dependencies = [
-  "pandas",
   "numpy",
   "requests>=2.32.3,<3",
   "scrapling[fetchers]>=0.4.8,<0.5",
@@ -20,9 +19,7 @@ dependencies = [
   "pystray>=0.19.5,<0.20",
   "psutil",
   "pywin32",
-  "selenium",
   "beautifulsoup4",
-  "fastapi[standard]",
   "filelock>=3.10,<4",
 ]
 
@@ -37,10 +34,7 @@ dev = [
 
 [project.scripts]
 hextech-desktop = "hextech.bootstrap.desktop:main"
-hextech-web = "hextech.bootstrap.web:main"
 hextech-overlay = "hextech.bootstrap.overlay:main"
-hextech-data-service = "hextech.bootstrap.data_service:main"
-hextech-supervisor = "hextech.bootstrap.supervisor:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -81,9 +75,8 @@ reportOptionalMemberAccess = false
 reportOptionalSubscript = false
 reportReturnType = false
 include = [
-  "src/hextech/bootstrap/supervisor.py",
   "src/hextech/infrastructure/sources/refresh_service.py",
-  "src/hextech/contracts/cohort_recovery.py",
+  "src/hextech/contracts/release.py",
   "src/hextech/interfaces/overlay",
   "src/hextech/modules/vision/window.py",
   "src/hextech/infrastructure/vision/sidecar.py",
@@ -97,12 +90,10 @@ include = [
   "src/hextech/infrastructure/vision/sidecar_batch.py",
   "src/hextech/infrastructure/vision/sidecar_diagnostics.py",
   "src/hextech/infrastructure/vision/runner_cli.py",
-  "src/hextech/infrastructure/sources/hextech/detail_runner.py",
   "tooling/build/package.py",
   "tooling/build/manifest.py",
-  "src/hextech/infrastructure/persistence/runtime_bundle.py",
-  "src/hextech/infrastructure/persistence/cohort_recovery.py",
-  "src/hextech/infrastructure/persistence/cohort_seed.py",
+  "src/hextech/modules/data/generation/release_store.py",
+  "src/hextech/infrastructure/persistence/release_seed.py",
 ]
 exclude = ["resources", "var", "build", "dist"]
 

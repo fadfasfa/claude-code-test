@@ -18,7 +18,6 @@ def test_overlay_context_contract() -> None:
     """验证游戏内 overlay 英雄上下文只通过本地 state 文件传递。"""
     import hextech.interfaces.overlay.context as overlay_context
     import hextech.interfaces.desktop.runtime as ui_runtime
-    import hextech.interfaces.web.backend.runtime as web_runtime
 
     with TemporaryDirectory() as tmp_dir:
         context_path = Path(tmp_dir) / "game_overlay_context.v1.json"
@@ -51,37 +50,6 @@ def test_overlay_context_contract() -> None:
         context_path.write_text("not-json", encoding="utf-8")
         assert overlay_context.read_overlay_context(context_path)["error"] == "context_damaged"
 
-        class DummyUI:
-            core_data = {"266": {"name": "暗裔剑魔"}}
-
-        live_state = {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"}
-        assert ui_runtime._write_overlay_context_from_live_state(
-            DummyUI(),
-            live_state,
-            source="web",
-            context_path=context_path,
-        ) is True
-        live_loaded = overlay_context.read_overlay_context(context_path)
-        assert live_loaded["ok"] is True
-        assert live_loaded["champion_id"] == "266"
-        assert live_loaded["champion_name"] == "暗裔剑魔"
-        assert live_loaded["source"] == "web"
-
-        assert ui_runtime._write_overlay_context_from_live_state(
-            DummyUI(),
-            {"local_champion_id": 0},
-            source="web",
-            context_path=context_path,
-        ) is False
-        cleared_live_loaded = overlay_context.read_overlay_context(context_path)
-        assert cleared_live_loaded["ok"] is False
-        assert cleared_live_loaded["error"] == "context_missing"
-        assert cleared_live_loaded["champion_id"] == ""
-        assert cleared_live_loaded["source"] == "web"
-        cleared_payload = json.loads(context_path.read_text(encoding="utf-8"))
-        assert cleared_payload.get("champion_id") == ""
-        assert cleared_payload.get("champion_name") == ""
-
         class FakeLcuResponse:
             status_code = 200
 
@@ -104,78 +72,7 @@ def test_overlay_context_contract() -> None:
             {"championId": 86},
         ]
         assert ui_runtime.build_lcu_candidate_groups(lcu_payload) == expected_groups
-        assert web_runtime.build_lcu_candidate_groups(lcu_payload) == expected_groups
         assert ui_runtime.normalize_candidate_groups(expected_groups) == expected_groups
-
-        with web_runtime._lcu_state_lock:
-            saved_lcu_state = {
-                "current_ids": set(web_runtime._lcu_state.current_ids),
-                "selected_ids": list(web_runtime._lcu_state.selected_ids),
-                "bench_ids": list(web_runtime._lcu_state.bench_ids),
-                "teammate_ids": list(web_runtime._lcu_state.teammate_ids),
-                "local_champ_id": web_runtime._lcu_state.local_champ_id,
-                "local_champ_name": web_runtime._lcu_state.local_champ_name,
-                "state_version": web_runtime._lcu_state.state_version,
-                "updated_at": web_runtime._lcu_state.updated_at,
-            }
-            assert web_runtime._extract_lcu_local_champion_id(
-                {"localPlayerCellId": 1, "myTeam": [{"cellId": 1, "championId": 0}]}
-            ) is None
-            assert web_runtime._extract_lcu_local_champion_id(
-                {"localPlayerCellId": 1, "myTeam": [{"cellId": 1, "championId": "266"}]}
-            ) == 266
-            web_runtime._lcu_state.current_ids = {"1", "2"}
-            web_runtime._lcu_state.selected_ids = ["1"]
-            web_runtime._lcu_state.bench_ids = ["2"]
-            web_runtime._lcu_state.teammate_ids = ["1"]
-            web_runtime._lcu_state.local_champ_id = 266
-            web_runtime._lcu_state.local_champ_name = "暗裔剑魔"
-            web_runtime._lcu_state.state_version = 20
-            web_runtime._lcu_state.updated_at = 1.0
-            assert web_runtime._clear_lcu_local_champion_state() is True
-            assert web_runtime._lcu_state.current_ids == {"1", "2"}
-            assert web_runtime._lcu_state.selected_ids == ["1"]
-            assert web_runtime._lcu_state.bench_ids == ["2"]
-            assert web_runtime._lcu_state.local_champ_id is None
-            assert web_runtime._lcu_state.local_champ_name is None
-            assert web_runtime._lcu_state.state_version == 21
-            assert web_runtime._lcu_state.updated_at > 1.0
-            assert web_runtime._clear_lcu_local_champion_state() is False
-
-            web_runtime._lcu_state.current_ids = {"1", "2"}
-            web_runtime._lcu_state.selected_ids = ["1"]
-            web_runtime._lcu_state.bench_ids = ["2"]
-            web_runtime._lcu_state.local_champ_id = 1
-            web_runtime._lcu_state.local_champ_name = "英雄1"
-            web_runtime._lcu_state.state_version = 10
-            web_runtime._lcu_state.updated_at = 1.0
-            assert web_runtime._clear_lcu_candidate_state(clear_local=True) is True
-            assert web_runtime._lcu_state.current_ids == set()
-            assert web_runtime._lcu_state.selected_ids == []
-            assert web_runtime._lcu_state.bench_ids == []
-            assert web_runtime._lcu_state.teammate_ids == []
-            assert web_runtime._lcu_state.local_champ_id is None
-            assert web_runtime._lcu_state.local_champ_name is None
-            assert web_runtime._lcu_state.state_version == 11
-            assert web_runtime._lcu_state.updated_at > 1.0
-            assert web_runtime._clear_lcu_candidate_state(clear_local=True) is False
-            web_runtime._lcu_state.current_ids = saved_lcu_state["current_ids"]
-            web_runtime._lcu_state.selected_ids = saved_lcu_state["selected_ids"]
-            web_runtime._lcu_state.bench_ids = saved_lcu_state["bench_ids"]
-            web_runtime._lcu_state.teammate_ids = saved_lcu_state["teammate_ids"]
-            web_runtime._lcu_state.local_champ_id = saved_lcu_state["local_champ_id"]
-            web_runtime._lcu_state.local_champ_name = saved_lcu_state["local_champ_name"]
-            web_runtime._lcu_state.state_version = saved_lcu_state["state_version"]
-            web_runtime._lcu_state.updated_at = saved_lcu_state["updated_at"]
-
-        web_runtime_dir = RUN_DIR / "src" / "hextech" / "interfaces" / "web" / "backend"
-        web_runtime_text = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in sorted(web_runtime_dir.glob("*runtime.py"))
-        )
-        assert "_clear_lcu_local_champion_state()" in web_runtime_text
-        lcu_loop_text = web_runtime_text.split("async def lcu_polling_loop", 1)[1].split("async def csv_watcher_loop", 1)[0]
-        assert "_clear_lcu_candidate_state(clear_local=True)" in lcu_loop_text
 
         fetch_calls: list[tuple[str, dict[str, str]]] = []
 
@@ -411,47 +308,16 @@ def test_overlay_context_contract() -> None:
         assert "lcu-no-session" in context_module_text
         assert "@lru_cache(maxsize=256)" in context_module_text
 
-        class DummyServiceManager:
-            def __init__(self, running: bool) -> None:
-                self._running = running
-
-            def is_game_overlay_running(self) -> bool:
-                return self._running
-
-        stopped_ui = DummyUI()
-        stopped_ui.service_manager = DummyServiceManager(False)
-        running_ui = DummyUI()
-        running_ui.service_manager = DummyServiceManager(True)
-        with (
-            patch.object(overlay_context, "write_overlay_context") as mocked_write_context,
-            patch.object(overlay_context, "write_missing_overlay_context") as mocked_write_missing,
-        ):
-            assert ui_runtime._write_overlay_context_from_live_state(
-                stopped_ui,
-                {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"},
-                source="web",
-            ) is False
-            assert ui_runtime._write_overlay_context_from_live_state(
-                stopped_ui,
-                {"local_champion_id": 0},
-                source="web",
-            ) is False
-            mocked_write_context.assert_not_called()
-            mocked_write_missing.assert_not_called()
-
-            assert ui_runtime._write_overlay_context_from_live_state(
-                running_ui,
-                {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"},
-                source="web",
-            ) is False
-            mocked_write_context.assert_not_called()
-            assert ui_runtime._write_overlay_context_from_live_state(
-                running_ui,
-                {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"},
-                source="web",
-                context_path=context_path,
-            ) is True
-            assert mocked_write_context.call_count == 1
+        from hextech.modules.session.runtime_channel import install_app_transport
+        publications = []
+        install_app_transport(lambda kind,payload:publications.append((kind,payload)))
+        try:
+            in_memory = overlay_context.build_overlay_context_payload(champion_id=266, champion_name="暗裔剑魔", source="app-test")
+            overlay_context.write_overlay_context(in_memory)
+            assert overlay_context.read_overlay_context()["champion_id"] == "266"
+            assert publications[-1][0] == "context"
+        finally:
+            install_app_transport(None)
 
     module_text = (RUN_DIR / "src" / "hextech" / "interfaces" / "overlay" / "context.py").read_text(encoding="utf-8").lower()
     forbidden_terms = ["fastapi", "web_api", "web_runtime", "full_hextech_scraper", "auth.json"]

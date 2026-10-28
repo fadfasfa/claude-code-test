@@ -317,6 +317,7 @@ def run_mayhem_refresh(
     added_items = 0
     started_at = utc_now_iso()
     run_id = f"mayhem-{datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    failure_stage = "fetch"
     try:
         conditional_cache = (
             ConditionalResponseCache(Path(conditional_cache_root), source="mayhem")
@@ -326,9 +327,21 @@ def run_mayhem_refresh(
         fetch = scraper or (
             lambda: scrape_mayhem_combos(max_pages=0, conditional_cache=conditional_cache)
         )
-        raw_payload = dict(fetch())
+        raw_response = fetch()
+        failure_stage = "validation"
+        raw_payload = dict(raw_response)
         upstream_revision = str(raw_payload.get("upstream_revision") or "")
         transport = dict(raw_payload.get("transport") or {})
+        raw_items = _raw_item_count(raw_payload)
+        if transport.get("check_complete") is False:
+            return _failure_status(
+                reason="upstream_check_incomplete", raw_items=raw_items, now=current,
+                extra={"success": False, "transport": transport,
+                    "failure_stage": "fetch",
+                    "failure_kind": str(transport.get("failure_kind") or "transient_network"),
+                    **_result_fields(check_status="unknown", upstream_revision=upstream_revision,
+                        retry_after_seconds=_retry_after(transport, 5 * 60))},
+            )
         catalog = load_active_catalog()
         pointer, current_metadata = _current_manifest()
         current_applied = str(current_metadata.get("applied_revision") or "")
@@ -347,6 +360,8 @@ def run_mayhem_refresh(
         )
         failure_identity = {
             "success": False,
+            "failure_stage": "validation",
+            "failure_kind": "validation",
             "failure_fingerprint": failure_fingerprint,
             "failure_parser_revision": parser_revision,
             "failure_catalog_generation_id": catalog.generation_id,
@@ -356,17 +371,9 @@ def run_mayhem_refresh(
                 check_status="unknown",
                 upstream_revision=upstream_revision,
                 applied_revision=current_applied,
-                retry_after_seconds=_retry_after(transport, 5 * 60),
+                retry_after_seconds=_retry_after(transport, MAYHEM_REPEAT_INVALID_RETRY_SECONDS),
             ),
         }
-        raw_items = _raw_item_count(raw_payload)
-        if transport.get("check_complete") is False:
-            return _failure_status(
-                reason="upstream_check_incomplete",
-                raw_items=raw_items,
-                now=current,
-                extra=failure_identity,
-            )
         if raw_items <= 0:
             previous_status = load_mayhem_refresh_status()
             known_failure = previous_failure_fingerprint or str(
@@ -384,7 +391,7 @@ def run_mayhem_refresh(
                     "retry_after_seconds": (
                         _retry_after(
                             transport,
-                            MAYHEM_REPEAT_INVALID_RETRY_SECONDS if repeated else 5 * 60,
+                            MAYHEM_REPEAT_INVALID_RETRY_SECONDS,
                         )
                     ),
                 },
@@ -403,6 +410,7 @@ def run_mayhem_refresh(
                 raw_items=raw_items,
                 now=current,
                 extra={
+                    **failure_identity,
                     "success": False,
                     "failure_fingerprint": failure_fingerprint,
                     "failure_parser_revision": parser_revision,
@@ -526,6 +534,7 @@ def run_mayhem_refresh(
             if upstream_revision == str(current_metadata.get("upstream_revision") or "")
             else ""
         ) or str(raw_payload.get("fetched_at") or started_at)
+        failure_stage = "publish"
         published_path, _ = publish_mayhem_run(
             normalized_payload,
             run_id=run_id,
@@ -559,6 +568,15 @@ def run_mayhem_refresh(
         )
     except Exception as exc:
         logger.exception("Mayhem 低频刷新失败")
+        failure_kind = (
+            "timeout" if failure_stage == "fetch" and (
+                isinstance(exc, TimeoutError) or "timeout" in str(exc).casefold()
+                or "timed out" in str(exc).casefold())
+            else "transient_network" if failure_stage == "fetch"
+            else "io" if isinstance(exc, OSError)
+            else "validation" if failure_stage == "validation" and isinstance(exc, (ValueError, KeyError, TypeError))
+            else "source_runtime"
+        )
         return _failure_status(
             reason=f"{type(exc).__name__}: {exc}",
             raw_items=raw_items,
@@ -566,12 +584,15 @@ def run_mayhem_refresh(
             now=current,
             extra={
                 "success": False,
+                "failure_stage": failure_stage,
+                "failure_kind": failure_kind,
                 **_result_fields(
                     check_status="unknown",
                     upstream_revision=locals().get("upstream_revision", ""),
                     applied_revision=locals().get("current_applied", ""),
                     retry_after_seconds=_retry_after(
-                        locals().get("transport", {}), 5 * 60
+                        locals().get("transport", {}),
+                        MAYHEM_REPEAT_INVALID_RETRY_SECONDS if failure_kind == "validation" else 5 * 60
                     ),
                 ),
             },

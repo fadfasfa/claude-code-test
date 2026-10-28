@@ -48,6 +48,7 @@ def get_build_identity() -> dict[str, Any]:
             "source_revision": str(payload.get("source_revision") or "unknown"),
             "source_fingerprint": str(payload.get("source_fingerprint") or ""),
             "runtime_contracts": {str(key): int(value) for key, value in contracts.items()},
+            "runtime_profile": str(payload.get("runtime_profile") or ""),
             "packaged": True,
         }
     return {
@@ -56,6 +57,7 @@ def get_build_identity() -> dict[str, Any]:
         "source_revision": "working-tree",
         "source_fingerprint": "",
         "runtime_contracts": dict(RUNTIME_CONTRACT_VERSIONS),
+        "runtime_profile": "source",
         "packaged": False,
     }
 

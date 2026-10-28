@@ -8,19 +8,17 @@ Controller 把 Tk host 与 Vision sidecar 视为一个逻辑服务：启动失�
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
 import sys
-import threading
 import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol, cast
 
-from hextech.modules.data.catalog.runtime_store import build_runtime_state_path, get_runtime_root_dir
+from hextech.modules.data.catalog.runtime_store import get_runtime_root_dir
 from hextech.modules.vision.events import write_inactive_overlay_event
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.vision.diagnostic_settings import ROI_DUMP_ENV, resolve_roi_dump_enabled
@@ -118,216 +116,76 @@ def _hidden_startupinfo() -> Any:
     return startupinfo
 
 
-def _wait_for_host_ready(
-    process: ProcessLike,
-    ready_path: Path,
-    *,
-    expected_token: str = "",
-    timeout_seconds: float = OVERLAY_READY_TIMEOUT_SECONDS,
-) -> None:
-    def _ready_pid(payload: dict) -> int:
-        try:
-            return int(payload.get("pid") or 0)
-        except (TypeError, ValueError):
-            return 0
-
-    deadline = time.monotonic() + max(0.1, float(timeout_seconds))
-    ready_state = "missing"
-    while time.monotonic() < deadline:
-        exit_code = process.poll()
-        if exit_code is not None:
-            raise RuntimeError(f"game_overlay host 在 readiness 前退出，exit_code={exit_code}, pid={getattr(process, 'pid', None)}")
-        try:
-            payload = json.loads(ready_path.read_text(encoding="utf-8"))
-            ready_state = "present"
-        except FileNotFoundError:
-            ready_state = "missing"
-            time.sleep(0.05)
-            continue
-        except json.JSONDecodeError:
-            ready_state = "invalid_json"
-            time.sleep(0.05)
-            continue
-        except OSError:
-            ready_state = "unreadable"
-            time.sleep(0.05)
-            continue
-        pid = _ready_pid(payload)
-        if expected_token and str(payload.get("token") or "") == expected_token:
-            setattr(process, "_hextech_overlay_runtime_pid", pid or None)
-            return
-        if not expected_token and pid == int(process.pid):
-            return
-        raise RuntimeError(
-            "game_overlay host readiness token 不匹配"
-            f" (pid={payload.get('pid') or getattr(process, 'pid', None)}, ready_file=present, ready_name={ready_path.name})"
-        )
-    raise TimeoutError(
-        "game_overlay host 启动超时："
-        f"{float(timeout_seconds):.1f}s (ready_file={ready_state}, pid={getattr(process, 'pid', None)}, ready_name={ready_path.name})"
-    )
 
 
-def _wait_for_sidecar_ready(
-    process: ProcessLike,
-    ready_path: Path,
-    *,
-    bootstrap_path: Path | None = None,
-    expected_token: str,
-    expected_generation_id: str = "",
-    expected_catalog_id: str = "",
-    expected_vision_pool_fingerprint: str = "",
-    timeout_seconds: float = OVERLAY_SIDECAR_READY_TIMEOUT_SECONDS,
-    cancel_event: threading.Event | None = None,
-) -> None:
-    def _read_json(path: Path | None) -> dict[str, Any] | None:
-        if path is None:
-            return None
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-            return None
-        return payload if isinstance(payload, dict) else None
 
-    def _bootstrap_retryable(payload: dict[str, Any]) -> bool:
-        error_type = str(payload.get("error_type") or "")
-        if error_type in {
-            "FileNotFoundError",
-            "PermissionError",
-            "OSError",
-            "ValueError",
-            "JSONDecodeError",
-            "UnicodeDecodeError",
-        }:
-            return False
-        message = str(payload.get("error_message_sanitized") or "").casefold()
-        deterministic_markers = ("template_missing", "模板缺失", "schema", "配置", "token 不匹配")
-        return not any(marker.casefold() in message for marker in deterministic_markers)
 
-    deadline = time.monotonic() + max(0.05, float(timeout_seconds))
-    while time.monotonic() < deadline:
-        if cancel_event is not None and cancel_event.is_set():
-            raise SidecarStartCancelled("Vision sidecar 启动已取消")
-        bootstrap = _read_json(bootstrap_path)
-        if bootstrap is not None and str(bootstrap.get("token") or "") == expected_token:
-            state = str(bootstrap.get("state") or "")
-            if state == "failed":
-                error_type = str(bootstrap.get("error_type") or "RuntimeError")
-                message = str(bootstrap.get("error_message_sanitized") or "Vision sidecar 启动失败")
-                raise SidecarBootstrapError(
-                    f"Vision sidecar 启动失败：{message}",
-                    error_type=error_type,
-                    retryable=_bootstrap_retryable(bootstrap),
-                )
-        exit_code = process.poll()
-        if exit_code is not None:
-            raise RuntimeError(f"Vision sidecar 在 readiness 前退出，exit_code={exit_code}")
-        try:
-            payload = json.loads(ready_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            time.sleep(0.1)
-            continue
-        if str(payload.get("token") or "") != expected_token:
-            raise RuntimeError("Vision sidecar readiness token 不匹配")
-        startup_profile = payload.get("startup_profile")
-        startup_profile = startup_profile if isinstance(startup_profile, dict) else {}
-        ready_generation_id = str(
-            startup_profile.get("vision_pool_origin_generation_id")
-            or startup_profile.get("vision_pool_generation_id")
-            or ""
-        )
-        ready_fingerprint = str(startup_profile.get("vision_pool_fingerprint") or "")
-        ready_catalog_id = str(startup_profile.get("recognition_catalog_id") or startup_profile.get("catalog_generation_id") or "")
-        if expected_catalog_id and ready_catalog_id != expected_catalog_id:
-            raise RuntimeError("Vision sidecar ready Catalog 与预热目标不一致")
-        if expected_generation_id and ready_generation_id != expected_generation_id:
-            raise RuntimeError("Vision sidecar readiness generation 不匹配")
-        if expected_vision_pool_fingerprint and ready_fingerprint != expected_vision_pool_fingerprint:
-            raise RuntimeError("Vision sidecar readiness fingerprint 不匹配")
-        setattr(process, "_hextech_overlay_sidecar_generation", str(payload.get("generation") or ""))
-        setattr(process, "_hextech_vision_origin_generation_id", ready_generation_id)
-        setattr(process, "_hextech_vision_pool_fingerprint", ready_fingerprint)
-        setattr(process, "_hextech_recognition_catalog_id", ready_catalog_id)
-        return
-    if cancel_event is not None and cancel_event.is_set():
-        raise SidecarStartCancelled("Vision sidecar 启动已取消")
-    raise TimeoutError(f"Vision sidecar 启动超时：{float(timeout_seconds):.1f}s")
 
+def _spawn_runtime_child(role, *, timeout, cancel_event=None, target_generation_id="", target_catalog_id="",
+                         expected_vision_pool_fingerprint="", debug_dump=None):
+    from hextech.modules.session.runtime_channel import ChildPipe
+    from hextech.interfaces.desktop.runtime_process_windows import WindowsJobObject
+    from hextech.modules.session.runtime_channel import active_owner
+    owner = active_owner()
+    if owner is None or not owner.is_running() or owner._shutdown_requested.is_set():
+        raise RuntimeError("App runtime owner is required to start a production child")
+    pipe = ChildPipe(role, on_message=lambda kind, payload: owner.receive(role, pipe, kind, payload),
+                     on_close=lambda: owner.retire_pipe(role, pipe))
+    env = os.environ.copy()
+    env.update(pipe.environment())
+    generation = uuid.uuid4().hex
+    env[OVERLAY_GENERATION_ENV] = generation
+    if target_generation_id:
+        env[VISION_TARGET_GENERATION_ENV] = target_generation_id
+    if target_catalog_id:
+        env["HEXTECH_VISION_TARGET_CATALOG_ID"] = target_catalog_id
+    command = ([sys.executable, "--game-overlay" if role == "host" else "--overlay-sidecar"]
+               if getattr(sys, "frozen", False) else
+               [sys.executable, "-m", "hextech.bootstrap.overlay" if role == "host" else "hextech.infrastructure.vision.sidecar"])
+    if role == "vision":
+        command.extend(["--loop", "--preset", "auto", "--write-event"])
+        if resolve_roi_dump_enabled(debug_dump):
+            command.extend(["--debug-dump", str(get_runtime_root_dir()/"debug"/"overlay_vision")])
+    owner.attach_pipe(role, pipe)
+    process = None
+    try:
+        process = subprocess.Popen(command, cwd=RUN_DIR, env=env, startupinfo=_hidden_startupinfo(),
+            creationflags=int(subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0)
+        process._hextech_runtime_pipe = pipe
+        process._hextech_runtime_job = WindowsJobObject(process)
+        if os.name == "nt" and not process._hextech_runtime_job.attached:
+            raise RuntimeError("runtime_child_job_attachment_failed")
+        process._hextech_overlay_sidecar_generation = generation
+        owner.register_child(role, process)
+        ready = pipe.wait_ready(process, float(timeout), cancel_event=cancel_event)
+        profile = ready.get("startup_profile") or {}
+        if role == "vision":
+            if target_generation_id and profile.get("vision_pool_generation_id") != target_generation_id:
+                raise ValueError("sidecar_ready_generation_mismatch")
+            if target_catalog_id and profile.get("recognition_catalog_id", profile.get("catalog_generation_id")) != target_catalog_id:
+                raise ValueError("sidecar_ready_catalog_mismatch")
+            if expected_vision_pool_fingerprint and profile.get("vision_pool_fingerprint") != expected_vision_pool_fingerprint:
+                raise ValueError("sidecar_ready_fingerprint_mismatch")
+        else:
+            process._hextech_overlay_host_startup_observation = {"pid":process.pid,"status":"ready","ready_state":"ready"}
+        return process
+    except BaseException as exc:
+        cleaned = process is None or stop_process(process)
+        pipe.close()
+        if role == "host":
+            observation = {"pid":getattr(process,"pid",None),"status":"failed",
+                           "ready_state":_host_start_failure_state(exc),"cleanup_confirmed":cleaned}
+            if not cleaned:
+                failure=HostCleanupError("runtime_child_start_cleanup_failed")
+                failure.host_startup_observation=observation
+                raise failure from exc
+            exc.host_startup_observation=observation
+        elif not cleaned:
+            raise SidecarCleanupError("runtime_child_start_cleanup_failed") from exc
+        raise
 
 def start_host_process() -> subprocess.Popen:
-    """启动独立 Tk host，并等待 after_idle readiness。"""
-
-    if getattr(sys, "frozen", False):
-        command = [sys.executable, "--game-overlay"]
-    else:
-        command = [sys.executable, "-m", "hextech.bootstrap.overlay"]
-    ready_path = Path(build_runtime_state_path(f"game_overlay_host.{uuid.uuid4().hex}.ready.json"))
-    exit_path = Path(build_runtime_state_path(f"game_overlay_host.{uuid.uuid4().hex}.exit.json"))
-    ready_token = uuid.uuid4().hex
-    env = os.environ.copy()
-    env[OVERLAY_READY_FILE_ENV] = str(ready_path)
-    env[OVERLAY_READY_TOKEN_ENV] = ready_token
-    env[OVERLAY_EXIT_FILE_ENV] = str(exit_path)
-    timeout_seconds = _host_ready_timeout_seconds()
-    started_at = time.perf_counter()
-    process = subprocess.Popen(
-        command,
-        cwd=RUN_DIR,
-        startupinfo=_hidden_startupinfo(),
-        env=env,
-        creationflags=(
-            int(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
-            if os.name == "nt"
-            else 0
-        ),
-    )
-    setattr(process, "_hextech_overlay_exit_file", str(exit_path))
-    try:
-        _wait_for_host_ready(
-            process,
-            ready_path,
-            expected_token=ready_token,
-            timeout_seconds=timeout_seconds,
-        )
-        setattr(
-            process,
-            "_hextech_overlay_host_startup_observation",
-            {
-                "attempt": 1,
-                "pid": int(getattr(process, "pid", 0) or 0),
-                "readiness_timeout_seconds": float(timeout_seconds),
-                "elapsed_seconds": round(max(0.0, time.perf_counter() - started_at), 3),
-                "status": "ready",
-                "ready_state": "ready",
-                "cleanup_confirmed": None,
-            },
-        )
-        return process
-    except Exception as exc:
-        cleanup_confirmed = stop_process(process)
-        observation = {
-            "attempt": 1,
-            "pid": int(getattr(process, "pid", 0) or 0),
-            "readiness_timeout_seconds": float(timeout_seconds),
-            "elapsed_seconds": round(max(0.0, time.perf_counter() - started_at), 3),
-            "status": "failed",
-            "ready_state": _host_start_failure_state(exc),
-            "error_type": exc.__class__.__name__,
-            "cleanup_confirmed": bool(cleanup_confirmed),
-        }
-        if not cleanup_confirmed:
-            cleanup_error = HostCleanupError(
-                f"game_overlay host 启动失败且进程清理失败(pid={getattr(process, 'pid', None)})"
-            )
-            setattr(cleanup_error, "host_startup_observation", observation)
-            raise cleanup_error from exc
-        setattr(exc, "host_startup_observation", observation)
-        raise
-    finally:
-        try:
-            ready_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+    return _spawn_runtime_child("host", timeout=_host_ready_timeout_seconds())
 
 
 def _sidecar_debug_dump_enabled(value: str | None = None) -> bool:
@@ -338,95 +196,11 @@ def _sidecar_debug_dump_enabled(value: str | None = None) -> bool:
     return resolve_roi_dump_enabled()
 
 
-def start_sidecar_process(
-    *,
-    debug_dump: bool | None = None,
-    readiness_timeout_seconds: float | None = None,
-    cancel_event: threading.Event | None = None,
-    target_generation_id: str = "",
-    target_catalog_id: str = "",
-    expected_vision_pool_fingerprint: str = "",
-) -> subprocess.Popen:
-    command = [sys.executable]
-    if getattr(sys, "frozen", False):
-        command.append("--overlay-sidecar")
-    else:
-        command.extend(["-m", "hextech.infrastructure.vision.sidecar"])
-    command.extend([
-        "--loop",
-        "--preset",
-        "auto",
-        "--write-event",
-    ])
-    if resolve_roi_dump_enabled(debug_dump):
-        diagnostic_dir = get_runtime_root_dir() / "debug" / "overlay_vision"
-        command.extend(["--debug-dump", str(diagnostic_dir)])
-    ready_path = Path(build_runtime_state_path(f"overlay_sidecar.{uuid.uuid4().hex}.ready.json"))
-    bootstrap_path = Path(build_runtime_state_path(f"overlay_sidecar.{uuid.uuid4().hex}.bootstrap.json"))
-    exit_path = Path(build_runtime_state_path(f"overlay_sidecar.{uuid.uuid4().hex}.exit.json"))
-    ready_token = uuid.uuid4().hex
-    generation = uuid.uuid4().hex
-    env = os.environ.copy()
-    env[OVERLAY_SIDECAR_READY_FILE_ENV] = str(ready_path)
-    env[OVERLAY_SIDECAR_READY_TOKEN_ENV] = ready_token
-    env[OVERLAY_SIDECAR_BOOTSTRAP_FILE_ENV] = str(bootstrap_path)
-    env[OVERLAY_GENERATION_ENV] = generation
-    if str(target_generation_id or ""):
-        env[VISION_TARGET_GENERATION_ENV] = str(target_generation_id)
-    else:
-        env.pop(VISION_TARGET_GENERATION_ENV, None)
-    if target_catalog_id:
-        env["HEXTECH_VISION_TARGET_CATALOG_ID"] = target_catalog_id
-    else:
-        env.pop("HEXTECH_VISION_TARGET_CATALOG_ID", None)
-    env[OVERLAY_EXIT_FILE_ENV] = str(exit_path)
-    process = subprocess.Popen(
-        command,
-        cwd=RUN_DIR,
-        startupinfo=_hidden_startupinfo(),
-        env=env,
-        creationflags=(
-            int(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
-            if os.name == "nt"
-            else 0
-        ),
-    )
-    try:
-        setattr(process, "_hextech_overlay_exit_file", str(exit_path))
-        setattr(process, "_hextech_overlay_sidecar_generation", generation)
-    except Exception:
-        pass
-    try:
-        if callable(getattr(process, "poll", None)):
-            _wait_for_sidecar_ready(
-                process,
-                ready_path,
-                bootstrap_path=bootstrap_path,
-                expected_token=ready_token,
-                expected_generation_id=str(target_generation_id or ""),
-                expected_catalog_id=target_catalog_id,
-                expected_vision_pool_fingerprint=str(expected_vision_pool_fingerprint or ""),
-                timeout_seconds=(
-                    OVERLAY_SIDECAR_READY_TIMEOUT_SECONDS
-                    if readiness_timeout_seconds is None
-                    else max(0.05, float(readiness_timeout_seconds))
-                ),
-                cancel_event=cancel_event,
-            )
-        return process
-    except Exception as exc:
-        if not stop_process(process):
-            raise SidecarCleanupError(f"Vision sidecar 启动失败且进程清理失败(pid={process.pid})") from exc
-        raise
-    finally:
-        try:
-            ready_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        try:
-            bootstrap_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+def start_sidecar_process(*, debug_dump=None, readiness_timeout_seconds=None, cancel_event=None,
+                          target_generation_id="", target_catalog_id="", expected_vision_pool_fingerprint=""):
+    return _spawn_runtime_child("vision", timeout=readiness_timeout_seconds or OVERLAY_SIDECAR_READY_TIMEOUT_SECONDS,
+        cancel_event=cancel_event, target_generation_id=target_generation_id, target_catalog_id=target_catalog_id,
+        expected_vision_pool_fingerprint=expected_vision_pool_fingerprint, debug_dump=debug_dump)
 
 
 def process_is_running(process: ProcessLike | None) -> bool:
@@ -439,6 +213,12 @@ def _process_exit_path(process: ProcessLike | None) -> Path | None:
 
 
 def _cleanup_process_exit_signal(process: ProcessLike | None) -> None:
+    pipe = getattr(process, "_hextech_runtime_pipe", None)
+    if pipe is not None:
+        pipe.close()
+    job = getattr(process, "_hextech_runtime_job", None)
+    if job is not None:
+        job.close()
     exit_path = _process_exit_path(process)
     if exit_path is None:
         return
@@ -453,6 +233,9 @@ def _request_process_exit(process: ProcessLike | None) -> bool:
 
     if process is None or not process_is_running(process):
         return False
+    pipe = getattr(process, "_hextech_runtime_pipe", None)
+    if pipe is not None:
+        return pipe.publish("shutdown", {"requested_at":time.time()})
     exit_path = _process_exit_path(process)
     if exit_path is None:
         return False

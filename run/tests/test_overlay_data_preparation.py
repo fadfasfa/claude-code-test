@@ -116,6 +116,74 @@ def test_data_load_never_blocks_request_thread_and_coalesces(prepared):
     assert wait_result(worker, key).generation["generation_id"] == "generation-a"
 
 
+@pytest.mark.parametrize("snapshot_seconds", [0.0, 1.2])
+@pytest.mark.parametrize("cancel", [False, True])
+def test_actual_stage_confirmation_keeps_timely_samples_across_slow_superseded_snapshot(
+    monkeypatch, snapshot_seconds, cancel,
+):
+    from hextech.interfaces.overlay.stats_pin import SelectionStatsPin
+    from hextech.interfaces.overlay.generation_pin import SelectionGenerationPin
+    from test_overlay_stage_confirmation import context as live_context
+
+    clock = [100.0]
+    timer = SimpleNamespace(time=lambda: clock[0], monotonic=lambda: clock[0], perf_counter=lambda: clock[0])
+    monkeypatch.setattr(module, "time", timer)
+    monkeypatch.setattr(module, "build_runtime_session", lambda **kw: SimpleNamespace(event=kw["event"]))
+    monkeypatch.setattr(module.OverlayStageRuntime, "project", lambda state, *_args: state)
+    monkeypatch.setattr(module, "build_render_model_from_session", lambda *_a, **_kw: {"stats": [], "synergies": []})
+    second_arrival = [None]
+
+    def open_view():
+        entered = clock[0]
+        if second_arrival[0] is not None:
+            callback, second_arrival[0] = second_arrival[0], None
+            clock[0] = max(clock[0], 100.65)
+            callback()
+        clock[0] = max(clock[0], entered + snapshot_seconds)
+        return View()
+
+    worker = module.OverlayDataPreparation(SimpleNamespace(open_view=open_view, read_hint_cache=lambda: {}))
+    worker._thread = SimpleNamespace()  # 手动推进实际后台方法，不启动线程或产品。
+    worker._bootstrap_view = View()
+    worker._generation = SelectionGenerationPin(now=lambda: clock[0])
+    worker._input_scope = SelectionStatsPin(now=lambda: clock[0], wall_now=lambda: clock[0])
+    worker._scope = SelectionStatsPin(now=lambda: clock[0], wall_now=lambda: clock[0],
+        cache=SimpleNamespace(load=lambda *_a: SimpleNamespace(available=True, view=None, run_id="unit", reason="")))
+    worker.observe_input(event())
+
+    def submit(seq, start):
+        ctx = {**live_context(seq=seq, start=start), "game_instance_id": "game-a", "window_hwnd": 20}
+        return worker.request(event(), ctx, completed=None, host_read_at=clock[0])
+
+    clock[0] = 100.25
+    old_key = submit(1, 100.2)
+    first = worker._pending
+    if snapshot_seconds:
+        second_arrival[0] = lambda: submit(2, 100.6)
+    worker._prepare(*first)
+    if not snapshot_seconds:
+        clock[0] = 100.65
+        submit(2, 100.6)
+    second = worker._pending
+    if cancel:
+        worker.invalidate()
+    elif snapshot_seconds:
+        # 已在输入端确认后，第三份 heartbeat 不再作废统计 IO，避免永远追不上发布频率。
+        version = worker._version
+        second_arrival[0] = lambda: submit(3, 100.9)
+    worker._prepare(*second)
+    if cancel:
+        assert worker.poll(second[1]) is None
+        assert worker._input_scope._input_confirmation is None
+    else:
+        result = worker.poll(second[1])
+        assert result.scope["status"] == "ready" and result.scope["stage"] == 3
+        assert result.scope["confirmation"]["publication_seq"] == 2
+        assert worker.poll(old_key) is None
+        if snapshot_seconds:
+            assert worker._version == version
+
+
 def test_new_game_rejects_old_inflight_result(prepared):
     source = Source(blocked=True)
     worker = prepared(source)
@@ -127,6 +195,60 @@ def test_new_game_rejects_old_inflight_result(prepared):
     assert result.key[0] == "game-b"
     assert result.key[3] == "777"
     assert worker.poll(old_key) is None
+
+
+@pytest.mark.parametrize("old_ready", [False, True])
+def test_same_epoch_sidecar_restart_rejects_confirmed_old_pending_and_published_scope(monkeypatch, old_ready):
+    from hextech.interfaces.overlay.stats_pin import SelectionStatsPin
+
+    clock = [100.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(
+        time=lambda: clock[0], monotonic=lambda: clock[0], perf_counter=lambda: clock[0],
+    ))
+    monkeypatch.setattr(module, "build_runtime_session", lambda **kw: SimpleNamespace(event=kw["event"]))
+    monkeypatch.setattr(module.OverlayStageRuntime, "project", lambda state, *_args: state)
+    monkeypatch.setattr(module, "build_render_model_from_session", lambda *_a, **_kw: {"stats": [], "synergies": []})
+    worker = module.OverlayDataPreparation(SimpleNamespace(open_view=lambda: View(), read_hint_cache=lambda: {}))
+    worker._thread = SimpleNamespace()
+    worker._bootstrap_view = View()
+    worker._input_scope = SelectionStatsPin(now=lambda: clock[0], wall_now=lambda: clock[0])
+    worker._scope = SelectionStatsPin(now=lambda: clock[0], wall_now=lambda: clock[0],
+        cache=SimpleNamespace(load=lambda *_a: SimpleNamespace(available=True, view=None, run_id="unit", reason="")))
+    ctx = {"ok": True, "champion_id": "114", "game_instance_id": "game-a", "window_hwnd": 20}
+
+    def submit(sidecar):
+        payload = event()
+        payload["source"]["sidecar_instance_id"] = sidecar
+        worker.observe_input(payload)
+        return worker.request(payload, ctx, completed=0, host_read_at=clock[0])
+
+    old_key = submit("vision-a")
+    old_request = worker._pending
+    assert old_request[3]["_stage_input_confirmation"] is not None
+    assert old_request[3]["_stage_wait_revision"] is None
+    old_result = None
+    if old_ready:
+        worker._prepare(*old_request)
+        old_result = worker.poll(old_key)
+        assert old_result.scope["frozen"] and old_result.scope["stage"] == 1
+    clock[0] = 100.5
+    new_key = submit("vision-b")
+    new_request = worker._pending
+    assert new_request[3]["_stage_input_confirmation"] is not None
+    assert new_request[3]["_stage_wait_revision"] is None
+    assert new_key != old_key and new_request[0] > old_request[0]
+    assert worker.poll(old_key) is None
+    # 迟到旧工作和迟到旧发布均不能越过新请求的版本门。
+    worker._prepare(*old_request)
+    if old_result is not None:
+        worker._publish(old_request[0], old_result)
+    assert worker.poll(old_key) is None and worker.poll(new_key) is None
+    worker._prepare(*new_request)
+    result = worker.poll(new_key)
+    assert result.event["source"]["sidecar_instance_id"] == "vision-b"
+    assert result.scope["confirmation"]["boundary_at"] == 100.5
+    assert worker._scope._identity[-1] == "vision-b"
+    assert result.generation["stats_generation_id"] == "generation-a"
 
 
 def test_fragment_invalidates_inflight_and_latches_same_epoch(prepared):
@@ -218,7 +340,9 @@ def test_display_hint_projection_preserves_original_and_omits_heavy_statistics()
            "hints": {"1": {"augment_id": "1", "name": "测试", "tier": "黄金",
                            "stats_by_champion_id": {"114": {"winrate": .5}},
                            "synergies": [{"hero_id": "114", "content": "联动"}]}}}
-    view = DataSnapshotView(SimpleNamespace(), {"overlay_hints": raw})
+    from copy import deepcopy
+    query = SimpleNamespace(hints=lambda: deepcopy(raw))
+    view = DataSnapshotView(SimpleNamespace(), query)
     slim = view.get_overlay_display_hints()
     assert "stats_by_champion_id" not in slim["hints"]["1"]
     assert slim["hints"]["1"]["synergies"] == raw["hints"]["1"]["synergies"]

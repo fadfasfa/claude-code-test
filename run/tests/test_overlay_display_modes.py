@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from itertools import combinations
 import tkinter as tk
+from typing import get_args
 
 import pytest
 
 from hextech.interfaces.overlay.canvas_renderer import (
     OVERLAY_THEME,
+    StatStatusCode,
     _tier_color,
     draw_overlay_frame,
     resolve_overlay_layout,
@@ -158,6 +160,59 @@ def test_non_ready_card_status_uses_the_same_pixel_size() -> None:
     status_calls = [call for call in canvas.text_calls if call.get("text") == "源站暂无统计"]
     assert len(status_calls) == 1
     assert all(int(call["font"][1]) == -24 for call in status_calls)
+
+
+@pytest.mark.parametrize("status_code", [
+    status for status in get_args(StatStatusCode) if status not in {"READY", "GENERATION_DEGRADED"}
+])
+def test_every_non_ready_stat_status_draws_a_message_without_numeric_stats(status_code: str) -> None:
+    model = _model()
+    model["synergies"] = []
+    for row in model["stats"]:
+        # 故意保留 READY 统计，确保 Canvas 的非 READY 分支不绘制旧百分比。
+        row.update(status_code=status_code, status_text="阶段未确认")
+    canvas = RecordingCanvas(2560, 1440)
+
+    draw_overlay_frame(canvas, model)
+
+    assert [call["text"] for call in canvas.text_calls] == ["阶段未确认"] * 3
+    assert all(call["fill"].startswith("#") for call in canvas.text_calls)
+
+
+@pytest.mark.parametrize("player_level,completed_count,conflict", [(3, None, False), (11, 0, True)])
+def test_stage_unconfirmed_runtime_report_context_draws_chinese_without_all_fallback(
+    player_level: int, completed_count: int | None, conflict: bool,
+) -> None:
+    from hextech.interfaces.overlay.renderer import build_render_model_from_session
+    from hextech.modules.game_context.stage_context import StageContextV1
+    from hextech.modules.recommendation.stage_projection import apply_scoped_stage_stats
+    from test_overlay_stage_projection import _record, _state, _view
+
+    # 2026-10-25 17:11/17:22 真实报告中的阶段未确认形态：timeout 后 stage=null。
+    context = StageContextV1(
+        champion_id="1", game_instance_id="game-1", player_level=player_level,
+        stage=None, status="unknown", reason="stage_unconfirmed", source="live-client-data",
+        resolution_source="player_level", completed_selection_count=completed_count, conflict=conflict,
+    )
+    state = apply_scoped_stage_stats(
+        _state(), stage_context=context,
+        scoped_view=_view(stage_record=_record(1500), all_record=_record(2000)),
+        scope_status="unavailable", scope_reason="stage_unconfirmed",
+    )
+    row = state.recommendation.augment_slots[0]
+    assert row["status_code"] == "STAGE_UNCONFIRMED"
+    assert row["stats"] == {} and row["stats_scope"] == "unavailable"
+    model = build_render_model_from_session(state)
+    assert model["stats"][0]["winrate_text"] == model["stats"][0]["pickrate_text"] == ""
+    canvas = RecordingCanvas(2560, 1440)
+
+    draw_overlay_frame(canvas, model)
+
+    texts = [str(call["text"]) for call in canvas.text_calls]
+    assert "阶段未确认" in texts
+    assert not any("%" in text or "all" in text for text in texts)
+    message = next(call for call in canvas.text_calls if call["text"] == "阶段未确认")
+    assert message["fill"] == OVERLAY_THEME["text_secondary"]
 
 
 def test_low_resolution_card_text_scales_down_to_avoid_cross_card_overlap() -> None:

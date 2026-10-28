@@ -1,5 +1,38 @@
 # Overlay 运行、诊断与部署手册
 
+## 2026-10-27 换卡与稳定性修复验收边界
+
+- 明确点击或双帧卡面消失撤销后的槽位不会在两秒超时后复活旧身份；超时继续显示未确认。恢复任何身份必须重新满足当前画面的正式确认门。Host 收到同 `selection_revision` 的新 `slot_generation` 时立即清除该槽旧统计与联动缓存，旧代准备结果不能回填。
+- 完整名称词法证据独立绑定当前 game/epoch/slot/generation/真实帧、输入哈希与视觉指纹；低置信证据不能产生新身份候选。三帧持续变化的撤销策略仅可在离线 `SelectionTracker(identity_revocation_enabled=True)` 回放，生产构造保持默认关闭。现存 e28 记录缺少目标“豪猪→深红钴蓝闪光”的连续原帧绑定，冻结实拍负例也未关闭，不能宣布持续变化换卡问题完成。
+- OCR 默认保持 `0.95 exact` 与 3/5 独立帧。离线碰撞组策略仅对跨 ID 的兼容名称键保标点，非碰撞名称保留兼容规则；固定名称集生产与该离线策略均为 27/27。完整标点可在离线区分 3004，裸名仍拒绝；新增标点准入和三种实拍名称模板均未取得三局十个有效人工真值 epoch 与独立 holdout，不进入运行包。`tooling/diagnostics/selection_replay.py` 新导出候选必须同时绑定 canonical ID、内部名和完整名称，保留至少 3/5、`.92/.08` 分离度与人工门。
+- READY 内容冲突、撤销原因和鼠标 eligibility/drop 诊断有界累计；观察次数、真实捕获帧数与实际 OCR 推理数分开记录，缓存推理复用不冒充独立推理。
+- GUI 候选创建、更新和回收共用现有 4ms 普通工作预算，最新版本在隐藏列表构建完成后原子切换；过期任务取消。诊断分开候选应用、控件、布局、原生窗口及层级阶段，保留完整回合及慢回合耗时。显隐安全检查先执行，观察 TTL 仍为一秒；单次 Tk/native 调用不可抢占，真实长停顿和混合 DPI 仍须按具体 Build 验收。
+- Mayhem 明确报告 `failure_kind/failure_stage`；网络未完成、超时和连接失败走网络退避，只有校验错误进入六小时退避。`failure_fingerprint` 只用于去重，`Retry-After` 和 last-good 继续保留，不手改运行调度。
+- 选择证据缓存仍为 200 组/256 MiB。相同图像与裁剪几何的拒绝可复用 PNG 描述符，但每次重新计算最新终态和容量；容量、优先级抢占及真实 I/O 分别计数，I/O 保留操作阶段及错误码。人工、未知和半写资产保护不变，不清空旧证据。
+
+本轮隔离包、源码检查、同 ROI 对比和清理回执存于 `run/.artifacts/identity-repair-20261027/`。测试快捷方式仅在冻结包三组 smoke 通过后更新；正式安装、原快捷方式、历史包、运行数据、原帧及模型保持保护。自动验证不代表真实对局识别、实际呈现或窗口稳定性验收通过。
+
+## 2026-10-24 当前源码：三进程与 release v4
+
+本节覆盖下方历史记录中的进程拓扑、发布格式和启动入口；其余仍适用的窗口、识别、统计冻结、人工证据保护与真实验收门继续有效。隔离测试包与正式安装分离，真实验收须对应具体 Build。
+
+- 生产常驻仅App、独立Overlay、独立Vision。DataService为App后台用例，Supervisor生命周期职责归App，不再启动Web或独立HTTP服务。
+- App通过有界管道后台转发Vision事件/Context到Overlay。Build/instance/game/epoch/序号/TTL仍严格验证；生产不回退到旧JSON热事件。
+- snapshot/release只支持v4：不可变单元引用与一个原子head，识别Catalog与统计引用可以分别推进；首选截止后的本局统计冻结不变。旧v3只由离线转换器写入独立目录。
+- 腾讯官方KIWI非PBE名单是生产身份权威，CDragon补资源。官方名字同时规范目录和OCR词表；缺图按能力降级，陌生ID不猜测。ARAMGG/Blitz不再是当前身份/统计依赖。
+- 时间线有界，但epoch摘要在截断前在线累计，区分保留文件截断与历史不完整。停止重复trace history写入，保留必要session报告与异常ROI；不以READY冒认正确识别或真实呈现。
+- 诊断缓存容量拒绝记录空间与优先级，未变内容/容量不重复PNG保存。200组/256MiB、异常floor与人工/未知/部分写入保护不变。
+- v4 seed路径为`resources/seeds/runtime.v4`。正式安装、运行数据转换和旧安装清理不是本轮源码改动的自动步骤。
+- `STAGE_UNCONFIRMED` 是合法的保守展示状态：显示“阶段未确认”，不显示百分比或回退 all 数据，不应导致 Canvas 渲染异常或重试退避。
+- epoch 摘要的 `first_ready_ms`、`first_full_ready_ms` 从本轮首个合格观察开始，明确标记 `metric_scope=selection_epoch`；重随后首次 READY 的身份不能用于反推该卡出现时间。没有独立原帧/人工时间边界时 `card_latency_ms=null`、`card_latency_qualified=false`，不得纳入单卡 P95；拒绝计数是观察次数，可能复用同一次 OCR 推理。
+- 严格保标点词法策略目前仅位于离线 `tooling/diagnostics/ocr_candidate_policy.py`，始终 `eligible=false`，不进入运行包。固定真值名称 corpus 的生产兼容策略仍为27/27，严格候选26/27，故未启用新增拒绝策略。生产仍拒绝不同数字 ID 的歧义名称，并以 canonical ID 隔离时序票；置信度不得先舍入再跨过0.95。
+- “生机迸发”等高置信度误字没有字符串特判；未完成3局/10个人工真值epoch及独立holdout的实拍样本只作离线核对。新导出候选要求至少3/5独立帧，原图、人工truth与模型权重不由自动识别结果改写。
+- 阶段确认在纯内存输入边界记录两秒内到达的合格样本；慢 snapshot/scoped 读取只能推迟数值准备，不能丢弃及时确认或接纳迟到样本。本局统计代冻结与身份验证不变。Context 快采样和准备请求同时包含 Sidecar 实例身份，同局重启后的新 epoch 可重新触发采样，旧实例结果不得回流。
+
+详细现行结构见[system-design.md](system-design.md)、[data-layout.md](data-layout.md)、[version-driven-refresh.md](version-driven-refresh.md)。以下按日期保留的旧流程、Web及v2/v3说明只供历史取证，不是新生产兼容入口。
+
+## 历史运行与验收记录
+
 本文是 Hextech Overlay、Vision Sidecar、会话诊断、打包部署和真机验收的长期事实源。处理游戏内显示、识别抖动、无数据、旧包误测或发布问题时必须先读本文；数据目录细节仍见 [data-layout.md](data-layout.md)，系统依赖关系见 [system-design.md](system-design.md)。
 
 ## 2026-09-29 阶段确认与缺槽诊断候选

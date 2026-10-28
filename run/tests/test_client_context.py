@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import copy
+import pytest
+
 from pathlib import Path
 
 from hextech.modules.game_context.client import ClientContextProvider, parse_client_context
@@ -156,41 +157,6 @@ def test_provider_session_is_stable_during_disconnect_and_rotates_for_next_champ
     assert second.session_id != first.session_id
 
 
-def test_web_projection_clears_teammates_after_ttl_and_recovers_connection() -> None:
-    from hextech.interfaces.web.backend import runtime
-
-    provider = ClientContextProvider(ttl_seconds=3)
-    payload = {
-        "localPlayerCellId": 1,
-        "myTeam": [
-            {"cellId": 1, "championId": 266},
-            {"cellId": 2, "championId": 245},
-        ],
-    }
-    with runtime._lcu_state_lock:
-        saved_state = copy.deepcopy(runtime._lcu_state)
-    try:
-        runtime._apply_client_context(provider.update(payload, now=10))
-        with runtime._lcu_state_lock:
-            runtime._lcu_state.local_champ_id = 266
-            runtime._lcu_state.local_champ_name = "Aatrox"
-
-        runtime._apply_client_context(provider.unavailable("request_failed", now=12))
-        degraded = runtime.get_live_state_payload()
-        runtime._apply_client_context(provider.unavailable("request_failed", now=14))
-        expired = runtime.get_live_state_payload()
-        runtime._apply_client_context(provider.update(payload, now=15))
-        recovered = runtime.get_live_state_payload()
-    finally:
-        with runtime._lcu_state_lock:
-            runtime._lcu_state.__dict__.update(saved_state.__dict__)
-
-    assert degraded["context_connection_state"] == "degraded"
-    assert degraded["teammate_champion_ids"] == ["245"]
-    assert expired["context_connection_state"] == "disconnected"
-    assert expired["teammate_champion_ids"] == []
-    assert expired["local_champion_id"] is None
-    assert recovered["context_connection_state"] == "connected"
 
 
 def test_overlay_lcu_writer_preserves_roles_with_mixed_cell_id_types(tmp_path: Path) -> None:
@@ -447,16 +413,12 @@ def test_desktop_lcu_consumer_uses_provider_local_role(monkeypatch) -> None:
     ui._lcu_port = 12345
     ui._lcu_token = "token"
     ui._client_context_provider = ClientContextProvider()
-    captured: list[dict] = []
     monkeypatch.setattr(runtime_services, "_get_lcu_champ_select_session", lambda _url, _headers: Response())
-    monkeypatch.setattr(
-        runtime_services,
-        "_write_overlay_context_from_live_state",
-        lambda _ui, payload, **_kwargs: captured.append(dict(payload)) or True,
-    )
+    from hextech.interfaces.overlay import context as canonical_context
+    monkeypatch.setattr(canonical_context, "write_overlay_context", lambda *args,**kwargs:pytest.fail("desktop projection must not overwrite canonical Context"))
 
     groups = runtime.poll_lcu_live_ids(ui)
 
     assert groups["local_champion_id"] == "266"
     assert groups["teammate_champion_ids"] == ["245"]
-    assert captured[0]["local_champion_id"] == "266"
+    assert ui._client_context_provider.unavailable("offline").candidate_groups(include_roles=True)["local_champion_id"] == "266"

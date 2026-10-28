@@ -211,18 +211,15 @@ def test_direct_process_name_fallback_is_used_when_process_enumeration_fails(mon
     assert result.process_id == 8088
 
 
-def test_low_frequency_listener_uses_shared_resolver(monkeypatch):
-    from hextech.interfaces.desktop import service_manager
-
-    monkeypatch.setattr(service_manager.psutil, "process_iter", lambda _attrs: ())
-    monkeypatch.setattr(
-        service_manager,
-        "resolve_lol_client_window",
-        lambda: SimpleNamespace(status="found", hwnd=22),
-    )
-    monkeypatch.setattr(service_manager, "find_lol_game_window", lambda: None)
-
-    result = service_manager.ServiceManager._poll_lol_window_state()
-
-    assert result["lol_client_visible"] is True
-    assert result["lol_game_visible"] is False
+def test_desktop_context_observer_uses_shared_resolver(monkeypatch):
+    import threading
+    from hextech.interfaces.desktop import runtime_window
+    stop=threading.Event()
+    phases=[]
+    controller=SimpleNamespace(publish_phase=lambda groups,**kwargs:phases.append(kwargs),
+        publish_candidates=lambda groups:None,wait_for_phase_poll=lambda event:event.set())
+    ui=SimpleNamespace(stop_event=stop,pause_event=threading.Event(),_desktop_window_presentation=controller)
+    monkeypatch.setattr(runtime_window,"resolve_lol_client_window",lambda **kwargs:SimpleNamespace(status="found",hwnd=22))
+    monkeypatch.setattr(runtime_window,"_fallback_live_state",lambda ui:{"context_phase":"champ_select"})
+    runtime_window.lcu_polling_loop(ui)
+    assert phases[0]["client_hwnd"]==22

@@ -174,6 +174,7 @@ class SlotRenderCache:
                 if isinstance(synergy, Mapping):
                     synergies.append(dict(synergy))
             else:
+                self._slots.pop(index, None)
                 stats.append(_detecting_stat(index, str(slot.get("diagnostic") or "")))
         model = {"stats": stats, "synergies": synergies}
         if self._stage_indicator is not None:
@@ -235,6 +236,11 @@ class SlotRenderCache:
                 synergy = None
             elif index in fresh_synergies:
                 synergy = fresh_synergies[index]
+            if str(slot.get("state") or "") != "ready" and not reusable:
+                # A generation change withdraws old percentages immediately,
+                # including stale prepared rows arriving with the same revision.
+                stat = _detecting_stat(index, str(slot.get("diagnostic") or ""))
+                synergy = None
             stats.append(stat)
             if isinstance(synergy, Mapping):
                 synergies.append(dict(synergy))

@@ -128,6 +128,7 @@ def test_real_ocr_regression_covers_eight_name_rois_fifteen_frame_slots_and_body
 
     from hextech.infrastructure.vision.sidecar_scene_geometry import resolve_roi_preset
     from hextech.modules.vision.layout import apply_transform, detect_selection_scene
+    from tooling.diagnostics.ocr_candidate_policy import evaluate_collision_aware_candidate, evaluate_strict_ocr_candidate
 
     truth = json.loads(
         (RUN_DIR / "tests" / "fixtures" / "diagnostics" / "overlay_matching_truth.v1.json").read_text(
@@ -149,6 +150,10 @@ def test_real_ocr_regression_covers_eight_name_rois_fifteen_frame_slots_and_body
     accepted_roi_names: list[str] = []
     roi_confidences: list[float] = []
     roi_match_rules: list[str] = []
+    roi_match_reasons: list[str] = []
+    legacy_alnum_roi_names: list[str] = []
+    strict_roi_candidates: list[dict] = []
+    collision_roi_candidates: list[dict] = []
     expected_roi_names: list[str] = []
     for sample in truth["name_roi_samples"]:
         if sample["expected_body_shard"]:
@@ -160,22 +165,34 @@ def test_real_ocr_regression_covers_eight_name_rois_fifteen_frame_slots_and_body
         images = [Image.open(path).convert("RGB") for path in sample_paths]
         for text, confidence in recognizer.recognize(images):
             matched = match_ocr_text(text, vocabulary)
+            strict_roi_candidates.append(evaluate_strict_ocr_candidate(text, confidence, vocabulary))
+            collision_roi_candidates.append(evaluate_collision_aware_candidate(text, confidence, vocabulary))
+            # Frozen before/after policy evidence: the old alnum-only exact key
+            # accepted an incomplete punctuated name. Keep that lost coverage
+            # explicit alongside the new unknown, rather than changing truth.
+            legacy_key = "".join(char for char in normalize_ocr_text(text) if char.isalnum())
+            legacy_exact = [entry for entry in vocabulary
+                if "".join(char for char in entry.normalized_name if char.isalnum()) == legacy_key]
+            legacy_alnum_roi_names.append(legacy_exact[0].name if len(legacy_exact) == 1 else "")
             accepted_roi_names.append(matched["matched_name"])
             roi_match_rules.append(matched["match_rule"])
+            roi_match_reasons.append(matched["match_reason"])
             roi_confidences.append(confidence)
         expected_roi_names.extend(sample["expected_names"])
 
     accepted_frame_names: list[str] = []
+    strict_frame_candidates: list[dict] = []
+    collision_frame_candidates: list[dict] = []
     expected_frame_names: list[str] = []
     for sample in truth["samples"]:
         frame = Image.open(RUN_DIR / sample["frame"]).convert("RGB")
         preset = resolve_roi_preset(*frame.size, preset="auto")
         scene = detect_selection_scene(frame, layout_id=preset.name)
         boxes = [apply_transform(box, frame.size, scene.transform) for box in preset.name_slots]
-        accepted_frame_names.extend(
-            match_ocr_text(text, vocabulary)["matched_name"]
-            for text, _confidence in recognizer.recognize([frame.crop(box) for box in boxes])
-        )
+        for text, confidence in recognizer.recognize([frame.crop(box) for box in boxes]):
+            accepted_frame_names.append(match_ocr_text(text, vocabulary)["matched_name"])
+            strict_frame_candidates.append(evaluate_strict_ocr_candidate(text, confidence, vocabulary))
+            collision_frame_candidates.append(evaluate_collision_aware_candidate(text, confidence, vocabulary))
         expected_frame_names.extend(sample["expected_slots"])
 
     shard_sample = next(sample for sample in truth["name_roi_samples"] if sample["expected_body_shard"])
@@ -186,12 +203,33 @@ def test_real_ocr_regression_covers_eight_name_rois_fifteen_frame_slots_and_body
     ]
 
     assert len(expected_roi_names) == 12
+    assert legacy_alnum_roi_names == expected_roi_names
+    # Production retains accepted compatibility (27/27). The strict offline
+    # candidate loses this frozen trailing "!" ROI (26/27) and is ineligible.
+    missing_punctuation_index = expected_roi_names.index("哎哟，我的硬币！")
+    expected_matches = list(expected_roi_names)
+    expected_matches[missing_punctuation_index] = ""
+    expected_rules = ["exact"] * len(expected_roi_names)
+    expected_rules[missing_punctuation_index] = ""
+    expected_reasons = ["exact"] * len(expected_roi_names)
+    expected_reasons[missing_punctuation_index] = "punctuation_missing"
     assert accepted_roi_names == expected_roi_names
     assert roi_match_rules == ["exact"] * len(expected_roi_names)
+    assert roi_match_reasons == ["exact"] * len(expected_roi_names)
+    assert [result["matched_name"] for result in strict_roi_candidates] == expected_matches
+    assert [result["match_rule"] for result in strict_roi_candidates] == expected_rules
+    assert [result["match_reason"] for result in strict_roi_candidates] == expected_reasons
+    assert sum(result["would_admit"] for result in strict_roi_candidates) == 11
+    assert [result["matched_name"] for result in collision_roi_candidates] == expected_roi_names
+    assert [result["matched_name"] for result in collision_frame_candidates] == expected_frame_names
+    assert sum(item["would_admit"] for item in (*collision_roi_candidates, *collision_frame_candidates)) == 27
+    assert all(item["eligible"] is False for item in (*collision_roi_candidates, *collision_frame_candidates))
     assert min(roi_confidences) >= 0.95
     assert "属性叠属性叠属性！" not in accepted_roi_names
     assert len(expected_frame_names) == 15
     assert accepted_frame_names == expected_frame_names
+    assert [result["matched_name"] for result in strict_frame_candidates] == expected_frame_names
+    assert all(result["eligible"] is False for result in [*strict_roi_candidates, *strict_frame_candidates])
     assert shard_matches == ["", "", ""]
 
 
@@ -671,7 +709,7 @@ def test_shadow_on_off_keeps_production_candidate_revision_scene_and_event_ident
     assert "ocr_shadow" not in str(_public_event_payload(final_events[1]))
 
 
-def test_model_resource_is_exact_and_manifested() -> None:
+def test_model_resource_is_exact_and_manifested(tmp_path, monkeypatch) -> None:
     import hashlib
     import json
 
@@ -690,7 +728,10 @@ def test_model_resource_is_exact_and_manifested() -> None:
     from tooling.build.manifest import build_bundle_manifest
     from tooling.build.package import PYINSTALLER_HIDDEN_IMPORTS
 
-    bundle = build_bundle_manifest(RUN_DIR)
+    from tests.support.v4_release import make_release
+    runtime = tmp_path / "runtime"
+    make_release(runtime, monkeypatch)
+    bundle = build_bundle_manifest(RUN_DIR, verified_snapshot_root=runtime / "snapshots")
     bundled_model = next(item for item in bundle["ocr_resources"] if item["path"] == descriptor["path"])
     assert bundled_model["size"] == OCR_MODEL_SIZE
     assert bundled_model["sha256"] == OCR_MODEL_SHA256

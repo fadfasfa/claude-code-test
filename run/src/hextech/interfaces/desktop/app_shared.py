@@ -2,7 +2,7 @@
 """桌面 UI 主入口。
 
 这个文件保留 Tk 界面结构、主状态对象和主要交互方法。
-后台线程、Web 协同、LCU 查询和头像下载等运行时细节委托给 `hextech.interfaces.desktop.runtime`，
+后台线程、LCU 查询和头像下载等运行时细节委托给 `hextech.interfaces.desktop.runtime`，
 以便在保持热路径聚合的前提下，让后续需求变更有明确落点。
 
 调用方: display.desktop.runtime、hextech_ui、tests.test_desktop_diagnostics_button; 关键依赖: data_snapshot、core.settings、overlay.events。
@@ -34,7 +34,6 @@ from .single_instance import (
 if TYPE_CHECKING:
     from .service_manager import ServiceManager
 
-WEB_PORT_FILE = str(build_desktop_runtime_state_path("web_server_port.txt"))
 # 悬浮窗固定几何（px，不乘 DPI）：按用户要求维持基线"狭长"观感；
 # 高度基值 740，跟随客户端时由 runtime_window 按客户端底缘动态压缩。
 WINDOW_EXPANDED_WIDTH = 320
@@ -371,8 +370,8 @@ def _format_game_overlay_host_reason(reason: str) -> str:
     }.get(reason, "暂不显示")
 
 
-def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tuple[str, str]:
-    """把 Supervisor overlay 组件状态压成单行状态栏可容纳的短语。
+def _format_runtime_game_overlay_status(overlay: Mapping[str, object]) -> tuple[str, str]:
+    """把 App owner overlay 组件状态压成单行状态栏可容纳的短语。
 
     构建号不再拼进文案：320px 窗口装不下整串且用户不消费它，构建身份仍在
     supervisor 状态文件与诊断导出里；sidecar 细节原因同理留在日志。

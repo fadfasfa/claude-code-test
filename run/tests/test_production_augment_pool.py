@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from hextech.bootstrap.production_pool_binding import validate_production_pool_assets
+from hextech.infrastructure.persistence.production_pool_binding import validate_production_pool_assets
 from hextech.modules.acquisition.hextech.production_pool import (
     LEGACY_SELECTION_POOL_IDS,
     build_production_augment_pool,
@@ -105,7 +105,7 @@ def test_production_pool_assets_require_exact_id_path_and_hash_binding(tmp_path)
     pool = build_production_augment_pool(
         _metadata([1001, 1002, 1003]),
         catalog,
-        upstream_marker_sha256="b" * 64,
+        upstream_marker_sha256="b" * 64, schema_version=2,
     )
     assets = [
         {

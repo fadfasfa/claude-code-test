@@ -12,9 +12,9 @@ from unittest import mock
 
 class DesktopStartupStatusTests(unittest.TestCase):
     def test_overlay_starting_prewarm_status_reports_host_ready(self):
-        from hextech.interfaces.desktop.app import UI_COLORS, _format_supervisor_game_overlay_status
+        from hextech.interfaces.desktop.app import UI_COLORS, _format_runtime_game_overlay_status
 
-        text, color = _format_supervisor_game_overlay_status(
+        text, color = _format_runtime_game_overlay_status(
             {
                 "status": "starting",
                 "phase": "vision_prewarming",
@@ -26,9 +26,9 @@ class DesktopStartupStatusTests(unittest.TestCase):
         self.assertEqual(color, UI_COLORS["warn"])
 
     def test_overlay_status_reports_build_mismatch_without_build_id_suffix(self):
-        from hextech.interfaces.desktop.app import UI_COLORS, _format_supervisor_game_overlay_status
+        from hextech.interfaces.desktop.app import UI_COLORS, _format_runtime_game_overlay_status
 
-        text, color = _format_supervisor_game_overlay_status(
+        text, color = _format_runtime_game_overlay_status(
             {
                 "status": "running",
                 "build_id": "20260724T120000Z-abcdef123456",
@@ -64,6 +64,17 @@ class DesktopStartupStatusTests(unittest.TestCase):
 
             payload = json.loads(target.read_text(encoding="utf-8"))
             self.assertEqual(payload["build_id"], "20260726T000000Z-test")
+
+    def test_startup_timing_path_failure_does_not_mask_startup_error(self):
+        from hextech.interfaces.desktop import startup_timing
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "timing.json"
+            probe = startup_timing.StartupTimingProbe(output_path=target)
+            with mock.patch.object(startup_timing, "get_var_dir", side_effect=PermissionError("denied")):
+                probe.mark("background_bootstrap_error", error="migration_required")
+            self.assertFalse(target.exists())
+            self.assertEqual(probe._marks[-1]["name"], "background_bootstrap_error")
 
 
 if __name__ == "__main__":

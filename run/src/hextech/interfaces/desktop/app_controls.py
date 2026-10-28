@@ -1,11 +1,9 @@
 """Desktop DesktopControlsMixin 职责模块。"""
 import time as _time
 
-from hextech.interfaces.desktop.app_controls_web_fallback import DesktopOverlayWebFallbackMixin
 from hextech.interfaces.desktop.app_shared import (
     UI_COLORS,
-    _format_game_overlay_host_reason,
-    _format_supervisor_game_overlay_status,
+    _format_runtime_game_overlay_status,
     data_refresh_status_signature,
     export_user_diagnostics,
     format_data_age_suffix,
@@ -16,7 +14,6 @@ from hextech.interfaces.desktop.app_shared import (
     scaled,
     threading,
     tk,
-    ui_runtime,
 )
 
 # 状态行合成参数：service 消息（按钮反馈等）在 6 秒新鲜窗口内优先显示，
@@ -26,7 +23,7 @@ STATUS_SERVICE_FRESH_SECONDS = 6.0
 STATUS_LINE_MAX_CHARS = 18
 
 
-class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
+class DesktopControlsMixin:
     def _build_ui(self):
         scale = self._ui_scale_value()
         self.title_frame = tk.Frame(self.root, bg=UI_COLORS["header"])
@@ -101,36 +98,27 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
         self.feature_frame = tk.Frame(self.root, bg=UI_COLORS["base"], padx=6, pady=6)
         self.feature_frame.pack(fill=tk.X)
         self._feature_toggle_widgets = []
-        self.web_frontend_var = tk.BooleanVar(value=self.feature_flags["web_frontend_enabled"])
         self.game_overlay_var = tk.BooleanVar(value=self.feature_flags["game_overlay_enabled"])
         self.private_stats_var = tk.BooleanVar(value=self.feature_flags["private_policy_stats_enabled"])
         self.low_frequency_listener_var = tk.BooleanVar(value=self.feature_flags["low_frequency_listener_enabled"])
 
-        self.web_frontend_check = self._build_feature_toggle(
-            "Web 前端",
-            self.web_frontend_var,
-            self._toggle_web_frontend,
-            accent=UI_COLORS["cyan"],
-        )
-        self.web_frontend_check.grid(row=0, column=0, sticky="ew", padx=(0, 2))
         self.game_overlay_check = self._build_feature_toggle(
             "游戏内显示",
             self.game_overlay_var,
             self._toggle_game_overlay,
             accent=UI_COLORS["cyan"],
         )
-        self.game_overlay_check.grid(row=0, column=1, sticky="ew", padx=2)
+        self.game_overlay_check.grid(row=0, column=0, sticky="ew", padx=2)
         self.private_stats_check = self._build_feature_toggle(
             "私用统计",
             self.private_stats_var,
             self._toggle_private_policy_stats,
             accent=UI_COLORS["green"],
         )
-        self.private_stats_check.grid(row=0, column=2, sticky="ew", padx=(2, 0))
+        self.private_stats_check.grid(row=0, column=1, sticky="ew", padx=(2, 0))
 
         self.feature_frame.grid_columnconfigure(0, weight=1)
         self.feature_frame.grid_columnconfigure(1, weight=1)
-        self.feature_frame.grid_columnconfigure(2, weight=1)
 
         self.list_shell = tk.Frame(self.root, bg=UI_COLORS["base"])
         self.list_shell.pack(fill=tk.BOTH, expand=True, padx=(scaled(10, scale), 0), pady=(6, 4))
@@ -246,7 +234,7 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
                 else:
                     self._set_status(f"{text} 正在切换中...", UI_COLORS["warn"])
                 return "break"
-            if text in {"Web 前端", "游戏内显示", "私用统计"} and not self._runtime_services_ready:
+            if text in {"游戏内显示", "私用统计"} and not self._runtime_services_ready:
                 self._set_status("后台服务仍在启动中，请稍候...", UI_COLORS["warn"])
                 return "break"
             variable.set(not bool(variable.get()))
@@ -361,9 +349,7 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
 
     def _collect_feature_flags_from_controls(self) -> dict:
         return {
-            "web_frontend_enabled": bool(self.web_frontend_var.get()),
             "game_overlay_enabled": bool(self.game_overlay_var.get()),
-            "auto_open_browser": bool(self.feature_flags.get("auto_open_browser", True)),
             "private_policy_stats_enabled": bool(self.private_stats_var.get()),
             "low_frequency_listener_enabled": bool(self.low_frequency_listener_var.get()),
         }
@@ -392,13 +378,13 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             raise RuntimeError(service.last_error or f"{service_name} 状态异常")
 
     def _apply_persisted_feature_flags(self) -> None:
-        # Web 已在 bootstrap 线程按持久化配置恢复；这里仅同步依赖 Tk 的控制面状态。
-        # 游戏内显示依赖 Runtime Supervisor；Supervisor 延后到首屏绘制后启动，
+        # 后台已完成服务初始化；这里仅同步依赖 Tk 的控件状态。
+        # 游戏内显示依赖 App runtime owner；App owner 延后到首屏绘制后启动，
         # 所以持久化恢复必须等控制面就绪后单独执行。
         self._game_overlay_desired_enabled = bool(self.feature_flags.get("game_overlay_enabled"))
 
     def _restore_persisted_game_overlay(self) -> None:
-        if self.runtime_supervisor is None:
+        if self.runtime_owner is None:
             return
         if not bool(self.feature_flags.get("game_overlay_enabled")):
             return
@@ -421,58 +407,10 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
         if self._overlay_status_after_id is None:
             self._start_overlay_status_polling()
 
-    def _toggle_web_frontend(self) -> None:
-        toggle_name = "Web 前端"
-        enabled = bool(self.web_frontend_var.get())
-        if enabled:
-            self._adopt_fallback_web_for_user()
-        self._set_feature_toggle_busy(toggle_name, True)
-        self._set_status("正在切换 Web 前端...", UI_COLORS["warn"])
-
-        def worker() -> None:
-            error: Exception | None = None
-            browser_opened = True
-            self._ensure_overlay_fallback_state()
-            with self._web_operation_lock:
-                try:
-                    if self.service_manager is None:
-                        raise RuntimeError("后台服务尚未就绪")
-                    if enabled:
-                        self.service_manager.start_web()
-                        if self.feature_flags.get("auto_open_browser", True):
-                            browser_opened = ui_runtime.open_companion_browser(self.web_port_file)
-                    else:
-                        ui_runtime.close_companion_browser()
-                        self.service_manager.stop_web()
-                        self._raise_if_service_error("web")
-                except Exception as exc:
-                    error = exc
-                    if enabled and self.service_manager is not None:
-                        ui_runtime.close_companion_browser()
-                        self.service_manager.stop_web()
-
-            def finish() -> None:
-                self._sync_web_process_handle()
-                if error is None:
-                    self._persist_feature_flags_from_controls()
-                    if enabled and not browser_opened:
-                        self._set_status("Web 已启动，浏览器未自动打开", UI_COLORS["warn"])
-                    else:
-                        self._set_status("Web 前端已启动" if enabled else "Web 前端已关闭", UI_COLORS["green"] if enabled else UI_COLORS["muted"])
-                else:
-                    self._restore_feature_toggle_after_failure("web_frontend_enabled", self.web_frontend_var)
-                    self._set_status(f"Web 前端切换失败: {error}", UI_COLORS["error"])
-                self._set_feature_toggle_busy(toggle_name, False)
-
-            self._run_on_ui_thread(finish)
-
-        self._start_tracked_thread(worker, name="hextech-toggle-web")
 
     def _toggle_game_overlay(self) -> None:
         toggle_name = "游戏内显示"
         enabled = bool(self.game_overlay_var.get())
-        if not enabled:
-            self._request_overlay_web_fallback_cleanup()
         self._game_overlay_desired_enabled = enabled
         self._set_feature_toggle_busy(toggle_name, True)
         self._set_overlay_status_summary(
@@ -487,9 +425,9 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
                 with self._overlay_operation_lock:
                     if self._closing:
                         return
-                    if self.runtime_supervisor is None:
-                        raise RuntimeError("Runtime Supervisor 未启动")
-                    action = self.runtime_supervisor.set_game_overlay_enabled(enabled)
+                    if self.runtime_owner is None:
+                        raise RuntimeError("App runtime owner 未启动")
+                    action = self.runtime_owner.set_game_overlay_enabled(enabled)
             except Exception as exc:
                 error = exc
 
@@ -709,30 +647,6 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
     def _start_overlay_status_polling(self) -> None:
         self._overlay_status_after_id = self.root.after(1000, self._refresh_overlay_status_summary)
 
-    def _kick_game_overlay_watchdog(self) -> None:
-        if self.runtime_supervisor is not None:
-            return
-        if self._closing or self._feature_toggle_is_busy("游戏内显示"):
-            return
-        if not self._overlay_watchdog_lock.acquire(blocking=False):
-            return
-
-        def worker() -> None:
-            try:
-                with self._overlay_operation_lock:
-                    if self._closing:
-                        return
-                    if self.service_manager is None:
-                        return
-                    self.service_manager.ensure_game_overlay_healthy(
-                        enabled=self._game_overlay_desired_enabled,
-                    )
-            except Exception:
-                logger.warning("游戏内 overlay watchdog 自愈失败。", exc_info=True)
-            finally:
-                self._overlay_watchdog_lock.release()
-
-        self._start_tracked_thread(worker, name="hextech-overlay-watchdog")
 
     def _refresh_overlay_status_summary(self) -> None:
         """低频回显游戏内 overlay 状态，避免 running 但不可见时没有反馈。"""
@@ -750,43 +664,17 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
                 self._set_overlay_status_summary(text, UI_COLORS["warn"])
                 return
             overlay_enabled = bool(self.game_overlay_var.get())
-            if self.runtime_supervisor is not None:
-                snapshot = self.runtime_supervisor.get_status()
+            if self.runtime_owner is not None:
+                snapshot = self.runtime_owner.get_status()
                 components = snapshot.get("components") if isinstance(snapshot.get("components"), dict) else {}
                 overlay = components.get("game_overlay") if isinstance(components.get("game_overlay"), dict) else {}
                 should_report = overlay_enabled or str(overlay.get("status") or "") in {"starting", "running", "stopping", "error"}
                 if should_report:
-                    if self._coordinate_overlay_web_fallback(overlay):
-                        return
-                    text, color = _format_supervisor_game_overlay_status(overlay)
+                    text, color = _format_runtime_game_overlay_status(overlay)
                     self._set_overlay_status_summary(text, color)
                 return
-            self._kick_game_overlay_watchdog()
-            if self.service_manager is None:
-                return
-            snapshot = self.service_manager.get_status_snapshot()
-            sidecar = snapshot.get("vision_sidecar") if isinstance(snapshot.get("vision_sidecar"), dict) else {}
-            event = snapshot.get("overlay_event") if isinstance(snapshot.get("overlay_event"), dict) else {}
-            host_visibility = snapshot.get("overlay_visibility") if isinstance(snapshot.get("overlay_visibility"), dict) else {}
-            watchdog = snapshot.get("overlay_watchdog") if isinstance(snapshot.get("overlay_watchdog"), dict) else {}
-            sidecar_status = str(sidecar.get("status") or "").strip()
-            event_active = bool(event.get("active"))
-            should_report = overlay_enabled or sidecar_status == "running" or event_active
-            if should_report:
-                host_reason = str(host_visibility.get("reason") or "").strip() if bool(host_visibility.get("ok")) else ""
-                reason = _format_game_overlay_host_reason(host_reason) if host_reason else ("选择窗口活跃" if event_active else "等待选择")
-                if not reason:
-                    self._set_overlay_status_summary("", UI_COLORS["muted"])
-                    return
-                sidecar_text = "识别运行" if sidecar_status == "running" else "识别待机"
-                watchdog_action = str(watchdog.get("last_action") or "").strip()
-                if watchdog_action == "start_missing_process":
-                    sidecar_text = "识别已自愈"
-                elif watchdog_action == "error":
-                    sidecar_text = "识别异常"
-                color = UI_COLORS["green"] if bool(host_visibility.get("visible")) or event_active else UI_COLORS["warn"]
-                # 构建号不再拼进文案：构建身份仍在状态文件与诊断导出里。
-                self._set_overlay_status_summary(f"{reason} · {sidecar_text}", color)
+            if overlay_enabled:
+                self._set_overlay_status_summary("识别控制面准备中", UI_COLORS["warn"])
         except Exception:
             logger.debug("读取游戏内 overlay 状态失败。", exc_info=True)
         finally:

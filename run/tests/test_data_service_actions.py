@@ -3,9 +3,8 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
-import pytest
-import requests
 
 from hextech.bootstrap.data_service_runtime import (
     DataServiceApplication,
@@ -28,47 +27,17 @@ def test_status_reuses_snapshot_client_and_reports_partial_publication(tmp_path,
     assert core._snapshot_client is client
 
 
-def test_private_stats_handle_tracks_the_same_action_until_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    from hextech.interfaces.desktop import runtime
-
-    class Process:
-        returncode = None
-
-        @staticmethod
-        def poll() -> None:
-            return None
-
-    class Response:
-        @staticmethod
-        def raise_for_status() -> None:
-            return None
-
-        @staticmethod
-        def json() -> dict[str, object]:
-            return {"accepted": True, "action_id": "policy-1"}
-
-    handle = runtime.DataServiceHandle(Process(), 52001, "nonce", 4321)
-    statuses = iter(
-        [
-            {"actions": {}, "last_action": None},
-            {
-                "actions": {
-                    "policy-1": {
-                        "action_id": "policy-1",
-                        "status": "completed",
-                        "result": {"state": "ready", "private_stats_enabled": True},
-                    }
-                }
-            },
-        ]
-    )
-    monkeypatch.setattr(requests, "post", lambda *_args, **_kwargs: Response())
-    monkeypatch.setattr(handle, "get_status", lambda: next(statuses))
-    monkeypatch.setattr(runtime.time, "sleep", lambda _seconds: None)
-
-    result = handle.set_private_stats(True)
-
-    assert result == {"state": "ready", "private_stats_enabled": True}
+def test_private_stats_handle_tracks_the_same_action_until_terminal():
+    from hextech.bootstrap.data_service_runtime import EmbeddedDataRuntime
+    submitted=[]
+    results=iter([{}, {"status":"completed","result":{"state":"ready","private_stats_enabled":True}}])
+    app=SimpleNamespace(submit_action=lambda kind,payload: submitted.append((kind,payload)) or {"action_id":"policy-1"},
+                        get_action=lambda action_id: next(results))
+    handle=EmbeddedDataRuntime.__new__(EmbeddedDataRuntime)
+    handle.application=app
+    handle._stop=threading.Event()
+    assert handle.set_private_stats(True)=={"state":"ready","private_stats_enabled":True}
+    assert submitted==[("set_private_stats",{"enabled":True})]
 
 
 def test_refresh_action_coalesces_running_triggers_into_one_recheck(tmp_path: Path) -> None:
@@ -92,7 +61,6 @@ def test_refresh_action_coalesces_running_triggers_into_one_recheck(tmp_path: Pa
             private_stats_enabled=False,
             refresh_action=refresh_action,
         ),
-        parent_pid=1,
     )
     first = application.submit_action("refresh")
     assert entered.wait(timeout=1)
@@ -127,7 +95,6 @@ def test_refresh_status_preserves_deferred_core_scope(tmp_path: Path) -> None:
                 "pending_sources": ["aramkit", "blitz"],
             },
         ),
-        parent_pid=1,
     )
 
     accepted = application.submit_action("refresh", {"scope": "core", "force": True})
@@ -168,7 +135,6 @@ def test_refresh_status_preserves_authoritative_change_and_source_outcomes(tmp_p
                 },
             },
         ),
-        parent_pid=1,
     )
     application.submit_action("refresh", {"scope": "core"})
     deadline = time.monotonic() + 1.0
@@ -207,7 +173,6 @@ def test_force_refresh_upgrades_pending_recheck(tmp_path: Path) -> None:
             private_stats_enabled=False,
             refresh_action=refresh_action,
         ),
-        parent_pid=1,
     )
     application.submit_action("refresh")
     assert entered.wait(timeout=1)
@@ -241,7 +206,6 @@ def test_shutdown_clears_pending_refresh_without_starting_followup(tmp_path: Pat
             private_stats_enabled=False,
             refresh_action=refresh_action,
         ),
-        parent_pid=1,
     )
     application.submit_action("refresh")
     assert entered.wait(timeout=1)
