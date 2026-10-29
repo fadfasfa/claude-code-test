@@ -4,13 +4,13 @@
 
 ## 语言规则
 
-Codex 与 Claude Code 在本仓的输出语言遵循根 `AGENTS.md` 的统一约定，不复制独立的语言检查清单。
+Codex 与 Claude Code 的交流语言遵循各自用户级约定；本仓文档和 Git 交付语言按 `PROJECT.md` 及专项规则执行。
 
 ## 执行 surface
 
 - Claude Code 和 Codex 都可以独立完成普通仓库任务。
 - Codex standalone mode：用户直接调用 Codex 时，按 `AGENTS.md` 和用户任务独立执行；`PROJECT.md` 与 `docs/index.md` 指向的专项规则按任务选读。
-- Claude Code 入口读取 `CLAUDE.md`、`PROJECT.md`、`docs/index.md`。
+- Claude Code 从 `CLAUDE.md` 进入；项目定位不清时读 `PROJECT.md`，专项规则从 `docs/index.md` 按任务选读。
 - 项目默认 `.claude/settings.json` 保守为 `plan` + `Read`。Anthropic first-party Plan 可使用宿主认可的受控只读探索，但不得通过重定向、解释器或脚本间接写盘。
 - `~/.claude/plans/*.md` 是 Plan 阶段唯一允许的写入面：需求基线获批后写入系统分配的正式计划，修订时完整替换，任务结束后保留且默认不提交。
 - GLM 或非 Anthropic first-party host 必须使用 `.claude/settings.plan.json`：`Edit(**)` 禁止当前工作目录写入，`Edit(~/.claude/plans/**)` 单独放行原生计划目录，并禁用 `Bash` / `PowerShell`。

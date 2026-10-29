@@ -14,7 +14,7 @@
 - Codex 的普通分支、工作树、提交与普通推送授权语义以用户级 `AGENTS.md` 为准；本仓只在 `docs/当前规则/20-Git与高危操作.md` 维护保护资产、工作树路径、PR 修复、清理边界和提交格式。Claude Code 继续使用自己的用户级授权规则。
 - 用户当前轮明确要求修复已有开放 PR（审查意见、requested changes、CI failure 等闭环）时，任务默认包含验证、必要 commit 和普通 `git push` 到当前 PR 分支。
 - PR 推送的前置校验、授权边界与停止条件以 `docs/当前规则/20-Git与高危操作.md` 的「PR 修复后的推送规则」为准；该授权不含 merge、tag、release、force push、rebase、历史重写或远端分支删除。
-- 长任务按需要拆分阶段并逐段自检；不因任务规模自动派子智能体或设置 reviewer 门禁。
+- Codex 按用户级 `AGENTS.md` 按需委派并复核结果；不因任务规模设置固定 reviewer 门禁。Claude Code 遵循自己的用户级规则及本仓跨工具调用边界。
 - 不恢复 CC-CX guard、plan-gate、状态机、command、hook、memory、learning promotion、自动 PR shipping、task resume 或高权限 worktree skill。Codex worker 已退役，不主动调用；`docs/历史归档/cc-worker/README.md` 仅供历史查阅，不是执行或恢复入口。
 - commit message 与 PR 标题/正文使用本仓约定的中文 conventional 格式；具体格式、例外和流程由 workflow 文档维护。
 
@@ -22,12 +22,5 @@
 
 - Codex 按本文件和用户任务执行；项目定位或根目录职责不清时读 `PROJECT.md`，需要专项规则时从 `docs/index.md` 选读。已加载且未变化的规则不重复通读。
 - 涉及旧架构、重复故障或现场证据不足时，按主题查 `C:\Users\apple\kb\03 AI学习与实操\代码仓库维护\AI对话-踩坑速查.md`，命中后再读对应簇页。`needs-review` 历史摘要只作线索，以当前文件和原始证据为准。
-- Claude Code：只读 `CLAUDE.md` 的入口说明；该文件不得覆盖本文件和仓库规则。
-- 完成报告必须列出：修改文件、是否触碰登记业务工作区（清单见 `docs/当前规则/10-工作区登记.md`）、是否删除/清理/移动、是否 staging/commit/push、验证命令与结果、剩余风险。
-- 仅在实际使用子智能体时记录其结果。
-
-## 方法论适配（P2）
-
-- 代码、跨工作区、架构、高风险或无人值守任务：在全局 P0 之外触发根因复现和新鲜上下文的对抗式审查。
-- 机械文档、单点维护和明确的小修复：只执行全局 P0，不自动启动子智能体或消融实验。
-- 工作区登记、凭据隔离、Git/PR 规则和退役架构是本仓本地权威；方法论不得扩大其作用域。
+- Claude Code 从 `CLAUDE.md` 进入；两端共用仓库规则，各自使用原生工具和权限入口。
+- 修改任务按 `docs/当前规则/30-验证与审查.md` 报告实际变更、验证和关键未完成项；纯问答不附无关操作回执。
